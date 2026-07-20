@@ -288,7 +288,7 @@ func clientAPI(t *testing.T) *webrtc.API {
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		t.Fatal(err)
 	}
-	i := &webrtc.InterceptorRegistry{}
+	i := &interceptor.Registry{} // github.com/pion/interceptor (v4.2.17 has no webrtc.InterceptorRegistry)
 	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
 		t.Fatal(err)
 	}
