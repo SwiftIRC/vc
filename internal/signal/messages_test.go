@@ -1,0 +1,108 @@
+package signal
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestDecodeClientMessages(t *testing.T) {
+	cases := []struct {
+		in   string
+		want any
+	}{
+		{`{"type":"join","name":"alice","password":"pw","token":"abc.def"}`, &Join{Name: "alice", Password: "pw", Token: "abc.def"}},
+		{`{"type":"offer","sdp":"v=0"}`, &Offer{SDP: "v=0"}},
+		{`{"type":"answer","sdp":"v=0"}`, &Answer{SDP: "v=0"}},
+		{`{"type":"chat","text":"hi"}`, &Chat{Text: "hi"}},
+		{`{"type":"set-lock","password":"s3cret"}`, &SetLock{Password: "s3cret"}},
+		{`{"type":"set-lock"}`, &SetLock{}},
+		{`{"type":"kick","id":"p1"}`, &Kick{ID: "p1"}},
+		{`{"type":"mute-peer","id":"p1","kind":"mic"}`, &MutePeer{ID: "p1", Kind: "mic"}},
+		{`{"type":"ban","id":"p1"}`, &Ban{ID: "p1"}},
+		{`{"type":"leave"}`, &Leave{}},
+	}
+	for _, c := range cases {
+		got, err := Decode([]byte(c.in))
+		if err != nil {
+			t.Errorf("Decode(%s): %v", c.in, err)
+			continue
+		}
+		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := json.Marshal(c.want)
+		if string(gotJSON) != string(wantJSON) {
+			t.Errorf("Decode(%s) = %s, want %s", c.in, gotJSON, wantJSON)
+		}
+	}
+}
+
+func TestDecodeCandidatePreservesRawJSON(t *testing.T) {
+	in := `{"type":"candidate","candidate":{"candidate":"candidate:1 1 udp 2 1.2.3.4 5 typ host","sdpMid":"0"}}`
+	got, err := Decode([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := got.(*Candidate)
+	if !ok {
+		t.Fatalf("got %T", got)
+	}
+	if !strings.Contains(string(c.Candidate), "sdpMid") {
+		t.Errorf("raw candidate lost: %s", c.Candidate)
+	}
+}
+
+func TestDecodeRejectsUnknownAndMalformed(t *testing.T) {
+	for _, in := range []string{`{"type":"nope"}`, `{}`, `not json`, `{"type":"joined"}`} {
+		if _, err := Decode([]byte(in)); err == nil {
+			t.Errorf("Decode(%s) should fail", in)
+		}
+	}
+}
+
+func TestEncodeServerMessages(t *testing.T) {
+	cases := []struct {
+		in       any
+		wantType string
+		contains []string
+	}{
+		{Joined{SelfID: "p1", Role: "op", Peers: []PeerInfo{{ID: "p2", Name: "bob", Role: "user"}}}, "joined", []string{`"selfId":"p1"`, `"role":"op"`, `"peers"`}},
+		{PeerJoined{ID: "p2", Name: "bob", Role: "voice"}, "peer-joined", []string{`"id":"p2"`}},
+		{PeerLeft{ID: "p2"}, "peer-left", nil},
+		{Offer{SDP: "v=0"}, "offer", []string{`"sdp":"v=0"`}},
+		{Tracks{Tracks: []TrackInfo{{Mid: "0", ParticipantID: "p2", Kind: "camera"}}}, "tracks", []string{`"participantId":"p2"`}},
+		{ChatEvent{From: "alice", Text: "hi", TS: 1753000000}, "chat", []string{`"ts":1753000000`}},
+		{Moderation{Actor: "alice", Action: "kick", Target: "bob"}, "moderation", nil},
+		{Kicked{By: "alice"}, "kicked", nil},
+		{Banned{By: "alice"}, "banned", nil},
+		{Muted{Kind: "mic"}, "muted", nil},
+		{RoomLocked{}, "room-locked", nil},
+		{RoomUnlocked{}, "room-unlocked", nil},
+		{ServerRestarting{}, "server-restarting", nil},
+		{Error{Code: "bad-password", Message: "wrong password"}, "error", []string{`"code":"bad-password"`}},
+	}
+	for _, c := range cases {
+		raw, err := Encode(c.in)
+		if err != nil {
+			t.Errorf("Encode(%T): %v", c.in, err)
+			continue
+		}
+		var env struct {
+			Type string `json:"type"`
+		}
+		json.Unmarshal(raw, &env)
+		if env.Type != c.wantType {
+			t.Errorf("Encode(%T) type = %q, want %q", c.in, env.Type, c.wantType)
+		}
+		for _, sub := range c.contains {
+			if !strings.Contains(string(raw), sub) {
+				t.Errorf("Encode(%T) = %s, missing %s", c.in, raw, sub)
+			}
+		}
+	}
+}
+
+func TestEncodeRejectsClientOnlyTypes(t *testing.T) {
+	if _, err := Encode(Join{Name: "x"}); err == nil {
+		t.Error("Encode(Join) should fail — client-only type")
+	}
+}
