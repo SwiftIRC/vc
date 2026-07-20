@@ -204,7 +204,10 @@ func (r *Room) Kick(actorID, targetID string) error {
 		return err
 	}
 	tgt.Conn.Send(signal.Kicked{By: actor.Name})
-	tgt.Conn.Close()
+	// Do not close the socket here: closing cancels the target's read context,
+	// which hard-closes the connection and would race (drop) the frame just
+	// sent. The client closes itself on "kicked"; the server reaps on EOF or
+	// ping-eviction.
 	r.Leave(targetID) // broadcasts PeerLeft
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "kick", Target: tgt.Name}, "")
 	return nil
@@ -227,7 +230,8 @@ func (r *Room) Ban(actorID, targetID string) error {
 	}
 	r.mu.Unlock()
 	tgt.Conn.Send(signal.Banned{By: actor.Name})
-	tgt.Conn.Close()
+	// Same as Kick: deliver the frame, don't close. The ban is recorded above,
+	// so any rejoin attempt is refused; the client closes itself on "banned".
 	r.Leave(targetID)
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "ban", Target: tgt.Name}, "")
 	return nil

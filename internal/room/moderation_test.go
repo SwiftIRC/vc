@@ -61,8 +61,11 @@ func TestKick(t *testing.T) {
 	}
 	closed := bc.closed
 	bc.mu.Unlock()
-	if !kicked || !closed {
-		t.Errorf("target: kicked=%v closed=%v", kicked, closed)
+	// Option B: kick delivers the frame and removes the participant, but must
+	// NOT close the socket (that would hard-close and race the frame write).
+	// The client closes itself on receiving "kicked".
+	if !kicked || closed {
+		t.Errorf("target: kicked=%v closed=%v (want kicked=true, closed=false)", kicked, closed)
 	}
 	if r.Count() != 1 {
 		t.Errorf("Count = %d after kick", r.Count())
