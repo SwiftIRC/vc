@@ -58,7 +58,7 @@ func (p *Peer) wireOnTrack() {
 				kind = "camera"
 			}
 		}
-		local, err := p.sfu.addLocalTrack(p.slug, p.id, kind, remote)
+		local, err := p.sfu.addLocalTrack(p, kind, remote)
 		if err != nil {
 			return
 		}

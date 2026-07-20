@@ -1,24 +1,37 @@
 package sfu
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/ryanwohara/webrtc-chat/internal/signal"
 )
 
+// keyFrameInterval is how often each room asks its video publishers for a
+// keyframe (PLI), so subscribers that joined mid-stream can start decoding.
+const keyFrameInterval = 3 * time.Second
+
 type localTrack struct {
 	publisherID string
 	kind        string // mic|camera|screen
 	track       *webrtc.TrackLocalStaticRTP
+	ssrc        webrtc.SSRC // the publisher's remote SSRC, PLI's MediaSSRC
+	publisher   *Peer       // the peer that published this track (PLI target)
 }
 
 type mroom struct {
 	peers  map[string]*Peer
 	tracks map[string]*localTrack // key = publisherID + ":" + kind
+
+	// ticker fires keyFrameInterval to PLI every video publisher; its goroutine
+	// exits when done is closed (in RemovePeer, once the room empties).
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
 type SFU struct {
@@ -35,8 +48,14 @@ func NewSFU(engine *Engine, log *slog.Logger) *SFU {
 func (s *SFU) roomLocked(slug string) *mroom {
 	r := s.rooms[slug]
 	if r == nil {
-		r = &mroom{peers: map[string]*Peer{}, tracks: map[string]*localTrack{}}
+		r = &mroom{
+			peers:  map[string]*Peer{},
+			tracks: map[string]*localTrack{},
+			ticker: time.NewTicker(keyFrameInterval),
+			done:   make(chan struct{}),
+		}
 		s.rooms[slug] = r
+		go s.dispatchKeyFrameLoop(slug, r)
 	}
 	return r
 }
@@ -73,20 +92,34 @@ func (s *SFU) AddPeer(slug, peerID string, sig Signaler) (*Peer, error) {
 
 // addLocalTrack captures a published remote track into a forwardable local
 // track, registers it in the room under "publisherID:kind", and triggers
-// renegotiation of the room's other peers. The publisher's Peer already knows
-// its slug, so it is passed in explicitly.
-func (s *SFU) addLocalTrack(slug, publisherID, kind string, remote *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
-	local, err := webrtc.NewTrackLocalStaticRTP(remote.Codec().RTPCodecCapability, kind, publisherID)
+// renegotiation of the room's other peers. The publishing Peer is passed in so
+// the track can remember its origin (its slug, id, remote SSRC, and PC) — the
+// SSRC and PC are what a PLI keyframe request is written against.
+func (s *SFU) addLocalTrack(pub *Peer, kind string, remote *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
+	local, err := webrtc.NewTrackLocalStaticRTP(remote.Codec().RTPCodecCapability, kind, pub.id)
 	if err != nil {
 		return nil, err
 	}
-	key := publisherID + ":" + kind
+	key := pub.id + ":" + kind
 
 	s.mu.Lock()
-	s.roomLocked(slug).tracks[key] = &localTrack{publisherID: publisherID, kind: kind, track: local}
+	// Don't resurrect a room the publisher has already been removed from — doing
+	// so would start a second keyframe ticker with no peer to ever remove it.
+	r := s.rooms[pub.slug]
+	if r == nil {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("room %q no longer present", pub.slug)
+	}
+	r.tracks[key] = &localTrack{
+		publisherID: pub.id,
+		kind:        kind,
+		track:       local,
+		ssrc:        remote.SSRC(),
+		publisher:   pub,
+	}
 	s.mu.Unlock()
 
-	s.signalPeerConnections(slug)
+	s.signalPeerConnections(pub.slug)
 	return local, nil
 }
 
@@ -136,11 +169,16 @@ func (s *SFU) signalPeerConnections(slug string) {
 				delete(pending, id)
 			}
 		}
-		// Reconcile every peer's senders; mark changed peers for renegotiation.
+		// Reconcile every peer's senders; mark changed peers for renegotiation and
+		// collect the video tracks freshly forwarded to a new subscriber so their
+		// publishers can be PLI'd (outside s.mu) once the offers are sent.
+		var newVideo []*localTrack
 		for id, p := range r.peers {
-			if syncPeerSendersLocked(p, r.tracks) {
+			changed, added := syncPeerSendersLocked(p, r.tracks)
+			if changed {
 				pending[id] = p
 			}
+			newVideo = append(newVideo, added...)
 		}
 		// Snapshot pending peers so renegotiation runs without holding s.mu.
 		todo := make([]*Peer, 0, len(pending))
@@ -172,6 +210,11 @@ func (s *SFU) signalPeerConnections(slug string) {
 			p.sig.Send(signal.Tracks{Tracks: peerTrackInfos(p)})
 			delete(pending, p.id)
 		}
+		// Ask each newly-subscribed video's publisher for a keyframe so the new
+		// subscriber can start decoding without waiting for the room ticker.
+		for _, lt := range newVideo {
+			s.pli(lt)
+		}
 		if !retry {
 			return
 		}
@@ -182,10 +225,10 @@ func (s *SFU) signalPeerConnections(slug string) {
 // syncPeerSendersLocked reconciles peer p's outbound RTP senders with the room's
 // published track set: it removes senders whose track is gone and adds tracks
 // published by other peers that p is not yet sending (never looping a peer's own
-// track back to it). It reports whether p's sender set changed. Caller holds
+// track back to it). It reports whether p's sender set changed and returns the
+// video tracks newly added to p (whose publishers should be PLI'd). Caller holds
 // s.mu.
-func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) bool {
-	changed := false
+func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) (changed bool, addedVideo []*localTrack) {
 	existing := map[string]bool{}
 
 	for _, snd := range p.pc.GetSenders() {
@@ -207,9 +250,12 @@ func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) bool {
 		}
 		if _, err := p.pc.AddTrack(lt.track); err == nil {
 			changed = true
+			if lt.kind != "mic" {
+				addedVideo = append(addedVideo, lt)
+			}
 		}
 	}
-	return changed
+	return changed, addedVideo
 }
 
 // peerTrackInfos describes the forwarded tracks peer p now receives: one
@@ -251,6 +297,52 @@ func senderKey(snd *webrtc.RTPSender) (string, bool) {
 	return t.StreamID() + ":" + t.ID(), true
 }
 
+// pli asks a video track's publisher for a keyframe by writing an RTCP Picture
+// Loss Indication to the publisher's PeerConnection for the track's SSRC. Audio
+// (mic) tracks have no keyframes, so they are skipped. Called without s.mu.
+func (s *SFU) pli(lt *localTrack) {
+	if lt == nil || lt.kind == "mic" || lt.publisher == nil {
+		return
+	}
+	_ = lt.publisher.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(lt.ssrc)}})
+}
+
+// dispatchKeyFrame PLIs every video publisher in the room, so subscribers that
+// joined mid-stream keep getting keyframes. Tracks are snapshotted under s.mu
+// and the RTCP writes happen after the lock is released.
+func (s *SFU) dispatchKeyFrame(slug string) {
+	s.mu.Lock()
+	r := s.rooms[slug]
+	if r == nil {
+		s.mu.Unlock()
+		return
+	}
+	tracks := make([]*localTrack, 0, len(r.tracks))
+	for _, lt := range r.tracks {
+		tracks = append(tracks, lt)
+	}
+	s.mu.Unlock()
+
+	for _, lt := range tracks {
+		s.pli(lt)
+	}
+}
+
+// dispatchKeyFrameLoop drives a room's periodic keyframe requests until the room
+// is removed. It owns no lock: it reads only r.ticker/r.done (set once at room
+// creation) and delegates to dispatchKeyFrame. Closing r.done (in RemovePeer)
+// makes it return, so it never outlives its room.
+func (s *SFU) dispatchKeyFrameLoop(slug string, r *mroom) {
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-r.ticker.C:
+			s.dispatchKeyFrame(slug)
+		}
+	}
+}
+
 func (s *SFU) RemovePeer(slug, peerID string) {
 	s.mu.Lock()
 	r := s.rooms[slug]
@@ -264,6 +356,9 @@ func (s *SFU) RemovePeer(slug, peerID string) {
 	empty := len(r.peers) == 0
 	if empty {
 		delete(s.rooms, slug)
+		// Stop the keyframe ticker and signal its goroutine to exit.
+		r.ticker.Stop()
+		close(r.done)
 	}
 	s.mu.Unlock()
 	if p != nil {
