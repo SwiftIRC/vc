@@ -13,6 +13,7 @@ import (
 	"github.com/ryanwohara/webrtc-chat/internal/config"
 	"github.com/ryanwohara/webrtc-chat/internal/room"
 	"github.com/ryanwohara/webrtc-chat/internal/server"
+	"github.com/ryanwohara/webrtc-chat/internal/sfu"
 )
 
 func main() {
@@ -24,7 +25,13 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	reg := room.NewRegistry(cfg.AdhocRooms, time.Now)
-	hub := server.NewHub(cfg, reg, log, time.Now)
+	engine, err := sfu.NewEngine(cfg)
+	if err != nil {
+		slog.Error("sfu engine", "err", err)
+		os.Exit(2)
+	}
+	mediaSFU := sfu.NewSFU(engine, log)
+	hub := server.NewHub(cfg, reg, log, time.Now, mediaSFU)
 	srv := &http.Server{Addr: cfg.Addr, Handler: hub.Routes()}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

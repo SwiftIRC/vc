@@ -21,6 +21,7 @@ import (
 
 	"github.com/ryanwohara/webrtc-chat/internal/config"
 	"github.com/ryanwohara/webrtc-chat/internal/room"
+	"github.com/ryanwohara/webrtc-chat/internal/sfu"
 	"github.com/ryanwohara/webrtc-chat/internal/signal"
 	"github.com/ryanwohara/webrtc-chat/internal/token"
 )
@@ -38,17 +39,18 @@ type Hub struct {
 	reg *room.Registry
 	log *slog.Logger
 	now func() time.Time
+	sfu *sfu.SFU
 	// conns tracks each connection's writePump goroutine so their lifetime
 	// is joinable (graceful drain, and a happens-before edge for tests that
 	// mutate the ws.go tunables).
 	conns sync.WaitGroup
 }
 
-func NewHub(cfg config.Config, reg *room.Registry, log *slog.Logger, now func() time.Time) *Hub {
+func NewHub(cfg config.Config, reg *room.Registry, log *slog.Logger, now func() time.Time, mediaSFU *sfu.SFU) *Hub {
 	if now == nil {
 		now = time.Now
 	}
-	return &Hub{cfg: cfg, reg: reg, log: log, now: now}
+	return &Hub{cfg: cfg, reg: reg, log: log, now: now, sfu: mediaSFU}
 }
 
 // shutdownGrace is how long Shutdown waits after broadcasting ServerRestarting
@@ -212,18 +214,37 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 	}
 	defer rm.Leave(p.ID)
 
+	// Attach the participant to the media plane: one SFU peer per socket,
+	// signaling looped back through c (which satisfies sfu.Signaler via Send).
+	mp, err := h.sfu.AddPeer(slug, p.ID, c)
+	if err != nil {
+		reject(c, signal.Error{Code: "media", Message: "media setup failed"})
+		return
+	}
+	defer h.sfu.RemovePeer(slug, p.ID)
+
 	for {
 		v, err := c.readNext(c.ctx)
 		if err != nil {
 			return
 		}
-		switch v.(type) {
+		switch m := v.(type) {
 		case *signal.Leave:
 			return
 		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban:
-			h.dispatch(rm, p, v) // Task 9
-		case *signal.Offer, *signal.Answer, *signal.Candidate:
-			// Media negotiation lands in Plan 2.
+			h.dispatch(rm, p, m)
+		case *signal.Offer:
+			if err := mp.HandleOffer(m.SDP); err != nil {
+				h.log.Debug("offer", "err", err)
+			}
+		case *signal.Answer:
+			if err := mp.HandleAnswer(m.SDP); err != nil {
+				h.log.Debug("answer", "err", err)
+			}
+		case *signal.Candidate:
+			if err := mp.HandleCandidate(m.Candidate); err != nil {
+				h.log.Debug("candidate", "err", err)
+			}
 		}
 	}
 }

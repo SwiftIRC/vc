@@ -13,6 +13,7 @@ import (
 
 	"github.com/ryanwohara/webrtc-chat/internal/config"
 	"github.com/ryanwohara/webrtc-chat/internal/room"
+	"github.com/ryanwohara/webrtc-chat/internal/sfu"
 	"github.com/ryanwohara/webrtc-chat/internal/token"
 )
 
@@ -22,7 +23,12 @@ func newTestHub(t *testing.T, secret string, adhoc bool) (*Hub, *httptest.Server
 	t.Helper()
 	cfg := config.Config{Secret: secret, AdhocRooms: adhoc}
 	reg := room.NewRegistry(adhoc, time.Now)
-	h := NewHub(cfg, reg, testLog, time.Now)
+	e, err := sfu.NewEngine(cfg) // UDPPortMin/Max 0 => any ephemeral port
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaSFU := sfu.NewSFU(e, testLog)
+	h := NewHub(cfg, reg, testLog, time.Now, mediaSFU)
 	srv := httptest.NewServer(h.Routes())
 	// Close the server, then join every connection's writePump. Client dials
 	// register their own Close cleanups (which run first, LIFO), so the
