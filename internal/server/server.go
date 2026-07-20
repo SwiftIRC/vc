@@ -2,7 +2,9 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -54,7 +56,51 @@ func (h *Hub) Routes() http.Handler {
 		io.WriteString(w, "ok\n")
 	})
 	mux.HandleFunc("GET /ws/{room}", h.handleWS)
+	mux.HandleFunc("GET /api/rooms/{room}", h.handleRoomPeek)
+	mux.HandleFunc("POST /api/provision", h.handleProvision)
 	return mux
+}
+
+func (h *Hub) handleRoomPeek(w http.ResponseWriter, r *http.Request) {
+	slug := strings.ToLower(r.PathValue("room"))
+	if !slugRe.MatchString(slug) {
+		http.Error(w, "bad room name", http.StatusBadRequest)
+		return
+	}
+	count, locked := h.reg.Peek(slug)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"count": count, "locked": locked})
+}
+
+func (h *Hub) handleProvision(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Secret == "" {
+		http.Error(w, "provisioning disabled", http.StatusForbidden)
+		return
+	}
+	auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if subtle.ConstantTimeCompare([]byte(auth), []byte(h.cfg.Secret)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		Channel  string `json:"channel"`
+		Room     string `json:"room"`
+		Settings struct {
+			IdentifiedOnly bool `json:"identifiedOnly"`
+		} `json:"settings"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	slug := strings.ToLower(body.Room)
+	if !slugRe.MatchString(slug) || body.Channel == "" {
+		http.Error(w, "bad channel/room", http.StatusBadRequest)
+		return
+	}
+	h.reg.Provision(body.Channel, slug, body.Settings.IdentifiedOnly)
+	h.log.Info("provisioned", "channel", body.Channel, "room", slug, "identifiedOnly", body.Settings.IdentifiedOnly)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
