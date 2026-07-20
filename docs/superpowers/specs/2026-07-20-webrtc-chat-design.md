@@ -135,6 +135,12 @@ joiner becomes op.
   status persists until you leave; re-run `!vc` to refresh.
 - The settings snapshot inside the token doubles as a provisioning fallback:
   a tokened join after a webrtc-chat restart re-provisions the room.
+- **Length budget:** the public link is just origin + slug (~25–40 chars).
+  The tokenized link uses compact single-letter payload keys and lands around
+  180–250 chars. Hard requirement: a tokenized link must always fit in a
+  single IRC NOTICE line (~440 usable chars after protocol overhead) so it
+  never wraps and stays clickable. If it ever gets tight, truncate the HMAC
+  to 128 bits (21 chars saved) before anything else.
 
 **Guest policy:** guests (no token) may join via the public URL with a
 self-typed display name, subject to the room password if locked — unless the
