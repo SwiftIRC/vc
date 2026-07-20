@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +11,8 @@ import (
 	"time"
 
 	"github.com/ryanwohara/webrtc-chat/internal/config"
+	"github.com/ryanwohara/webrtc-chat/internal/room"
+	"github.com/ryanwohara/webrtc-chat/internal/server"
 )
 
 func main() {
@@ -22,22 +23,22 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "ok\n")
-	})
+	reg := room.NewRegistry(cfg.AdhocRooms, time.Now)
+	hub := server.NewHub(cfg, reg, log, time.Now)
+	srv := &http.Server{Addr: cfg.Addr, Handler: hub.Routes()}
 
-	srv := &http.Server{Addr: cfg.Addr, Handler: mux}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go hub.RunGC(ctx)
 	go func() {
 		<-ctx.Done()
+		hub.Shutdown()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(sctx)
 	}()
 
-	log.Info("listening", "addr", cfg.Addr)
+	log.Info("listening", "addr", cfg.Addr, "adhoc", cfg.AdhocRooms, "tokens", cfg.Secret != "")
 	if cfg.TLSCert != "" {
 		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
 	} else {

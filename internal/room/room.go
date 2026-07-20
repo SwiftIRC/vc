@@ -305,8 +305,10 @@ func (r *Room) SetIdentifiedOnly(v bool) {
 	r.cfg.IdentifiedOnly = v
 }
 
-func (r *Room) Shutdown() {
-	r.Broadcast(signal.ServerRestarting{}, "")
+// CloseConns closes every participant's connection. It does NOT broadcast:
+// the caller (Hub.Shutdown) broadcasts ServerRestarting first and waits a grace
+// so the frame flushes before these closes tear the sockets down.
+func (r *Room) CloseConns() {
 	r.mu.Lock()
 	targets := make([]*Participant, 0, len(r.parts))
 	for _, p := range r.parts {

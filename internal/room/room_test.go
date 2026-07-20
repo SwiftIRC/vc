@@ -176,11 +176,12 @@ func TestLeaveAndEmptySince(t *testing.T) {
 	}
 }
 
-func TestShutdownNotifiesAndCloses(t *testing.T) {
+func TestBroadcastRestartingThenCloseConns(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, ac := member("p1", "alice", RoleUser)
 	r.Join(alice, "")
-	r.Shutdown()
+	r.Broadcast(signal.ServerRestarting{}, "")
+	r.CloseConns()
 	found := false
 	ac.mu.Lock()
 	for _, m := range ac.msgs {

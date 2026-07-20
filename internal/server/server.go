@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -48,6 +49,39 @@ func NewHub(cfg config.Config, reg *room.Registry, log *slog.Logger, now func() 
 		now = time.Now
 	}
 	return &Hub{cfg: cfg, reg: reg, log: log, now: now}
+}
+
+// shutdownGrace is how long Shutdown waits after broadcasting ServerRestarting
+// before closing sockets, so writePump flushes the frame first. Small so tests
+// stay fast; negligible on a real restart.
+var shutdownGrace = 250 * time.Millisecond
+
+// Shutdown tells every participant the server is restarting (clients show
+// "reconnecting…" and rejoin-loop), waits a grace so the frame is delivered,
+// then closes their connections.
+func (h *Hub) Shutdown() {
+	rooms := h.reg.Rooms()
+	for _, rm := range rooms {
+		rm.Broadcast(signal.ServerRestarting{}, "")
+	}
+	time.Sleep(shutdownGrace)
+	for _, rm := range rooms {
+		rm.CloseConns()
+	}
+}
+
+// RunGC sweeps empty rooms every 15s until ctx is cancelled.
+func (h *Hub) RunGC(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			h.reg.Sweep()
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (h *Hub) Routes() http.Handler {
