@@ -21,6 +21,11 @@ var (
 	writeTimeout = 5 * time.Second
 )
 
+// drainTimeout bounds how long writePump keeps flushing already-queued frames
+// after Close is requested, so a final frame is delivered without letting a
+// dead peer stall shutdown.
+var drainTimeout = 2 * time.Second
+
 // wsClient adapts a websocket.Conn to room.Conn: a bounded, non-blocking
 // send queue drained by writePump, with ping-based dead-peer eviction.
 type wsClient struct {
@@ -62,36 +67,66 @@ func (c *wsClient) Send(v any) bool {
 }
 
 func (c *wsClient) Close() {
-	c.once.Do(func() {
-		c.cancel()
-		c.conn.Close(websocket.StatusNormalClosure, "bye")
-	})
+	c.once.Do(func() { c.cancel() })
 }
 
 func (c *wsClient) done() <-chan struct{} { return c.ctx.Done() }
 
 func (c *wsClient) writePump() {
 	defer recoverGuard(c.log, "writePump")
-	defer c.Close()
+	defer func() {
+		c.cancel()
+		c.conn.Close(websocket.StatusNormalClosure, "bye")
+	}()
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case data := <-c.send:
-			wctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
-			err := c.conn.Write(wctx, websocket.MessageText, data)
-			cancel()
-			if err != nil {
+			if !c.writeFrame(data) {
 				return
 			}
 		case <-ticker.C:
-			wctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
-			err := c.conn.Ping(wctx)
+			pctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+			err := c.conn.Ping(pctx)
 			cancel()
 			if err != nil {
 				return
 			}
 		case <-c.ctx.Done():
+			c.drain()
+			return
+		}
+	}
+}
+
+// writeFrame writes one frame with a bounded deadline. It derives from a fresh
+// background context (not c.ctx) so a frame already dequeued still flushes even
+// as Close cancels c.ctx.
+func (c *wsClient) writeFrame(data []byte) bool {
+	wctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	return c.conn.Write(wctx, websocket.MessageText, data) == nil
+}
+
+// drain flushes frames already queued when Close was requested, bounded by
+// drainTimeout, so a final kicked/banned/server-restarting frame reaches the
+// client before the socket closes.
+func (c *wsClient) drain() {
+	deadline := time.Now().Add(drainTimeout)
+	for {
+		select {
+		case data := <-c.send:
+			wctx, cancel := context.WithDeadline(context.Background(), deadline)
+			err := c.conn.Write(wctx, websocket.MessageText, data)
+			cancel()
+			if err != nil {
+				return
+			}
+		default:
+			return
+		}
+		if !time.Now().Before(deadline) {
 			return
 		}
 	}

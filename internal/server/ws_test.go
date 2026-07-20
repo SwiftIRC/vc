@@ -145,3 +145,23 @@ func TestRecoverGuard(t *testing.T) {
 		panic("boom")
 	}() // must not crash the test binary
 }
+
+// A frame enqueued immediately before Close must still reach the client:
+// this is what makes kicked/banned/server-restarting notices actually deliver.
+func TestCloseFlushesQueuedFrame(t *testing.T) {
+	dial := wsPair(t, func(c *wsClient) {
+		c.Send(signal.Banned{By: "op"})
+		c.Close()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, data, err := dial.Read(ctx)
+	if err != nil {
+		t.Fatalf("expected banned frame before close, got read error: %v", err)
+	}
+	var env map[string]any
+	json.Unmarshal(data, &env)
+	if env["type"] != "banned" {
+		t.Errorf("frame = %s, want type banned", data)
+	}
+}
