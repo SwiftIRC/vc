@@ -1,11 +1,16 @@
 package sfu
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
 )
+
+// errNoRoom is returned when a published track arrives for a peer that is no
+// longer present in any room (e.g. it was removed mid-negotiation).
+var errNoRoom = errors.New("sfu: no room for publisher")
 
 type localTrack struct {
 	publisherID string
@@ -67,6 +72,56 @@ func (s *SFU) AddPeer(slug, peerID string, sig Signaler) (*Peer, error) {
 	s.mu.Unlock()
 	return p, nil
 }
+
+// addLocalTrack captures a published remote track into a forwardable local
+// track, registers it in the publisher's room under "publisherID:kind", and
+// triggers renegotiation of the room's other peers. The room (and its slug) is
+// resolved by locating the peer that owns publisherID.
+func (s *SFU) addLocalTrack(publisherID, kind string, remote *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
+	local, err := webrtc.NewTrackLocalStaticRTP(remote.Codec().RTPCodecCapability, kind, publisherID)
+	if err != nil {
+		return nil, err
+	}
+	key := publisherID + ":" + kind
+
+	s.mu.Lock()
+	slug, r := s.roomForPeerLocked(publisherID)
+	if r == nil {
+		s.mu.Unlock()
+		return nil, errNoRoom
+	}
+	r.tracks[key] = &localTrack{publisherID: publisherID, kind: kind, track: local}
+	s.mu.Unlock()
+
+	s.signalPeerConnections(slug)
+	return local, nil
+}
+
+// roomForPeerLocked returns the slug and room of the peer that owns peerID.
+// Caller must hold s.mu. Returns "", nil if the peer is not in any room.
+func (s *SFU) roomForPeerLocked(peerID string) (string, *mroom) {
+	for slug, r := range s.rooms {
+		if _, ok := r.peers[peerID]; ok {
+			return slug, r
+		}
+	}
+	return "", nil
+}
+
+// removeLocalTrack drops a published local track from the room and triggers
+// renegotiation of the room's other peers.
+func (s *SFU) removeLocalTrack(slug, key string) {
+	s.mu.Lock()
+	if r := s.rooms[slug]; r != nil {
+		delete(r.tracks, key)
+	}
+	s.mu.Unlock()
+	s.signalPeerConnections(slug)
+}
+
+// signalPeerConnections renegotiates every peer in the room so subscribers pick
+// up added/removed tracks. Filled in by Task 4; a no-op stub for now.
+func (s *SFU) signalPeerConnections(slug string) {}
 
 func (s *SFU) RemovePeer(slug, peerID string) {
 	s.mu.Lock()
