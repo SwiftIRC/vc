@@ -854,8 +854,10 @@ transceivers to `{Mid, ParticipantID, Kind}`. Build it from the transceivers P
 receives: for each `P.pc.GetTransceivers()` with a receiving direction and a
 `Receiver().Track()==nil` at negotiation time, correlate by the local track added
 in the same pass. Simpler and robust: build `TrackInfo` from the tracks the SFU
-just added to P (publisherID + kind are known); the mid is
-`sender.Transceiver().Mid()` — send after `SetLocalDescription` so mids are assigned.
+just added to P (publisherID + kind are known); get the mid by iterating
+`P.pc.GetTransceivers()` and pairing `tr.Mid()` with `tr.Sender().Track()`
+(RTPSender has no `Transceiver()` method in v4.2.17). Send after
+`SetLocalDescription` so mids are assigned.
 
 - [ ] **Step 1: Failing test** — extend Task 4's two-client test: assert p2 receives a `signal.Tracks` entry with `participantId=="p1"`, `kind=="camera"`, non-empty `mid`.
 ```go
@@ -872,7 +874,7 @@ just added to P (publisherID + kind are known); the mid is
 		t.Fatal("no tracks metadata")
 	}
 ```
-- [ ] **Step 2:** Run → FAIL. **Step 3:** emit `signal.Tracks` in `signalPeerConnections` after `SetLocalDescription`, mapping the added senders (`senderKey` → publisherID/kind; `sender.Transceiver().Mid()` → mid). **Step 4:** PASS + race. **Step 5:** Commit `feat(webrtc-chat): sfu emits tracks metadata on renegotiation`.
+- [ ] **Step 2:** Run → FAIL. **Step 3:** emit `signal.Tracks` in `signalPeerConnections` after `SetLocalDescription`, mapping the added senders (`senderKey` → publisherID/kind; mid via `GetTransceivers()`+`tr.Sender()`). **Step 4:** PASS + race. **Step 5:** Commit `feat(webrtc-chat): sfu emits tracks metadata on renegotiation`.
 
 ---
 
