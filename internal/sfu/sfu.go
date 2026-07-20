@@ -193,17 +193,32 @@ func (s *SFU) signalPeerConnections(slug string) {
 
 		retry := false
 		for _, p := range todo {
+			// Perfect negotiation (server = impolite): mark makingOffer while this
+			// server-initiated offer is created and applied, so a client offer that
+			// glares with it (HandleOffer) is detected and ignored. p.mu is held
+			// across CreateOffer/SetLocalDescription so HandleOffer sees a consistent
+			// makingOffer + SignalingState view; it is released before sig.Send (never
+			// hold a peer lock across signaling delivery) so an in-process polite
+			// client's own coordination can acquire p.mu while the offer is delivered.
+			p.mu.Lock()
+			p.makingOffer = true
 			offer, err := p.pc.CreateOffer(nil)
 			if err != nil {
 				// A renegotiation is mid-flight (signaling state not stable);
 				// keep p pending and retry the whole pass shortly.
+				p.makingOffer = false
+				p.mu.Unlock()
 				retry = true
 				continue
 			}
 			if err := p.pc.SetLocalDescription(offer); err != nil {
+				p.makingOffer = false
+				p.mu.Unlock()
 				retry = true
 				continue
 			}
+			p.makingOffer = false
+			p.mu.Unlock()
 			p.sig.Send(signal.Offer{SDP: offer.SDP})
 			// After SetLocalDescription the transceiver mids are assigned, so p can
 			// be told which mid carries which {participantID, kind} it now receives.

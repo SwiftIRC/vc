@@ -336,6 +336,218 @@ func TestRemovePeerDropsTracksAndRenegotiates(t *testing.T) {
 	waitForTracksWithout(t, p2.gotTracks, "p1", "camera")
 }
 
+// TestGlareScreenshareConverges exercises perfect-negotiation glare handling for a
+// client-initiated (screenshare) renegotiation. p1 publishes camera and connects;
+// p2 then joins and publishes, and driving p2's RTP makes the server capture p2's
+// track and renegotiate p1 (a server -> p1 offer). At nearly the same moment p1
+// publishes a screenshare — a client offer that collides with the server's
+// in-flight offer to p1. The impolite server ignores the glaring offer; the polite
+// client rolls its own offer back, answers the server, then re-offers the
+// screenshare once the connection settles. The session must CONVERGE: p1 stays
+// Connected and p2 eventually receives BOTH of p1's tracks (camera + screen).
+func TestGlareScreenshareConverges(t *testing.T) {
+	s := testSFU(t)
+
+	p1 := newTestClient(t, s, "room", "p1")
+	cam := p1.publish("camera")
+	p1.waitConnected()
+	writeTestRTPLoop(t, cam) // server captures p1:camera
+	waitFor(t, func() bool { return s.hasTrack("room", "p1:camera") })
+
+	// p2 joins and publishes; its RTP makes the server capture p2:mic and
+	// renegotiate p1 (adding p2:mic as a sender) — the server-initiated offer.
+	p2 := newTestClient(t, s, "room", "p2")
+	mic := p2.publish("mic")
+	p2.waitConnected()
+	writeTestRTPLoop(t, mic)
+
+	// Glare: publish the screenshare immediately, so p1's client offer races the
+	// server's renegotiation offer to p1.
+	screen := p1.publish("screen")
+	writeTestRTPLoop(t, screen) // drive RTP so the server captures p1:screen once negotiated
+
+	// Convergence: p1 must remain Connected and p2 must receive both p1 tracks.
+	p1.waitConnected()
+
+	got := map[string]bool{"camera": false, "screen": false}
+	deadline := time.After(20 * time.Second)
+	for !(got["camera"] && got["screen"]) {
+		select {
+		case tr := <-p2.gotTrack:
+			if tr.StreamID() == "p1" {
+				if _, ok := got[tr.ID()]; ok {
+					got[tr.ID()] = true
+				}
+			}
+		case <-deadline:
+			t.Fatalf("p2 did not receive both p1 tracks (camera+screen); got %+v", got)
+		}
+	}
+
+	if st := p1.pc.ConnectionState(); st != webrtc.PeerConnectionStateConnected {
+		t.Fatalf("p1 did not end Connected: %v", st)
+	}
+}
+
+// TestClientOfferDefersUntilServerSettles deterministically exercises the polite
+// client's glare handling (the natural race in TestGlareScreenshareConverges is
+// timing-sensitive and only rarely collides in-process). It pins the server as
+// "mid-offer", publishes a screenshare, and asserts the client DEFERS its offer —
+// staying stable rather than stranding itself in have-local-offer, which Pion
+// cannot roll back out of — then, once a real server renegotiation settles the
+// peer, the deferred screenshare offer is flushed and reaches the server.
+func TestClientOfferDefersUntilServerSettles(t *testing.T) {
+	s := testSFU(t)
+	p1 := newTestClient(t, s, "room", "p1")
+	p1.publish("camera")
+	p1.waitConnected()
+
+	// Pretend a server-initiated renegotiation of p1 is in flight.
+	p1.server.mu.Lock()
+	p1.server.makingOffer = true
+	p1.server.mu.Unlock()
+
+	screen := p1.publish("screen") // onNegotiationNeeded -> tryOfferLocked -> defers
+
+	// The offer must be deferred (pending), not applied: the client stays stable.
+	waitFor(t, func() bool {
+		p1.server.mu.Lock()
+		defer p1.server.mu.Unlock()
+		return p1.offerPending
+	})
+	if st := p1.pc.SignalingState(); st != webrtc.SignalingStateStable {
+		t.Fatalf("deferred client must stay stable (Pion has no rollback), got %v", st)
+	}
+	if s.hasTrack("room", "p1:screen") {
+		t.Fatal("screen offer reached the server while it should have been deferred")
+	}
+
+	// Server renegotiation settles; a real server offer to p1 (from p2 publishing)
+	// then flushes the deferred screenshare offer.
+	p1.server.mu.Lock()
+	p1.server.makingOffer = false
+	p1.server.mu.Unlock()
+
+	p2 := newTestClient(t, s, "room", "p2")
+	mic := p2.publish("mic")
+	p2.waitConnected()
+	writeTestRTPLoop(t, mic)    // capture p2:mic -> server renegotiates p1 -> flush
+	writeTestRTPLoop(t, screen) // once flushed & negotiated, RTP lets the server capture it
+
+	waitFor(t, func() bool { return s.hasTrack("room", "p1:screen") })
+	if st := p1.pc.ConnectionState(); st != webrtc.PeerConnectionStateConnected {
+		t.Fatalf("p1 not Connected after the deferred offer converged: %v", st)
+	}
+}
+
+// clientOfferSDP builds a well-formed client offer (one video track) for feeding
+// to a server Peer's HandleOffer, without wiring up a full testClient.
+func clientOfferSDP(t *testing.T, streamID string) string {
+	t.Helper()
+	pc, err := clientAPI(t).NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	tr, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "screen", streamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pc.AddTrack(tr); err != nil {
+		t.Fatal(err)
+	}
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pc.SetLocalDescription(offer); err != nil {
+		t.Fatal(err)
+	}
+	return offer.SDP
+}
+
+// TestHandleOfferIgnoresGlare directly exercises the server's *impolite* side of
+// perfect negotiation: a client offer that arrives while the server is mid
+// renegotiation (or has a server offer in flight) must be IGNORED — HandleOffer
+// returns nil without applying the remote offer or sending an answer — so it does
+// not clobber the server's own in-flight offer. (The polite client re-offers once
+// the server settles; the convergence test covers that end to end.)
+func TestHandleOfferIgnoresGlare(t *testing.T) {
+	t.Run("not stable (server offer in flight)", func(t *testing.T) {
+		s := testSFU(t)
+		var mu sync.Mutex
+		answers := 0
+		p, err := s.AddPeer("room", "p1", SignalerFunc(func(v any) bool {
+			if _, ok := v.(signal.Answer); ok {
+				mu.Lock()
+				answers++
+				mu.Unlock()
+			}
+			return true
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Put the server PC into have-local-offer, as if mid server renegotiation.
+		tr, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "camera", "p1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.pc.AddTrack(tr); err != nil {
+			t.Fatal(err)
+		}
+		offer, err := p.pc.CreateOffer(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := p.pc.SetLocalDescription(offer); err != nil {
+			t.Fatal(err)
+		}
+		if p.pc.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
+			t.Fatalf("precondition: want have-local-offer, got %v", p.pc.SignalingState())
+		}
+
+		if err := p.HandleOffer(clientOfferSDP(t, "c")); err != nil {
+			t.Fatalf("HandleOffer on glare returned error: %v", err)
+		}
+		if st := p.pc.SignalingState(); st != webrtc.SignalingStateHaveLocalOffer {
+			t.Errorf("glare offer changed signaling state to %v; want it left at have-local-offer", st)
+		}
+		if p.pc.CurrentRemoteDescription() != nil || p.pc.PendingRemoteDescription() != nil {
+			t.Error("glare offer was applied as a remote description; want it ignored")
+		}
+		mu.Lock()
+		got := answers
+		mu.Unlock()
+		if got != 0 {
+			t.Errorf("server sent %d answers on glare; want 0 (impolite ignore)", got)
+		}
+	})
+
+	t.Run("makingOffer flag set", func(t *testing.T) {
+		s := testSFU(t)
+		p, err := s.AddPeer("room", "p1", SignalerFunc(func(any) bool { return true }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Stable signaling state, but a server offer is being created (makingOffer).
+		p.mu.Lock()
+		p.makingOffer = true
+		p.mu.Unlock()
+
+		if err := p.HandleOffer(clientOfferSDP(t, "c")); err != nil {
+			t.Fatalf("HandleOffer returned error: %v", err)
+		}
+		if st := p.pc.SignalingState(); st != webrtc.SignalingStateStable {
+			t.Errorf("glare offer moved signaling state to %v; want stable (ignored)", st)
+		}
+		if p.pc.CurrentRemoteDescription() != nil || p.pc.PendingRemoteDescription() != nil {
+			t.Error("glare offer was applied while makingOffer; want it ignored")
+		}
+	})
+}
+
 // --- Shared test helpers (built in Task 3; reused by Tasks 3–9) ---
 
 // waitForTracksWithout waits until a Tracks signaling frame arrives that no longer

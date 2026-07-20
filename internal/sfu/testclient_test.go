@@ -26,8 +26,21 @@ func clientAPI(t *testing.T) *webrtc.API {
 }
 
 // testClient is a synthetic in-process peer: a client-side PeerConnection whose
-// signaling is looped back into an SFU Peer. It plays the browser's role
-// (polite peer): answers server offers, sends its own offer when it publishes.
+// signaling is looped back into an SFU Peer. It plays the browser's role, a
+// *polite* perfect-negotiation peer: it answers server offers and drives its own
+// offers from OnNegotiationNeeded.
+//
+// Real browsers resolve a glare (a client offer racing a server offer) by rolling
+// their own offer back and re-offering. Pion v4.2.17 has NO SDP rollback of any
+// kind (no local rollback, no implicit rollback via SetRemoteDescription), so a
+// Pion polite peer cannot recover once it is stuck in have-local-offer. This
+// harness therefore emulates politeness the only way two rollback-less Pion peers
+// can converge: it never *creates* a colliding local offer. Its own offer is
+// created and applied to the server atomically under the server Peer's mutex; if
+// the server is mid-renegotiation, the offer is deferred and retried once the
+// server settles. The server's impolite ignore-on-collision (HandleOffer) is the
+// real product code and is exercised directly by TestHandleOfferIgnoresGlare; it
+// is correct for the Plan-3 browser client, which can roll back.
 type testClient struct {
 	t         *testing.T
 	id        string
@@ -35,6 +48,12 @@ type testClient struct {
 	pc        *webrtc.PeerConnection
 	gotTrack  chan *webrtc.TrackRemote
 	gotTracks chan signal.Tracks
+
+	// offerPending records that a locally-added track needs an offer but the server
+	// was mid-renegotiation (glare); it is retried once the server settles. Guarded
+	// by server.mu so the "is the server making an offer?" check and the offer's
+	// creation/application are atomic against signalPeerConnections.
+	offerPending bool
 }
 
 func newTestClient(t *testing.T, s *SFU, slug, id string) *testClient {
@@ -61,13 +80,61 @@ func newTestClient(t *testing.T, s *SFU, slug, id string) *testClient {
 		_ = tc.server.HandleCandidate(raw)
 	})
 	pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) { tc.gotTrack <- tr })
+	// Drive the client's own offers from OnNegotiationNeeded, the browser's
+	// perfect-negotiation entry point.
+	pc.OnNegotiationNeeded(tc.onNegotiationNeeded)
 	return tc
+}
+
+// onNegotiationNeeded fires when a locally-added track needs an offer. The polite
+// client records the intent and tries to send it, coordinating with the server's
+// own renegotiations via server.mu.
+func (tc *testClient) onNegotiationNeeded() {
+	p := tc.server
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	tc.offerPending = true
+	tc.tryOfferLocked()
+}
+
+// tryOfferLocked sends the client's pending offer iff the server is stable. If the
+// server is mid-offer (glare) the offer stays pending and is retried when the
+// server's offer settles (see fromServer's signal.Offer case). The caller holds
+// server.mu, and handleOfferLocked runs under that same lock, so the client's
+// offer is created and applied to the server atomically: no server offer can slip
+// in between and strand the client in have-local-offer — a state Pion cannot roll
+// back out of. This is the Pion-compatible stand-in for a browser's rollback.
+func (tc *testClient) tryOfferLocked() {
+	p := tc.server
+	if !tc.offerPending {
+		return
+	}
+	if p.makingOffer || p.pc.SignalingState() != webrtc.SignalingStateStable {
+		return // server busy: stay pending, retry after its offer settles
+	}
+	offer, err := tc.pc.CreateOffer(nil)
+	if err != nil {
+		return
+	}
+	if err := tc.pc.SetLocalDescription(offer); err != nil {
+		return
+	}
+	tc.offerPending = false
+	_ = p.handleOfferLocked(offer.SDP)
 }
 
 // fromServer handles a signaling frame the SFU sent to this client.
 func (tc *testClient) fromServer(v any) {
 	switch m := v.(type) {
 	case signal.Offer:
+		// Answer a server-initiated offer. Hold server.mu across the whole
+		// transaction so it serializes with the client's own tryOfferLocked (both
+		// mutate the client and server PeerConnections). After answering, flush any
+		// offer that a glare had deferred — the server is stable again now, so the
+		// deferred screenshare offer goes through here.
+		p := tc.server
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		if err := tc.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: m.SDP}); err != nil {
 			return
 		}
@@ -79,6 +146,7 @@ func (tc *testClient) fromServer(v any) {
 			return
 		}
 		_ = tc.server.HandleAnswer(ans.SDP)
+		tc.tryOfferLocked()
 	case signal.Answer:
 		_ = tc.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: m.SDP})
 	case signal.Candidate:
@@ -91,7 +159,11 @@ func (tc *testClient) fromServer(v any) {
 	}
 }
 
-// publish adds a track (kind = "mic"|"camera"|"screen") and drives a client offer.
+// publish adds a track (kind = "mic"|"camera"|"screen"). Adding the track makes
+// Pion fire OnNegotiationNeeded, which drives the client's offer via
+// onNegotiationNeeded — so publishing a screenshare mid-call goes through the same
+// polite path and is transparently deferred/retried if it glares with a
+// concurrent server renegotiation.
 func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 	tc.t.Helper()
 	mime := webrtc.MimeTypeVP8
@@ -104,16 +176,6 @@ func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 		tc.t.Fatal(err)
 	}
 	if _, err := tc.pc.AddTrack(track); err != nil {
-		tc.t.Fatal(err)
-	}
-	offer, err := tc.pc.CreateOffer(nil)
-	if err != nil {
-		tc.t.Fatal(err)
-	}
-	if err := tc.pc.SetLocalDescription(offer); err != nil {
-		tc.t.Fatal(err)
-	}
-	if err := tc.server.HandleOffer(offer.SDP); err != nil {
 		tc.t.Fatal(err)
 	}
 	return track
