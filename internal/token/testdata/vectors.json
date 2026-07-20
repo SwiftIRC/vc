@@ -1,0 +1,50 @@
+[
+  {
+    "name": "valid-op",
+    "secret": "test-secret-0123456789abcdef",
+    "token": "eyJjIjoiI3N3aWZ0IiwiciI6InN3aWZ0IiwiYSI6IlJ5YW4iLCJuIjoiUnlhbiIsIm8iOiJvcCIsImYiOjEsImkiOjE3NTMwMDAwMDAsImUiOjE3NTMwMDA2MDB9.qPFYFM4RU3-42gHb1S58k1NDwZxbrs8XhSeBZcWV7xU",
+    "now": 1753000100,
+    "want": "ok",
+    "claims": {
+      "c": "#swift",
+      "r": "swift",
+      "a": "Ryan",
+      "n": "Ryan",
+      "o": "op",
+      "f": 1,
+      "i": 1753000000,
+      "e": 1753000600
+    }
+  },
+  {
+    "name": "valid-user",
+    "secret": "test-secret-0123456789abcdef",
+    "token": "eyJjIjoiI2hlbHAiLCJyIjoiaGVscCIsImEiOiJhbGljZSIsIm4iOiJhbGljZXxhd2F5IiwibyI6InVzZXIiLCJmIjowLCJpIjoxNzUzMDAwMDAwLCJlIjoxNzUzMDAwNjAwfQ.m1KQ-FVTN6tVKRXjrLFWzas6dRMEZKF6CUBoPVruE1s",
+    "now": 1753000100,
+    "want": "ok",
+    "claims": {
+      "c": "#help",
+      "r": "help",
+      "a": "alice",
+      "n": "alice|away",
+      "o": "user",
+      "f": 0,
+      "i": 1753000000,
+      "e": 1753000600
+    }
+  },
+  {
+    "name": "expired",
+    "secret": "test-secret-0123456789abcdef",
+    "token": "eyJjIjoiI3N3aWZ0IiwiciI6InN3aWZ0IiwiYSI6IlJ5YW4iLCJuIjoiUnlhbiIsIm8iOiJvcCIsImYiOjEsImkiOjE3NTMwMDAwMDAsImUiOjE3NTMwMDA2MDB9.qPFYFM4RU3-42gHb1S58k1NDwZxbrs8XhSeBZcWV7xU",
+    "now": 1753000600,
+    "want": "expired"
+  },
+  {
+    "name": "bad-signature",
+    "secret": "test-secret-0123456789abcdef",
+    "token": "eyJjIjoiI3N3aWZ0IiwiciI6InN3aWZ0IiwiYSI6IlJ5YW4iLCJuIjoiUnlhbiIsIm8iOiJvcCIsImYiOjEsImkiOjE3NTMwMDAwMDAsImUiOjE3NTMwMDA2MDB9.P_QI6JOHM_nQq8mcsnlmFd7Q68K2qAsUGlwUP2gqDmk",
+    "now": 1753000100,
+    "want": "bad-signature"
+  }
+]
