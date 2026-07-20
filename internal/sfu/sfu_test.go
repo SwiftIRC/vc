@@ -41,6 +41,31 @@ func TestPublishStoresLocalTrack(t *testing.T) {
 	}
 }
 
+func TestFanOutDeliversTrackToOtherPeer(t *testing.T) {
+	s := testSFU(t)
+	p1 := newTestClient(t, s, "room", "p1")
+	p2 := newTestClient(t, s, "room", "p2")
+	p2.publish("mic") // p2 must offer too so it has a live PC to receive on
+	p2.waitConnected()
+	track := p1.publish("camera")
+	p1.waitConnected()
+	writeTestRTPLoop(t, track) // background writer until test ends
+	select {
+	case tr := <-p2.gotTrack:
+		if tr.StreamID() != "p1" {
+			t.Errorf("received track stream = %q, want p1", tr.StreamID())
+		}
+		// read at least one RTP packet through the fan-out
+		buf := make([]byte, 1500)
+		tr.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, _, err := tr.Read(buf); err != nil {
+			t.Fatalf("no RTP forwarded: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("p2 never received p1's track")
+	}
+}
+
 // --- Shared test helpers (built in Task 3; reused by Tasks 3–9) ---
 
 // waitFor polls pred until true or a 5s deadline (fatal on timeout).
