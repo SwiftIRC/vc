@@ -62,7 +62,21 @@ func (p *Peer) handleOfferLocked(sdp string) error {
 }
 
 func (p *Peer) HandleAnswer(sdp string) error {
-	return p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp})
+	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp}); err != nil {
+		return err
+	}
+	// This peer just returned to stable, so reconcile in case senders were added
+	// while it was in have-local-offer and could not be offered then (they persist
+	// in the room's reneg set). Run it on a goroutine, not inline: signaling
+	// delivery is asynchronous in production (offers are enqueued to a write pump),
+	// but the in-process test harness delivers a server offer by a direct call
+	// chain (sig.Send -> client answers -> HandleAnswer) while holding this peer's
+	// lock, so an inline reconcile would re-enter signalPeerConnections and
+	// self-deadlock on p.mu. A goroutine matches the real async delivery and is
+	// harmless either way. It is idempotent: a reconcile with nothing pending in
+	// reneg sends no offer, so it converges and cannot loop.
+	go p.sfu.signalPeerConnections(p.slug)
+	return nil
 }
 
 func (p *Peer) HandleCandidate(raw json.RawMessage) error {

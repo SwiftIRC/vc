@@ -16,6 +16,13 @@ import (
 // keyframe (PLI), so subscribers that joined mid-stream can start decoding.
 const keyFrameInterval = 3 * time.Second
 
+// renegRetryDelay is how long signalPeerConnections waits before rescheduling
+// itself after a renegotiation pass exhausts its in-pass retries without
+// converging (a peer stuck in have-local-offer longer than the pass's ~500ms
+// budget). Matches the sfu-ws reference pattern's 3s reschedule. A package var
+// so tests can shrink it.
+var renegRetryDelay = 3 * time.Second
+
 type localTrack struct {
 	publisherID string
 	kind        string // mic|camera|screen
@@ -27,6 +34,15 @@ type localTrack struct {
 type mroom struct {
 	peers  map[string]*Peer
 	tracks map[string]*localTrack // key = publisherID + ":" + kind
+
+	// reneg is the set of peer IDs whose sender set has changed but whose
+	// renegotiation offer has not yet been delivered. It persists ACROSS
+	// signalPeerConnections invocations, guarded by SFU.mu: a peer that was
+	// reconciled (a sender added/removed) but could not be offered — because its
+	// PC was still in have-local-offer — stays in reneg until an offer succeeds.
+	// Without this, a later pass would see the sender already present on the PC
+	// (changed=false) and never offer it, permanently starving the subscriber.
+	reneg map[string]bool
 
 	// ticker fires keyFrameInterval to PLI every video publisher; its goroutine
 	// exits when done is closed (in RemovePeer, once the room empties).
@@ -51,6 +67,7 @@ func (s *SFU) roomLocked(slug string) *mroom {
 		r = &mroom{
 			peers:  map[string]*Peer{},
 			tracks: map[string]*localTrack{},
+			reneg:  map[string]bool{},
 			ticker: time.NewTicker(keyFrameInterval),
 			done:   make(chan struct{}),
 		}
@@ -150,12 +167,6 @@ func (s *SFU) signalPeerConnections(slug string) {
 		signalBackoff     = 20 * time.Millisecond
 	)
 
-	// pending accumulates peers awaiting a successful renegotiation offer across
-	// retry attempts: a peer stays pending until its offer is sent (or it leaves
-	// the room), so a CreateOffer that failed mid-flight is retried even though a
-	// later sync pass finds its senders already reconciled.
-	pending := map[string]*Peer{}
-
 	for attempt := 0; attempt < maxSignalAttempts; attempt++ {
 		s.mu.Lock()
 		r := s.rooms[slug]
@@ -163,27 +174,33 @@ func (s *SFU) signalPeerConnections(slug string) {
 			s.mu.Unlock()
 			return
 		}
-		// Drop pending peers that have left the room.
-		for id := range pending {
+		// Drop reneg entries for peers that have left the room.
+		for id := range r.reneg {
 			if _, ok := r.peers[id]; !ok {
-				delete(pending, id)
+				delete(r.reneg, id)
 			}
 		}
-		// Reconcile every peer's senders; mark changed peers for renegotiation and
-		// collect the video tracks freshly forwarded to a new subscriber so their
-		// publishers can be PLI'd (outside s.mu) once the offers are sent.
+		// Reconcile every peer's senders; mark changed peers into the room's
+		// persistent reneg set and collect the video tracks freshly forwarded to a
+		// new subscriber so their publishers can be PLI'd (outside s.mu) once the
+		// offers are sent. reneg persists across invocations, so a peer whose
+		// senders were reconciled but could not be offered (its PC was still in
+		// have-local-offer) stays pending here even after a later sync pass finds
+		// those senders already present (changed=false) — that is exactly the
+		// starvation this recovers from.
 		var newVideo []*localTrack
 		for id, p := range r.peers {
 			changed, added := syncPeerSendersLocked(p, r.tracks)
 			if changed {
-				pending[id] = p
+				r.reneg[id] = true
 			}
 			newVideo = append(newVideo, added...)
 		}
-		// Snapshot pending peers so renegotiation runs without holding s.mu.
-		todo := make([]*Peer, 0, len(pending))
-		for _, p := range pending {
-			todo = append(todo, p)
+		// Snapshot the peers still awaiting an offer so renegotiation runs without
+		// holding s.mu. The drop above guarantees every reneg id is a live peer.
+		todo := make([]*Peer, 0, len(r.reneg))
+		for id := range r.reneg {
+			todo = append(todo, r.peers[id])
 		}
 		s.mu.Unlock()
 
@@ -204,8 +221,8 @@ func (s *SFU) signalPeerConnections(slug string) {
 			p.makingOffer = true
 			offer, err := p.pc.CreateOffer(nil)
 			if err != nil {
-				// A renegotiation is mid-flight (signaling state not stable);
-				// keep p pending and retry the whole pass shortly.
+				// A renegotiation is mid-flight (signaling state not stable); leave p
+				// in reneg and retry the whole pass shortly.
 				p.makingOffer = false
 				p.mu.Unlock()
 				retry = true
@@ -219,11 +236,16 @@ func (s *SFU) signalPeerConnections(slug string) {
 			}
 			p.makingOffer = false
 			p.mu.Unlock()
-			p.sig.Send(signal.Offer{SDP: offer.SDP})
+			if !p.sig.Send(signal.Offer{SDP: offer.SDP}) {
+				s.log.Debug("media offer dropped (send overflow/closing)", "peer", p.id)
+			}
 			// After SetLocalDescription the transceiver mids are assigned, so p can
 			// be told which mid carries which {participantID, kind} it now receives.
 			p.sig.Send(signal.Tracks{Tracks: peerTrackInfos(p)})
-			delete(pending, p.id)
+			// Offer delivered: p no longer needs renegotiation.
+			s.mu.Lock()
+			delete(r.reneg, p.id)
+			s.mu.Unlock()
 		}
 		// Ask each newly-subscribed video's publisher for a keyframe so the new
 		// subscriber can start decoding without waiting for the room ticker.
@@ -235,6 +257,20 @@ func (s *SFU) signalPeerConnections(slug string) {
 		}
 		time.Sleep(signalBackoff)
 	}
+
+	// The in-pass retries were exhausted while a peer was still un-offerable
+	// (e.g. stuck in have-local-offer beyond the ~500ms budget). Unlike a fresh
+	// pass — which would find the peer's senders already reconciled
+	// (changed=false) and never offer — reschedule the whole reconcile after a
+	// delay, matching the sfu-ws reference pattern, so the peer is retried once
+	// its earlier offer has had time to be answered. A reschedule that lands
+	// after the room is torn down is a safe no-op: signalPeerConnections looks
+	// the room up under s.mu and returns early when it is gone.
+	s.log.Warn("renegotiation did not converge; rescheduling", "slug", slug)
+	go func() {
+		time.Sleep(renegRetryDelay)
+		s.signalPeerConnections(slug)
+	}()
 }
 
 // syncPeerSendersLocked reconciles peer p's outbound RTP senders with the room's

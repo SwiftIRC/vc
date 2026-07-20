@@ -548,6 +548,127 @@ func TestHandleOfferIgnoresGlare(t *testing.T) {
 	})
 }
 
+// TestRecoversStrandedRenegotiation reproduces the abandoned-renegotiation bug
+// and asserts the subscriber recovers. A subscriber (p2) is offered one track
+// (O1) and left in have-local-offer; a SECOND track (screen) is then reconciled
+// onto its PC but cannot be offered while O1 is unanswered, so
+// signalPeerConnections' in-pass retries exhaust with the screen sender
+// added-but-unsignaled. Before the fix, once O1 is finally answered the next
+// reconcile sees the sender already present (changed=false) and never offers it,
+// so p2 is permanently starved. The fix persists the "needs offer" state
+// (mroom.reneg) and, when the peer returns to stable, re-reconciles
+// (HandleAnswer) and reschedules on exhaustion — so p2 is eventually offered the
+// screen track. This is a deterministic RED->GREEN: without the reneg
+// persistence + re-reconcile p2 is never offered screen (a fresh pass finds
+// nothing changed); with it, it is.
+//
+// Recovery is asserted via the prompt HandleAnswer re-reconcile (1b), which does
+// not depend on the reschedule delay. The exhaustion reschedule (1a) drains the
+// same reneg set on a timer; the test does NOT shrink renegRetryDelay because
+// that package var is read lock-free by background reschedule goroutines, so a
+// test-side write to it would data-race under -race (no happens-before edge).
+func TestRecoversStrandedRenegotiation(t *testing.T) {
+	s := testSFU(t)
+
+	var mu sync.Mutex
+	var p2offers []string
+	p2, err := s.AddPeer("room", "p2", SignalerFunc(func(v any) bool {
+		if o, ok := v.(signal.Offer); ok {
+			mu.Lock()
+			p2offers = append(p2offers, o.SDP)
+			mu.Unlock()
+		}
+		return true
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, err := s.AddPeer("room", "p1", SignalerFunc(func(any) bool { return true }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.RemovePeer("room", "p1"); s.RemovePeer("room", "p2") })
+
+	// A client PC to answer p2's first server offer on our schedule, so we control
+	// exactly when p2 leaves have-local-offer.
+	cli, err := clientAPI(t).NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cli.Close() })
+
+	inject := func(kind string) {
+		t.Helper()
+		local, err := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, kind, p1.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.mu.Lock()
+		s.rooms["room"].tracks[p1.id+":"+kind] = &localTrack{
+			publisherID: p1.id, kind: kind, track: local, publisher: p1,
+		}
+		s.mu.Unlock()
+	}
+	lastOffer := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(p2offers) == 0 {
+			return ""
+		}
+		return p2offers[len(p2offers)-1]
+	}
+	offeredScreen := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, sdp := range p2offers {
+			if strings.Contains(sdp, "screen") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 1) p1 publishes camera -> p2 is offered O1 (camera) and enters have-local-offer.
+	inject("camera")
+	s.signalPeerConnections("room")
+	o1 := lastOffer()
+	if o1 == "" || strings.Contains(o1, "screen") {
+		t.Fatalf("precondition: want a camera-only first offer; empty=%v hasScreen=%v", o1 == "", strings.Contains(o1, "screen"))
+	}
+	if st := p2.pc.SignalingState(); st != webrtc.SignalingStateHaveLocalOffer {
+		t.Fatalf("precondition: p2 want have-local-offer, got %v", st)
+	}
+
+	// 2) p1 publishes screen while O1 is unanswered: the screen sender is reconciled
+	// onto p2 but cannot be offered (p2 is in have-local-offer), so this pass
+	// exhausts its retries with the screen sender added-but-unsignaled.
+	inject("screen")
+	s.signalPeerConnections("room")
+	if offeredScreen() {
+		t.Fatal("screen was offered while p2 was still in have-local-offer; cannot observe recovery")
+	}
+
+	// 3) Answer O1 so p2 returns to stable. Recovery must re-offer the stranded
+	// screen sender (HandleAnswer re-reconcile, with the reschedule as backstop).
+	if err := cli.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: o1}); err != nil {
+		t.Fatalf("client SetRemoteDescription(O1): %v", err)
+	}
+	ans, err := cli.CreateAnswer(nil)
+	if err != nil {
+		t.Fatalf("client CreateAnswer: %v", err)
+	}
+	if err := cli.SetLocalDescription(ans); err != nil {
+		t.Fatalf("client SetLocalDescription: %v", err)
+	}
+	if err := p2.HandleAnswer(ans.SDP); err != nil {
+		t.Fatalf("HandleAnswer(O1): %v", err)
+	}
+
+	// The previously-stranded screen sender must now be offered to p2.
+	waitFor(t, offeredScreen)
+}
+
 // --- Shared test helpers (built in Task 3; reused by Tasks 3–9) ---
 
 // waitForTracksWithout waits until a Tracks signaling frame arrives that no longer
