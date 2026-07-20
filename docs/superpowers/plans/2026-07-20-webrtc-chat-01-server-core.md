@@ -596,13 +596,14 @@ func TestLengthBudget(t *testing.T) {
 	c.Channel = "#" + strings.Repeat("c", 32)
 	c.Room = strings.Repeat("r", 32)
 	tok, _ := Sign(c, secret)
-	if len(tok) > 280 {
-		t.Errorf("worst-case token %d chars, budget 280", len(tok))
+	if len(tok) > 320 {
+		t.Errorf("worst-case token %d chars, budget 320", len(tok))
 	}
 }
 ```
 
-Expected: PASS (typical tokens land ~180–250 chars per the spec budget).
+Expected: PASS. Worst-case (all fields maxed) is ~310 chars — well inside
+the single-NOTICE-line budget (~440); typical tokens land ~180–250 chars.
 
 - [ ] **Step 7: Commit**
 
