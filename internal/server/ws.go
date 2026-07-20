@@ -97,6 +97,12 @@ func (c *wsClient) writePump() {
 	}
 }
 
+// withTimeout derives a read context bounded by both the client lifetime
+// and d.
+func (c *wsClient) withTimeout(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(c.ctx, d)
+}
+
 // readNext blocks for one client frame and decodes it.
 func (c *wsClient) readNext(ctx context.Context) (any, error) {
 	typ, data, err := c.conn.Read(ctx)
