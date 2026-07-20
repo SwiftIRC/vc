@@ -167,8 +167,36 @@ func reject(c *wsClient, e signal.Error) {
 	}
 }
 
-// dispatch handles in-room commands. Filled in by Task 9.
-func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {}
+const maxChatRunes = 2000
+
+// dispatch handles in-room commands after join. Moderation errors are
+// private to the actor; successes broadcast via the Room.
+func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
+	var err error
+	switch m := v.(type) {
+	case *signal.Chat:
+		text := strings.TrimSpace(m.Text)
+		if text == "" || len([]rune(text)) > maxChatRunes {
+			h.log.Debug("chat dropped", "from", p.ID, "len", len(m.Text))
+			return
+		}
+		rm.Chat(p.ID, text)
+		return
+	case *signal.SetLock:
+		err = rm.SetLock(p.ID, m.Password)
+	case *signal.Kick:
+		err = rm.Kick(p.ID, m.ID)
+	case *signal.MutePeer:
+		err = rm.MutePeer(p.ID, m.ID, m.Kind)
+	case *signal.Ban:
+		err = rm.Ban(p.ID, m.ID)
+	default:
+		return
+	}
+	if err != nil {
+		p.Conn.Send(signal.Error{Code: errCode(err), Message: err.Error()})
+	}
+}
 
 func roleFromClaim(role string) room.Role {
 	switch role {
