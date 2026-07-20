@@ -170,13 +170,107 @@ func (r *Room) Broadcast(v any, exceptID string) {
 	}
 }
 
-// SetLock: Task 4 ships this minimal version (no role check); Task 5
-// replaces it with the op-gated, broadcasting version.
-func (r *Room) SetLock(actorID, password string) error {
+// requireOp returns the actor if present and op. Callers hold no lock.
+func (r *Room) requireOp(actorID string) (*Participant, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	actor, ok := r.parts[actorID]
+	if !ok {
+		return nil, ErrNoSuchPeer
+	}
+	if actor.Role != RoleOp {
+		return nil, ErrNotOp
+	}
+	return actor, nil
+}
+
+func (r *Room) target(id string) (*Participant, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.parts[id]
+	if !ok {
+		return nil, ErrNoSuchPeer
+	}
+	return p, nil
+}
+
+func (r *Room) Kick(actorID, targetID string) error {
+	actor, err := r.requireOp(actorID)
+	if err != nil {
+		return err
+	}
+	tgt, err := r.target(targetID)
+	if err != nil {
+		return err
+	}
+	tgt.Conn.Send(signal.Kicked{By: actor.Name})
+	tgt.Conn.Close()
+	r.Leave(targetID) // broadcasts PeerLeft
+	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "kick", Target: tgt.Name}, "")
+	return nil
+}
+
+func (r *Room) Ban(actorID, targetID string) error {
+	actor, err := r.requireOp(actorID)
+	if err != nil {
+		return err
+	}
+	tgt, err := r.target(targetID)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	if tgt.Account != "" {
+		r.bannedAccounts[tgt.Account] = struct{}{}
+	} else if tgt.IP != "" {
+		r.bannedIPs[tgt.IP] = struct{}{}
+	}
+	r.mu.Unlock()
+	tgt.Conn.Send(signal.Banned{By: actor.Name})
+	tgt.Conn.Close()
+	r.Leave(targetID)
+	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "ban", Target: tgt.Name}, "")
+	return nil
+}
+
+// MutePeer is a nudge: it tells the target to stop a track. The target may
+// re-enable at will; nothing is torn down. (Plan 2 additionally pauses
+// server-side forwarding of that track until the target re-enables.)
+func (r *Room) MutePeer(actorID, targetID, kind string) error {
+	if kind != "mic" && kind != "camera" && kind != "screen" {
+		return errors.New("room: bad kind")
+	}
+	actor, err := r.requireOp(actorID)
+	if err != nil {
+		return err
+	}
+	tgt, err := r.target(targetID)
+	if err != nil {
+		return err
+	}
+	tgt.Conn.Send(signal.Muted{Kind: kind})
+	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "mute", Target: tgt.Name, Kind: kind}, "")
+	return nil
+}
+
+// SetLock sets (non-empty) or clears (empty) the room password. Op-only.
+func (r *Room) SetLock(actorID, password string) error {
+	actor, err := r.requireOp(actorID)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
 	r.password = password
 	r.locked = password != ""
+	locked := r.locked
+	r.mu.Unlock()
+	if locked {
+		r.Broadcast(signal.RoomLocked{}, "")
+		r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "lock"}, "")
+	} else {
+		r.Broadcast(signal.RoomUnlocked{}, "")
+		r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "unlock"}, "")
+	}
 	return nil
 }
 
