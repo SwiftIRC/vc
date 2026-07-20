@@ -1,0 +1,7 @@
+# Superpowers scratch (progress ledger, briefs, review packages)
+.superpowers/
+
+# Go
+/webrtc-chat
+*.test
+*.out
