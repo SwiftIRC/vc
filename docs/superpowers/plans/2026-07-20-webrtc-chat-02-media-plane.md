@@ -711,9 +711,10 @@ in Task 1 records it. The `trackCount`/`firstTrackKey` accessors live in the
 
 **Interfaces produced (used by Tasks 4, 6, 7):**
 ```go
-func (s *SFU) addLocalTrack(publisherID, kind string, remote *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error)
+func (s *SFU) addLocalTrack(slug, publisherID, kind string, remote *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error)
 func (s *SFU) removeLocalTrack(slug, key string)
 // key convention: publisherID + ":" + kind
+// NOTE: pass slug explicitly (the Peer has p.slug) — do NOT scan rooms for the publisher.
 ```
 
 **Design:** `wireOnTrack` sets `pc.OnTrack`. On a remote track: read `remote.ID()` as
