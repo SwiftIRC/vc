@@ -12,6 +12,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/ryanwohara/webrtc-chat/internal/config"
+	"github.com/ryanwohara/webrtc-chat/internal/signal"
 )
 
 func testSFU(t *testing.T) *SFU {
@@ -235,7 +236,131 @@ func TestRoomTickerStopsOnRemove(t *testing.T) {
 	}
 }
 
+// TestRemovePeerDeletesOnlyDepartedTracks isolates RemovePeer's track cleanup
+// from the publisher read-loop (Task 3, which removes a track when its OnTrack
+// read loop ends on PC close). Tracks are registered directly here, with no read
+// loop attached, so RemovePeer itself is the only thing that can delete them: it
+// must drop exactly the departing peer's tracks and leave every other peer's.
+func TestRemovePeerDeletesOnlyDepartedTracks(t *testing.T) {
+	s := testSFU(t)
+	sink := SignalerFunc(func(any) bool { return true })
+	p1, err := s.AddPeer("room", "p1", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.AddPeer("room", "p2", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Register tracks directly in the room; no OnTrack read loop backs these, so
+	// nothing but RemovePeer will ever delete them.
+	inject := func(pub *Peer, kind string) {
+		local, err := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, kind, pub.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.mu.Lock()
+		s.rooms["room"].tracks[pub.id+":"+kind] = &localTrack{
+			publisherID: pub.id, kind: kind, track: local, publisher: pub,
+		}
+		s.mu.Unlock()
+	}
+	inject(p1, "camera")
+	inject(p1, "screen")
+	inject(p2, "mic")
+
+	s.RemovePeer("room", "p1")
+
+	if s.hasTrack("room", "p1:camera") {
+		t.Error("p1:camera still present after RemovePeer removed p1")
+	}
+	if s.hasTrack("room", "p1:screen") {
+		t.Error("p1:screen still present after RemovePeer removed p1")
+	}
+	if !s.hasTrack("room", "p2:mic") {
+		t.Error("p2:mic (a surviving peer's track) was wrongly deleted")
+	}
+}
+
+// TestRemovePeerDropsTracksAndRenegotiates verifies that when a publisher leaves,
+// RemovePeer deletes the tracks it published and renegotiates the remaining
+// subscribers so they drop the departed sender. p2 subscribes to p1's camera,
+// then p1 is removed: p1:camera must be gone from the room the instant RemovePeer
+// returns, p2's own mic must remain, and p2 must receive a renegotiation whose
+// Tracks metadata no longer advertises p1/camera.
+func TestRemovePeerDropsTracksAndRenegotiates(t *testing.T) {
+	s := testSFU(t)
+
+	// p2 joins first (present when p1 publishes) and publishes mic so it has a
+	// live, connected PC on which to receive p1's forwarded camera. RTP flows on
+	// the mic so the server registers p2:mic — a track that must survive p1's
+	// departure (RemovePeer drops only the departed peer's tracks).
+	p2 := newTestClient(t, s, "room", "p2")
+	mic := p2.publish("mic")
+	p2.waitConnected()
+	writeTestRTPLoop(t, mic)
+	waitFor(t, func() bool { return s.hasTrack("room", "p2:mic") })
+
+	p1 := newTestClient(t, s, "room", "p1")
+	cam := p1.publish("camera")
+	p1.waitConnected()
+	writeTestRTPLoop(t, cam) // drive RTP so the server's OnTrack captures p1's camera
+
+	// p2 must actually be subscribed to p1's camera before p1 departs, so the
+	// removal has a real sender to renegotiate away.
+	select {
+	case tr := <-p2.gotTrack:
+		if tr.StreamID() != "p1" {
+			t.Fatalf("received track stream = %q, want p1", tr.StreamID())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("p2 never received p1's camera")
+	}
+	waitFor(t, func() bool { return s.hasTrack("room", "p1:camera") })
+
+	s.RemovePeer("room", "p1")
+
+	// RemovePeer drops the departed publisher's tracks synchronously under s.mu,
+	// so p1:camera is gone the moment it returns — it must not depend on the
+	// publisher read-loop's asynchronous cleanup winning a race.
+	if s.hasTrack("room", "p1:camera") {
+		t.Error("p1:camera still present immediately after RemovePeer")
+	}
+	if !s.hasTrack("room", "p2:mic") {
+		t.Error("p2:mic should still be present after p1 leaves")
+	}
+
+	// p2 receives a renegotiation offer whose Tracks no longer list p1/camera.
+	waitForTracksWithout(t, p2.gotTracks, "p1", "camera")
+}
+
 // --- Shared test helpers (built in Task 3; reused by Tasks 3–9) ---
+
+// waitForTracksWithout waits until a Tracks signaling frame arrives that no longer
+// advertises the given participant/kind — evidence the peer was renegotiated to
+// drop that forwarded track. Earlier frames that still list it are skipped.
+func waitForTracksWithout(t *testing.T, ch <-chan signal.Tracks, participant, kind string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case tks := <-ch:
+			dropped := true
+			for _, ti := range tks.Tracks {
+				if ti.ParticipantID == participant && ti.Kind == kind {
+					dropped = false
+				}
+			}
+			if dropped {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no renegotiation dropping %s/%s", participant, kind)
+		}
+	}
+}
 
 // waitFor polls pred until true or a 5s deadline (fatal on timeout).
 func waitFor(t *testing.T, pred func() bool) {
@@ -297,6 +422,16 @@ func (s *SFU) trackCount(slug string) int {
 		return len(r.tracks)
 	}
 	return 0
+}
+
+func (s *SFU) hasTrack(slug, key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.rooms[slug]; r != nil {
+		_, ok := r.tracks[key]
+		return ok
+	}
+	return false
 }
 
 func (s *SFU) firstTrackKey(slug string) string {

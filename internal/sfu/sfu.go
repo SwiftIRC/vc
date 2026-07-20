@@ -352,7 +352,15 @@ func (s *SFU) RemovePeer(slug, peerID string) {
 	}
 	p := r.peers[peerID]
 	delete(r.peers, peerID)
-	// Task 7 also deletes this peer's published tracks here and renegotiates others.
+	// Drop every track this peer published so remaining subscribers stop
+	// forwarding it. The publisher's OnTrack read loop also deletes these (via
+	// removeLocalTrack) when its PC closes, so deleting a key here that is already
+	// gone — or gone later — is a safe no-op; whichever runs first wins.
+	for key, lt := range r.tracks {
+		if lt.publisherID == peerID {
+			delete(r.tracks, key)
+		}
+	}
 	empty := len(r.peers) == 0
 	if empty {
 		delete(s.rooms, slug)
@@ -361,6 +369,17 @@ func (s *SFU) RemovePeer(slug, peerID string) {
 		close(r.done)
 	}
 	s.mu.Unlock()
+
+	// Renegotiate the survivors so each drops the departed peer's sender. Done
+	// after releasing s.mu (signalPeerConnections locks internally and runs
+	// CreateOffer/Send lock-free) and only while peers remain — if the room was
+	// deleted, there is nobody left to signal. A concurrent read-loop pass is
+	// idempotent, so both running is harmless.
+	if !empty {
+		s.signalPeerConnections(slug)
+	}
+	// Close the departed peer's PC after releasing s.mu so its read-loop's own
+	// removeLocalTrack can acquire s.mu without deadlocking.
 	if p != nil {
 		p.pc.Close()
 	}
