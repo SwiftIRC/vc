@@ -256,8 +256,8 @@ ban) and the lock toggle.
 - **Integration degradation:** if webrtc-chat is down, `!vc` still posts the
   URL but the module reports the room unreachable; if Anope is down, existing
   rooms keep running (webrtc-chat never depends on Anope at runtime).
-- **Observability:** structured logs; Prometheus metrics endpoint (rooms,
-  participants, per-track packet loss); pprof.
+- **Observability:** structured logs. (Prometheus metrics + pprof were
+  descoped by decision on 2026-07-20 — not built; structured logs only.)
 
 ## Testing
 
@@ -271,8 +271,14 @@ ban) and the lock toggle.
 3. **Module tests** — token generation against Go-side validation (shared
    test vectors so both implementations agree byte-for-byte); settings
    storage/retrieval against a dev Anope 2.1 instance.
-4. **Browser E2E** — Playwright + Chromium fake media devices: join, video
-   renders, chat, screen share, op controls.
+4. **Browser client verification** — Playwright E2E was descoped by decision on
+   2026-07-20. The vanilla-JS client is instead verified by (a) unit tests of
+   its pure logic (signaling state machine, message encode/decode, negotiation
+   role/rollback decisions) run headlessly, and (b) a documented manual test
+   checklist exercised in a real browser (join, video renders, chat, screen
+   share, op controls, glare convergence, reconnect-on-kick-suppressed). The
+   Pion-no-rollback limitation means true polite-peer glare convergence is only
+   observable in a real browser — so it lives on the manual checklist.
 5. **Load sanity** — script driving ~30 synthetic publishers across rooms to
    validate the target envelope on real hardware.
 
