@@ -70,6 +70,13 @@ func (c *wsClient) Close() {
 	c.once.Do(func() { c.cancel() })
 }
 
+// CloseAfter closes the client after d. time.AfterFunc schedules c.Close (which
+// is idempotent), so the notification frame flushes during d and the socket is
+// then torn down deterministically.
+func (c *wsClient) CloseAfter(d time.Duration) {
+	time.AfterFunc(d, c.Close)
+}
+
 func (c *wsClient) done() <-chan struct{} { return c.ctx.Done() }
 
 func (c *wsClient) writePump() {

@@ -24,6 +24,10 @@ const (
 type Conn interface {
 	Send(v any) bool
 	Close()
+	// CloseAfter closes the connection after d elapses. Used to evict a
+	// kicked/banned client after its notification frame has been delivered,
+	// without racing the frame write (the socket stays open during d).
+	CloseAfter(d time.Duration)
 }
 
 type Participant struct {
@@ -52,6 +56,12 @@ var (
 	ErrNotOp          = errors.New("room: not op")
 	ErrNoSuchPeer     = errors.New("room: no such peer")
 )
+
+// evictGrace is how long a kicked/banned client's socket stays open after its
+// notification frame is sent, before being force-closed. Long enough for the
+// client to receive the frame; bounded so an uncooperative client is still
+// evicted.
+var evictGrace = 5 * time.Second
 
 type Room struct {
 	mu             sync.Mutex
@@ -210,6 +220,9 @@ func (r *Room) Kick(actorID, targetID string) error {
 	// ping-eviction.
 	r.Leave(targetID) // broadcasts PeerLeft
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "kick", Target: tgt.Name}, "")
+	// Frame delivered; now schedule a bounded force-close so a live but
+	// uncooperative client is still evicted rather than lingering indefinitely.
+	tgt.Conn.CloseAfter(evictGrace)
 	return nil
 }
 
@@ -234,6 +247,9 @@ func (r *Room) Ban(actorID, targetID string) error {
 	// so any rejoin attempt is refused; the client closes itself on "banned".
 	r.Leave(targetID)
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "ban", Target: tgt.Name}, "")
+	// Frame delivered; schedule a bounded force-close (same as Kick) so an
+	// uncooperative client is evicted deterministically.
+	tgt.Conn.CloseAfter(evictGrace)
 	return nil
 }
 

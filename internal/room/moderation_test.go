@@ -67,6 +67,12 @@ func TestKick(t *testing.T) {
 	if !kicked || closed {
 		t.Errorf("target: kicked=%v closed=%v (want kicked=true, closed=false)", kicked, closed)
 	}
+	bc.mu.Lock()
+	scheduled := bc.closeAfter
+	bc.mu.Unlock()
+	if scheduled <= 0 {
+		t.Errorf("kick should schedule a bounded eviction, got closeAfter=%v", scheduled)
+	}
 	if r.Count() != 1 {
 		t.Errorf("Count = %d after kick", r.Count())
 	}

@@ -19,6 +19,9 @@ func TestDefaults(t *testing.T) {
 	if cfg.Secret != "" {
 		t.Errorf("Secret should default empty, got %q", cfg.Secret)
 	}
+	if cfg.TrustProxy {
+		t.Error("TrustProxy should default to false")
+	}
 }
 
 func TestFlagBeatsEnv(t *testing.T) {

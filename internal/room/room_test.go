@@ -10,10 +10,11 @@ import (
 )
 
 type fakeConn struct {
-	mu     sync.Mutex
-	msgs   []any
-	closed bool
-	full   bool
+	mu         sync.Mutex
+	msgs       []any
+	closed     bool
+	full       bool
+	closeAfter time.Duration
 }
 
 func (f *fakeConn) Send(v any) bool {
@@ -25,7 +26,8 @@ func (f *fakeConn) Send(v any) bool {
 	f.msgs = append(f.msgs, v)
 	return true
 }
-func (f *fakeConn) Close() { f.mu.Lock(); f.closed = true; f.mu.Unlock() }
+func (f *fakeConn) Close()                     { f.mu.Lock(); f.closed = true; f.mu.Unlock() }
+func (f *fakeConn) CloseAfter(d time.Duration) { f.mu.Lock(); f.closeAfter = d; f.mu.Unlock() }
 func (f *fakeConn) typed(t *testing.T) (kinds []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -156,7 +156,7 @@ func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 	defer recoverGuard(h.log, "ws "+slug)
 	defer c.Close()
-	h.serve(c, slug, clientIP(r))
+	h.serve(c, slug, clientIP(r, h.cfg.TrustProxy))
 }
 
 func (h *Hub) serve(c *wsClient, slug, ip string) {
@@ -330,12 +330,16 @@ func sanitizeName(name string) string {
 	return name
 }
 
-// clientIP prefers the first X-Forwarded-For hop (we deploy behind a
-// reverse proxy per the spec), falling back to the socket address.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		first, _, _ := strings.Cut(xff, ",")
-		return strings.TrimSpace(first)
+// clientIP returns the peer address. X-Forwarded-For is trusted ONLY when
+// trustProxy is set (deployment is behind a trusted reverse proxy); in that
+// case the trustworthy client is the RIGHTMOST hop, since the proxy appends the
+// real peer. Otherwise the header is ignored and RemoteAddr is used.
+func clientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			return strings.TrimSpace(parts[len(parts)-1])
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

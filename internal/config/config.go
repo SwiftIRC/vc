@@ -17,6 +17,7 @@ type Config struct {
 	AdhocRooms bool   // allow non-IRC rooms created by first join
 	TLSCert    string // optional built-in TLS
 	TLSKey     string
+	TrustProxy bool // trust X-Forwarded-For (only enable behind a trusted reverse proxy)
 }
 
 // Load parses configuration: flags (highest precedence), then env via
@@ -58,6 +59,7 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	fs.BoolVar(&cfg.AdhocRooms, "adhoc", boolean("WVC_ADHOC", true), "allow ad-hoc (non-IRC) rooms")
 	fs.StringVar(&cfg.TLSCert, "tls-cert", str("WVC_TLS_CERT", ""), "TLS certificate file (optional)")
 	fs.StringVar(&cfg.TLSKey, "tls-key", str("WVC_TLS_KEY", ""), "TLS key file (optional)")
+	fs.BoolVar(&cfg.TrustProxy, "trust-proxy", boolean("WVC_TRUST_PROXY", false), "trust X-Forwarded-For (enable only behind a trusted reverse proxy)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -193,7 +194,31 @@ func TestJoinTimeout(t *testing.T) {
 	}
 }
 
+func TestClientIPTrustProxy(t *testing.T) {
+	mk := func(xff, remote string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = remote
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		return r
+	}
+	// trusted: rightmost hop wins (proxy appends real peer)
+	if got := clientIP(mk("1.2.3.4, 10.0.0.9", "127.0.0.1:5000"), true); got != "10.0.0.9" {
+		t.Errorf("trusted rightmost = %q, want 10.0.0.9", got)
+	}
+	// untrusted: XFF ignored, RemoteAddr host used
+	if got := clientIP(mk("1.2.3.4", "10.0.0.9:5000"), false); got != "10.0.0.9" {
+		t.Errorf("untrusted = %q, want 10.0.0.9", got)
+	}
+	// trusted but no XFF: RemoteAddr host
+	if got := clientIP(mk("", "10.0.0.9:5000"), true); got != "10.0.0.9" {
+		t.Errorf("trusted no-xff = %q, want 10.0.0.9", got)
+	}
+}
+
 type nopConn struct{}
 
-func (nopConn) Send(v any) bool { return true }
-func (nopConn) Close()          {}
+func (nopConn) Send(v any) bool          { return true }
+func (nopConn) Close()                   {}
+func (nopConn) CloseAfter(time.Duration) {}
