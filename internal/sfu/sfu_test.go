@@ -66,6 +66,32 @@ func TestFanOutDeliversTrackToOtherPeer(t *testing.T) {
 	}
 }
 
+func TestRenegotiationEmitsTracksMetadata(t *testing.T) {
+	s := testSFU(t)
+	p1 := newTestClient(t, s, "room", "p1")
+	p2 := newTestClient(t, s, "room", "p2")
+	p2.publish("mic") // p2 must offer too so it has a live PC to receive on
+	p2.waitConnected()
+	track := p1.publish("camera")
+	p1.waitConnected()
+	writeTestRTPLoop(t, track) // background writer until OnTrack fires on the server
+
+	select {
+	case tks := <-p2.gotTracks:
+		found := false
+		for _, ti := range tks.Tracks {
+			if ti.ParticipantID == "p1" && ti.Kind == "camera" && ti.Mid != "" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("tracks msg missing p1/camera: %+v", tks)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no tracks metadata")
+	}
+}
+
 // --- Shared test helpers (built in Task 3; reused by Tasks 3–9) ---
 
 // waitFor polls pred until true or a 5s deadline (fatal on timeout).

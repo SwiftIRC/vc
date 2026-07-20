@@ -167,6 +167,9 @@ func (s *SFU) signalPeerConnections(slug string) {
 				continue
 			}
 			p.sig.Send(signal.Offer{SDP: offer.SDP})
+			// After SetLocalDescription the transceiver mids are assigned, so p can
+			// be told which mid carries which {participantID, kind} it now receives.
+			p.sig.Send(signal.Tracks{Tracks: peerTrackInfos(p)})
 			delete(pending, p.id)
 		}
 		if !retry {
@@ -207,6 +210,34 @@ func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) bool {
 		}
 	}
 	return changed
+}
+
+// peerTrackInfos describes the forwarded tracks peer p now receives: one
+// TrackInfo per transceiver whose sender carries another peer's track, mapping
+// the transceiver's mid to the source {participantID, kind} (StreamID/ID of the
+// forwarded local track). It reads only p.pc state — transceivers, senders, and
+// track IDs — which does not require s.mu, and must be called after
+// SetLocalDescription so the mids are assigned. The SFU never adds a peer's own
+// track back to it, so every sender-carrying transceiver here forwards another
+// peer's track.
+func peerTrackInfos(p *Peer) []signal.TrackInfo {
+	var infos []signal.TrackInfo
+	for _, tr := range p.pc.GetTransceivers() {
+		snd := tr.Sender()
+		if snd == nil {
+			continue
+		}
+		t := snd.Track()
+		if t == nil {
+			continue
+		}
+		infos = append(infos, signal.TrackInfo{
+			Mid:           tr.Mid(),
+			ParticipantID: t.StreamID(),
+			Kind:          t.ID(),
+		})
+	}
+	return infos
 }
 
 // senderKey derives a sender's track key ("streamID:trackID", i.e.
