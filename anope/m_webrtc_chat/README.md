@@ -91,6 +91,16 @@ Usage once configured:
 
 `SET` requires the channel `SET` privilege (op/founder) or a services oper.
 
+**Default room slugs are made unique automatically.** A channel with no explicit
+`SET ROOM` gets a slug derived from its name, and different channel names can
+normalize to the same slug (for example `#c`, `#c++` and `#c#` all reduce to `c`).
+When that happens the earliest-registered channel keeps the clean slug and every
+later colliding channel gets a deterministic per-name suffix (e.g. `c-1a2b3c4d`).
+That resolved slug is **stable** — it never changes as other channels come and go,
+so the link `!vc` posts today still works next month. Channels with
+normalization-colliding names (like `#c` / `#c++`) should run
+`VC #chan SET ROOM <name>` to choose a clean, memorable slug of their own.
+
 ## Cross-implementation token interop
 
 The token format is fixed by the Go side and must interoperate byte-for-byte. The

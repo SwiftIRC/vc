@@ -26,12 +26,11 @@
 /// END CMAKE
 
 // The deployment build links libcurl, so enable core/provision.h's postProvision().
-// NOTE: core/provision.h does `#include <curl/curl.h>` *inside* `namespace wvc`.
-// Including curl at global scope first means that in-namespace include is a no-op
-// (curl/curl.h has its own include guard), keeping curl's symbols in the global
-// namespace where they belong. Do not remove this pre-include.
+// core/provision.h itself includes <curl/curl.h> at *global* scope (guarded by
+// WVC_HAVE_CURL, above its `namespace wvc`), so curl's symbols land in the global
+// namespace where they belong — no pre-include is needed here (fixed in provision.h
+// commit 1b4123a; this file used to belt-and-suspenders `#include <curl/curl.h>` too).
 #define WVC_HAVE_CURL
-#include <curl/curl.h>
 
 #include "module.h"
 
@@ -166,20 +165,48 @@ public:
 			this->identifiedonly.Unset(ci);
 	}
 
-	// The explicitly-configured slug, or "" if none is set.
-	Anope::string RawRoom(const ChannelInfo *ci) const
-	{
-		const Anope::string *r = this->room.Get(ci);
-		return r ? *r : Anope::string("");
-	}
-
-	// The effective slug: explicit setting, else derived from the channel name.
+	// The effective slug: explicit setting, else the (deduplicated) default derived
+	// from the channel name. Distinct channels can normalize to the same DefaultSlug
+	// (#c, #c++, #c# all -> "c"); handing both the same slug would silently merge two
+	// channels' video rooms. To keep default slugs UNIQUE and STABLE, the
+	// earliest-registered channel that wants a given default keeps it, and every later
+	// collider gets a deterministic per-name suffix — so the link !vc posts today still
+	// works next month, and a channel that registers later never steals an earlier
+	// channel's already-handed-out slug. (Colliding names can pick a clean slug with
+	// `VC #chan SET ROOM <name>`.)
 	Anope::string RoomFor(const ChannelInfo *ci) const
 	{
 		const Anope::string *r = this->room.Get(ci);
 		if (r && !r->empty())
 			return *r;
-		return this->DefaultSlug(ci->name);
+
+		const Anope::string d = this->DefaultSlug(ci->name);
+
+		// Does any *earlier* channel also want `d`? Compare against each other
+		// channel's raw effective slug (explicit room, else its DefaultSlug) — never
+		// recursing through RoomFor, which would recurse straight back into this scan.
+		// Ties on the registration second break by channel name so exactly one channel
+		// owns the clean slug.
+		// VERIFY(anope-2.1): ChannelInfo::time_registered (time_t) and ChannelInfo::name
+		// (Anope::string) — include/regchannel.h (time_registered near :113; name is the
+		// registered_channel_map key / ChannelInfo::name field).
+		for (const auto &pair : *RegisteredChannelList)
+		{
+			const ChannelInfo *other = pair.second;
+			if (!other || other == ci || other->name.equals_ci(ci->name))
+				continue;
+			const Anope::string *ro = this->room.Get(other);
+			const Anope::string other_wants = (ro && !ro->empty()) ? *ro : this->DefaultSlug(other->name);
+			if (!other_wants.equals_ci(d))
+				continue;
+			const bool other_is_earlier =
+				other->time_registered < ci->time_registered
+				|| (other->time_registered == ci->time_registered
+					&& other->name.str() < ci->name.str());
+			if (other_is_earlier)
+				return d + "-" + WebRTCChat::NameHash(ci->name);
+		}
+		return d;
 	}
 
 	void SetRoom(ChannelInfo *ci, const Anope::string &slug) { this->room.Set(ci, slug); }
@@ -228,6 +255,26 @@ public:
 		return out;
 	}
 
+	// Short lowercase-hex FNV-1a hash of a channel name — the deterministic per-name
+	// suffix that disambiguates default-slug collisions (see RoomFor). Deterministic
+	// across restarts, so a suffixed default slug stays stable; the "-" + [0-9a-f]
+	// tail keeps the combined slug within slugRe (^[a-z0-9][a-z0-9-]*$).
+	static Anope::string NameHash(const Anope::string &name)
+	{
+		unsigned long long h = 1469598103934665603ULL; // FNV-1a offset basis
+		for (size_t i = 0; i < name.length(); ++i)
+		{
+			h ^= static_cast<unsigned char>(name[i]);
+			h *= 1099511628211ULL;
+		}
+		static const char digits[] = "0123456789abcdef";
+		const unsigned long v = static_cast<unsigned long>(h & 0xffffffffULL);
+		Anope::string out;
+		for (int shift = 28; shift >= 0; shift -= 4)
+			out += digits[(v >> shift) & 0xf];
+		return out;
+	}
+
 	// slugRe parity: ^[a-z0-9][a-z0-9-]*$ (already-lowercased input expected).
 	static bool ValidSlug(const Anope::string &s)
 	{
@@ -245,12 +292,15 @@ public:
 		return true;
 	}
 
-	// True if `slug` is already claimed by a channel other than exceptChannel —
-	// either as an explicit room OR as another channel's default slug. Computed by
-	// a live scan of the registered-channel list so it stays correct across
-	// restarts without a separately-maintained cache (structural note: replaces the
-	// plan's rebuilt-on-load std::map<slug,channel> with an on-demand scan; SET ROOM
-	// is rare so the O(channels) cost is irrelevant).
+	// True if `slug` is already claimed by a channel other than exceptChannel — as its
+	// explicit room OR its effective default slug. It compares against RoomFor(other),
+	// so the deduplicated (possibly suffixed) default a channel actually resolves to is
+	// what's checked; SET ROOM therefore can't claim another channel's clean *or*
+	// suffixed default. Computed by a live scan of the registered-channel list so it
+	// stays correct across restarts without a separately-maintained cache (structural
+	// note: replaces the plan's rebuilt-on-load std::map<slug,channel> with an on-demand
+	// scan; SET ROOM is rare so the cost — O(channels^2) now that RoomFor runs its own
+	// dedup scan per channel — is irrelevant).
 	// VERIFY(anope-2.1): RegisteredChannelList is
 	// Serialize::Checker<registered_channel_map>; `*RegisteredChannelList` yields the
 	// Anope::unordered_map<ChannelInfo*> to iterate — include/regchannel.h:25,27 and
