@@ -58,6 +58,25 @@ function el(tag, attrs = {}, ...kids) {
   return node;
 }
 
+const NAME_KEY = "swiftirc-vc-name";
+
+// loadSavedName / saveName persist the typed display name across visits.
+// localStorage can throw (private mode, disabled storage), so guard it.
+function loadSavedName() {
+  try {
+    return localStorage.getItem(NAME_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function saveName(name) {
+  try {
+    if (name) localStorage.setItem(NAME_KEY, name);
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
 export class Prejoin {
   // { root, slug, token, media, onJoin }. onJoin({name, password}) is called once
   // per Join click; app.js drives the socket and calls back showError/destroy.
@@ -100,6 +119,10 @@ export class Prejoin {
       this.nameInput.value = this.nick;
       this.nameInput.readOnly = true;
       this.nameInput.title = "Name provided by your invite link";
+    } else {
+      // Prefill the display name from last time (saved on join). An invite-link
+      // nick always wins over this.
+      this.nameInput.value = loadSavedName();
     }
 
     this.passwordInput = el("input", { class: "password", type: "password", placeholder: "Room password (if locked)", autocomplete: "off" });
@@ -210,6 +233,7 @@ export class Prejoin {
 
   _submit() {
     const name = this.nick || this.nameInput.value.trim();
+    if (!this.nick) saveName(name); // remember the typed name for next visit
     const password = this.passwordInput.value; // sent always; unlocked rooms ignore it server-side
     this.errorLabel.textContent = "";
     this.joinButton.disabled = true;
