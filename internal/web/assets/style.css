@@ -609,6 +609,13 @@ video.mirror {
   font-size: 1.15rem;
   line-height: 1;
 }
+/* Inline SVG icon (e.g. the mic mute/unmute button): sized in the button, colored by
+   currentColor so it follows the button's text color (white when .active/muted). */
+.controls .ctl .icon-svg {
+  width: 1.4rem;
+  height: 1.4rem;
+  display: block;
+}
 
 /* Countdown is locked for everyone except its starter while it runs; make the
    locked state read as non-interactive (scoped so other buttons are untouched). */
