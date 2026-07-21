@@ -78,6 +78,14 @@ export class Grid {
       this._stripGlyph,
     );
     this.el.append(this._stripToggle);
+    // Shown centered while focused with no one else in the call (no strip to toggle):
+    // a clear way to leave the maximized view.
+    this._minimizeBtn = el(
+      "button",
+      { class: "focus-minimize", type: "button", title: "Minimize", "aria-label": "Minimize", onClick: () => this._clearFocus() },
+      el("span", { class: "glyph", text: "⤡" }),
+    );
+    this.el.append(this._minimizeBtn);
 
     this.tiles = new Map(); // participantId -> base-tile record
     this.screens = new Map(); // participantId -> screen-tile element
@@ -173,6 +181,8 @@ export class Grid {
   // width lives in the --strip-w CSS var so this and the .strip-toggle stay in sync.
   _layoutFocus(tiles) {
     const others = tiles.filter((t) => t !== this._focusedEl).length;
+    // Alone (no one else): no strip — show the central minimize icon instead (CSS).
+    this.el.classList.toggle("focus-alone", others === 0);
     if (!others || this.el.classList.contains("strip-hidden")) {
       this.el.style.gridTemplateColumns = "1fr";
       this.el.style.gridTemplateRows = "1fr";

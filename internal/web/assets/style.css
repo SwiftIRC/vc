@@ -351,6 +351,32 @@ body.in-call #app {
 .grid.has-focus.strip-hidden .strip-toggle {
   right: 0; /* strip gone — the handle sits at the right edge */
 }
+/* Alone in the call: no strip to toggle — hide the handle and offer a central
+   minimize button to leave the maximized view instead. */
+.grid.has-focus.focus-alone .strip-toggle {
+  display: none;
+}
+.focus-minimize {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  width: 3rem;
+  height: 3rem;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--fg);
+  cursor: pointer;
+}
+.grid.has-focus.focus-alone .focus-minimize {
+  display: inline-flex;
+}
 
 .tile {
   position: relative;
