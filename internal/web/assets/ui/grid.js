@@ -323,6 +323,29 @@ export class Grid {
     if (a && a.audioEl) a.audioEl.volume = v;
   }
 
+  // Update a participant's role badge from a role-change broadcast (op promotion).
+  // Works for self too — the self tile carries a badge like any other.
+  setPeerRole(id, role) {
+    const tile = this.tiles.get(id);
+    if (tile) this._setRole(tile, role);
+  }
+
+  // The local participant just became an op: retrofit op-action buttons onto every
+  // existing remote tile / screen tile. New tiles get them at build time, since
+  // opActionsFor / screenOpActionsFor now return markup (controls.isOp flipped true).
+  addOpControls() {
+    for (const [id, tile] of this.tiles) {
+      if (id === this.selfId || tile.el.querySelector(".op-actions")) continue;
+      const ops = this.opActionsFor({ id, name: tile.name });
+      if (ops) tile.el.append(ops);
+    }
+    for (const [id, rec] of this.screens) {
+      if (id === this.selfId || rec.el.querySelector(".op-actions")) continue;
+      const ops = this.screenOpActionsFor({ id, name: rec.nameEl.textContent });
+      if (ops) rec.el.append(ops);
+    }
+  }
+
   // --- self tile ---
 
   // Re-read the local media's live enabled state onto the self tile's indicators.

@@ -449,10 +449,26 @@ export class Controls {
     return el(
       "div",
       { class: "op-actions" },
+      el("button", { type: "button", class: "op makeop", title: "Make op", onClick: () => this._send("grant-op", { id }) }, "+op"),
       el("button", { type: "button", class: "op kick", title: "Kick", onClick: () => this._send("kick", { id }) }, "kick"),
       el("button", { type: "button", class: "op mute", title: "Mute mic", onClick: () => this._send("mute-peer", { id, kind: "mic" }) }, "mute"),
       el("button", { type: "button", class: "op ban", title: "Ban", onClick: () => this._send("ban", { id }) }, "ban"),
     );
+  }
+
+  // The local participant was just promoted to op mid-call: gain the op controls
+  // (the room lock button) and add op actions to every existing remote tile. New
+  // tiles get them automatically — opActionsFor now returns markup since isOp is true.
+  // Idempotent: a repeat call after already being op does nothing.
+  becomeOp() {
+    if (this.isOp) return;
+    this.isOp = true;
+    if (!this.lockBtn) {
+      this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
+      this._setLockButton(this.locked);
+      this.el.insertBefore(this.lockBtn, this.lockStatus); // lock sits just before the lock indicator + Leave
+    }
+    if (this.grid) this.grid.addOpControls();
   }
 
   // Build a remote SCREEN tile's op-action group (a single "Stop screenshare"

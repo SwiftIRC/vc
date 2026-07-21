@@ -65,6 +65,8 @@ function moderationText({ actor, action, target, kind } = {}) {
       return `${who} locked the room`;
     case "unlock":
       return `${who} unlocked the room`;
+    case "op":
+      return `${who} made ${target || "a participant"} an op`;
     default:
       // Unknown action: still narrate it, safely, rather than drop it silently.
       return target ? `${who} ${action || "acted on"} ${target}` : `${who} ${action || "acted"}`;

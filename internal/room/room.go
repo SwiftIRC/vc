@@ -365,6 +365,32 @@ func (r *Room) Ban(actorID, targetID string) error {
 	return nil
 }
 
+// GrantOp promotes another participant to op (op-only). Idempotent: promoting an
+// existing op is a no-op with no broadcast. On success it announces the new role to
+// the room — clients update the badge, and the promoted client gains its op controls
+// — and adds a moderation feed entry. The role is stored so late joiners' rosters
+// show the new op too.
+func (r *Room) GrantOp(actorID, targetID string) error {
+	actor, err := r.requireOp(actorID)
+	if err != nil {
+		return err
+	}
+	tgt, err := r.target(targetID)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	if tgt.Role == RoleOp {
+		r.mu.Unlock()
+		return nil // already op
+	}
+	tgt.Role = RoleOp
+	r.mu.Unlock()
+	r.Broadcast(signal.RoleChange{ID: tgt.ID, Role: string(RoleOp)}, "")
+	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "op", Target: tgt.Name}, "")
+	return nil
+}
+
 // MutePeer is a nudge: it tells the target to stop a track. The target may
 // re-enable at will; nothing is torn down. (Plan 2 additionally pauses
 // server-side forwarding of that track until the target re-enables.)

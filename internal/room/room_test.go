@@ -118,6 +118,67 @@ func TestJoinCarriesProvidedInitialMedia(t *testing.T) {
 	}
 }
 
+func TestGrantOp(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser) // first ad-hoc joiner -> op
+	r.Join(alice, "")
+	bob, bc := member("p2", "bob", RoleUser)
+	r.Join(bob, "")
+	carol, _ := member("p3", "carol", RoleUser)
+	r.Join(carol, "")
+
+	// A non-op cannot promote anyone.
+	if err := r.GrantOp("p2", "p3"); err != ErrNotOp {
+		t.Fatalf("non-op GrantOp = %v, want ErrNotOp", err)
+	}
+	if carol.Role == RoleOp {
+		t.Fatal("carol became op via a non-op grant")
+	}
+
+	// The op promotes bob; the role changes and both broadcasts go out.
+	if err := r.GrantOp("p1", "p2"); err != nil {
+		t.Fatalf("GrantOp: %v", err)
+	}
+	if bob.Role != RoleOp {
+		t.Errorf("bob role after grant = %q, want op", bob.Role)
+	}
+	var gotRole *signal.RoleChange
+	var gotMod *signal.Moderation
+	bc.mu.Lock()
+	for _, m := range bc.msgs {
+		switch v := m.(type) {
+		case signal.RoleChange:
+			rc := v
+			gotRole = &rc
+		case signal.Moderation:
+			if v.Action == "op" {
+				md := v
+				gotMod = &md
+			}
+		}
+	}
+	bc.mu.Unlock()
+	if gotRole == nil || gotRole.ID != "p2" || gotRole.Role != "op" {
+		t.Errorf("bob RoleChange = %+v, want {ID:p2 Role:op}", gotRole)
+	}
+	if gotMod == nil || gotMod.Actor != "alice" || gotMod.Target != "bob" {
+		t.Errorf("op Moderation = %+v, want actor alice target bob", gotMod)
+	}
+
+	// Idempotent: promoting an existing op is a no-op, no error.
+	if err := r.GrantOp("p1", "p2"); err != nil {
+		t.Fatalf("re-GrantOp existing op: %v", err)
+	}
+
+	// The promotion took effect: bob (now op) can himself promote carol.
+	if err := r.GrantOp("p2", "p3"); err != nil {
+		t.Fatalf("newly-op bob GrantOp carol: %v", err)
+	}
+	if carol.Role != RoleOp {
+		t.Errorf("carol role after bob's grant = %q, want op", carol.Role)
+	}
+}
+
 func TestSetMediaStateBroadcastsToRoom(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser)

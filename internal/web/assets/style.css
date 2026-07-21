@@ -473,6 +473,11 @@ video.mirror {
   border-color: var(--error);
 }
 
+.op-actions .op.makeop {
+  color: #45c186; /* positive action — distinct from the red kick/ban */
+  border-color: #2f9e6b;
+}
+
 /* The control bar floats over the bottom of the stage and autohides when idle. */
 .controls {
   position: absolute;

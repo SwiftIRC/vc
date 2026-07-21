@@ -313,6 +313,13 @@ function renderInCall(msg) {
     controls.notifyChatActivity(); // bumps the unread badge while chat is hidden
   });
   signaling.on("moderation", (m) => chat.onModeration(m));
+  // A role change (op promotion): update the badge everywhere, and if it's US, gain
+  // the op controls mid-call.
+  signaling.on("role", (m) => {
+    if (!m || !m.id) return;
+    grid.setPeerRole(m.id, m.role);
+    if (m.id === grid.selfId && m.role === "op") controls.becomeOp();
+  });
 
   const localTracks = [];
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });
