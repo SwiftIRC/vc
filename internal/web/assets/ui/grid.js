@@ -49,6 +49,11 @@ const LEVEL_INTERVAL_MS = 150;
 // floor a tile must beat to steal the highlight, so background hiss stays quiet.
 const ACTIVE_THRESHOLD = 0.03;
 
+// Desired tile aspect ratio (width / height). The grid picks the column count that
+// keeps tiles closest to this — so 4 participants become a 2x2 block of ~16:9
+// tiles rather than a 1x4 row of slivers.
+const TILE_ASPECT = 16 / 9;
+
 export class Grid {
   // { selfId, selfName, selfRole, media, opActionsFor, screenOpActionsFor }.
   // opActionsFor(participant) returns a base-tile op-controls node (kick/mute/ban)
@@ -63,6 +68,7 @@ export class Grid {
     this.screenOpActionsFor = typeof screenOpActionsFor === "function" ? screenOpActionsFor : () => null;
 
     this.el = el("div", { class: "grid" });
+    this._focusedEl = null; // the tile element shown full-window, or null for the normal grid
 
     this.tiles = new Map(); // participantId -> base-tile record
     this.screens = new Map(); // participantId -> screen-tile element
@@ -91,7 +97,74 @@ export class Grid {
       this.media.addEventListener("screen-stop", this._onScreenStop);
     }
 
+    // Re-pick the column/row split whenever the grid's box changes (window resize,
+    // chat panel opening). The grid isn't in the DOM yet, so the first real layout
+    // comes from the observer firing once it is mounted and has a size.
+    this._resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => this._relayout()) : null;
+    if (this._resizeObserver) this._resizeObserver.observe(this.el);
+
     this._addSelfTile(selfRole);
+  }
+
+  // Choose the column count (and thus rows) that keeps tiles closest to TILE_ASPECT
+  // for the current tile count and container size, and apply it as the grid template.
+  // No-op in focus mode (the focused tile fills the grid via .has-focus). Cheap;
+  // called on every tile add/remove and on resize.
+  _relayout() {
+    if (!this.el || this._focusedEl) return;
+    const n = this.el.querySelectorAll(":scope > .tile").length;
+    if (!n) return;
+    const w = this.el.clientWidth;
+    const h = this.el.clientHeight;
+    if (!w || !h) return; // not mounted/sized yet; the ResizeObserver will call again
+    let bestCols = 1;
+    let bestArea = -1;
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols);
+      let tw = w / cols;
+      let th = h / rows;
+      // Fit TILE_ASPECT inside the cell (letterbox), then score by resulting area.
+      if (tw / th > TILE_ASPECT) tw = th * TILE_ASPECT;
+      else th = tw / TILE_ASPECT;
+      const area = tw * th;
+      if (area > bestArea) {
+        bestArea = area;
+        bestCols = cols;
+      }
+    }
+    const rows = Math.ceil(n / bestCols);
+    this.el.style.gridTemplateColumns = `repeat(${bestCols}, 1fr)`;
+    this.el.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  }
+
+  // Toggle a tile between the normal grid and filling the whole window. Clicking the
+  // focused tile again (or another tile) restores/switches. Driven by a click on the
+  // tile's video (the controls sit above it, so they still work).
+  _toggleFocus(tileEl) {
+    if (this._focusedEl === tileEl) {
+      this._clearFocus();
+      return;
+    }
+    if (this._focusedEl) this._focusedEl.classList.remove("focused");
+    this._focusedEl = tileEl;
+    tileEl.classList.add("focused");
+    this.el.classList.add("has-focus");
+    this.el.style.gridTemplateColumns = "1fr";
+    this.el.style.gridTemplateRows = "1fr";
+  }
+
+  _clearFocus() {
+    if (this._focusedEl) this._focusedEl.classList.remove("focused");
+    this._focusedEl = null;
+    this.el.classList.remove("has-focus");
+    this._relayout();
+  }
+
+  // Called after a tile element is removed from the grid: if it was the focused
+  // tile, drop focus (which relayouts); otherwise just relayout for the new count.
+  _afterRemove(removedEl) {
+    if (this._focusedEl === removedEl) this._clearFocus();
+    else this._relayout();
   }
 
   // --- roster ---
@@ -116,6 +189,7 @@ export class Grid {
       if (tile.cameraVideo) tile.cameraVideo.srcObject = null; // release the stream, matching the other removal paths
       tile.el.remove();
       this.tiles.delete(id);
+      this._afterRemove(tile.el);
     }
     if (this.activeId === id) this._setActive(null);
   }
@@ -221,6 +295,7 @@ export class Grid {
     this._selfTile = tile;
     this.tiles.set(this.selfId, tile);
     this.el.append(tile.el);
+    this._relayout();
     this.refreshSelf();
   }
 
@@ -232,6 +307,7 @@ export class Grid {
     tile = this._buildTile(id, name || "guest", role, { self: false });
     this.tiles.set(id, tile);
     this.el.append(tile.el);
+    this._relayout();
     // Apply any media state that arrived before this tile existed.
     const pending = this.pendingMedia.get(id);
     if (pending) {
@@ -279,16 +355,15 @@ export class Grid {
       });
     }
 
-    const meta = el(
-      "div",
-      { class: "meta" },
-      nameEl,
-      badgeEl,
-      el("span", { class: "pills" }, micPill, avPill),
-      volumeEl,
-    );
+    // Volume lives at the tile's top-right (a direct child, not in the meta row),
+    // above the video so dragging it never triggers the click-to-focus on the video.
+    const meta = el("div", { class: "meta" }, nameEl, badgeEl, el("span", { class: "pills" }, micPill, avPill));
 
     const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, camOff, meta);
+    if (volumeEl) tileEl.append(volumeEl);
+    // Click the video to blow this tile up to fill the window; click again to restore.
+    cameraVideo.title = "Click to focus";
+    cameraVideo.addEventListener("click", () => this._toggleFocus(tileEl));
 
     const tile = { el: tileEl, cameraVideo, camOff, nameEl, badgeEl, micPill, avPill, volumeEl, volume: 1, name, hasCamera: false, self };
     this._setRole(tile, role);
@@ -345,9 +420,11 @@ export class Grid {
       const hasAudio = stream.getAudioTracks().length > 0;
       video.muted = !hasAudio;
       const nameEl = el("span", { class: "name", text: `${name} (screen)` });
-      const metaKids = [nameEl];
+      const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, nameEl));
+      // A screen share with audio gets a top-right volume slider (purely local),
+      // like the base tiles.
       if (hasAudio) {
-        metaKids.push(
+        elNode.append(
           el("input", {
             type: "range",
             class: "vol",
@@ -363,7 +440,8 @@ export class Grid {
           }),
         );
       }
-      const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, ...metaKids));
+      video.title = "Click to focus";
+      video.addEventListener("click", () => this._toggleFocus(elNode));
       // Ops can stop a remote participant's screenshare (never your own tile).
       if (id !== this.selfId) {
         const ops = this.screenOpActionsFor({ id, name });
@@ -372,6 +450,7 @@ export class Grid {
       rec = { el: elNode, video, nameEl };
       this.screens.set(id, rec);
       this.el.append(elNode);
+      this._relayout();
     } else {
       rec.nameEl.textContent = `${name} (screen)`;
     }
@@ -384,6 +463,7 @@ export class Grid {
     rec.video.srcObject = null;
     rec.el.remove();
     this.screens.delete(id);
+    this._afterRemove(rec.el);
   }
 
   // --- active-speaker (WebAudio) ---
@@ -512,6 +592,11 @@ export class Grid {
   // and empty the grid. After this the Grid holds no timers or media references.
   destroy() {
     this._stopLevelLoop();
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
+    this._focusedEl = null;
     for (const id of [...this.audio.keys()]) this._detachAudio(id);
     if (this._audioCtx) {
       try {

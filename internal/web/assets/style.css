@@ -152,6 +152,7 @@ input[readonly] {
   border-radius: 8px;
   background: #000;
   color: var(--muted);
+  pointer-events: none; /* purely visual: clicks fall through to the video (focus) */
 }
 
 .cam-off-icon {
@@ -279,12 +280,21 @@ body.in-call #app {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  grid-auto-rows: 1fr; /* rows share the height so tiles fill the screen */
+  /* Grid._relayout() sets the real column/row split each resize so tiles stay near
+     16:9 (2x2, not a 1x4 row of slivers); this is just the pre-JS fallback. */
+  grid-template-columns: 1fr;
   gap: 0.4rem;
   padding: 0.4rem;
   align-content: stretch;
-  overflow: auto;
+  overflow: hidden;
+}
+
+/* Click-to-focus: the focused tile fills the whole grid and the rest hide. */
+.grid.has-focus .tile:not(.focused) {
+  display: none;
+}
+.grid.has-focus .tile.focused .cam {
+  object-fit: contain; /* it's the only thing on screen — show the whole frame */
 }
 
 .tile {
@@ -306,6 +316,7 @@ body.in-call #app {
   height: 100%;
   object-fit: cover; /* fill the tile, no letterboxing */
   background: #000;
+  cursor: pointer; /* click to focus this tile full-window */
 }
 
 /* Selfie view: mirror ONLY the local camera (lobby preview + self tile). Remotes
@@ -335,6 +346,7 @@ video.mirror {
   padding: 0.35rem 0.5rem;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
   font-size: 0.85rem;
+  pointer-events: none; /* the name/pills don't intercept clicks, so most of the tile focuses */
 }
 
 .tile .meta .name {
@@ -385,27 +397,29 @@ video.mirror {
 
 /* Per-participant local volume slider (remote base tiles, and a screen tile that
    carries audio). Purely local: it sets the tile's playback .volume, no wire
-   traffic. Compact and pushed to the meta row's right edge. */
-.tile .meta .vol {
-  flex: none;
-  width: 72px;
-  margin-left: 0.4rem;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-/* On a screen tile the name is the only other meta item, so let it take the slack
-   and keep the slider hard-right (base tiles already right-align via .pills). */
-.tile.screen .meta .name {
-  margin-right: auto;
-}
-
-.op-actions {
+   traffic. Sits at the tile's top-right, above the video with its own pointer
+   events, so dragging it never triggers the click-to-focus underneath. */
+.tile .vol {
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
+  width: 72px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 6px;
+  padding: 3px 5px;
+  z-index: 2;
+}
+
+/* Op controls move to the top-LEFT so they don't collide with the volume slider. */
+.op-actions {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
   display: flex;
   gap: 0.25rem;
+  z-index: 2;
 }
 
 .op-actions .op {
