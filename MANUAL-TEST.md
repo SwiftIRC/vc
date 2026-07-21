@@ -70,6 +70,29 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       device is the one that goes live when you join (the preview updates, the other
       track keeps streaming).
 
+## Synced countdown sound
+
+- [ ] **Countdown plays for everyone** — with A, B, C joined, A clicks the 🚀
+      countdown button. `RocketCountdown.mp3` starts for A (its click is a user
+      gesture, so autoplay is allowed) and for B/C (best-effort — a browser may
+      block the network-triggered playback until that tab has been interacted with;
+      that is acceptable). A's button highlights and its title becomes "Stop the
+      countdown".
+- [ ] **Only the starter controls it; others are locked** — while A's countdown
+      runs, B's and C's countdown buttons are disabled (locked, greyed) and cannot
+      start or stop it. Only A can stop it.
+- [ ] **Starter stop clears it for everyone** — A clicks the button again. The
+      sound stops for A, B, and C and every button unlocks (returns to the idle 🚀).
+- [ ] **Natural end unlocks everyone** — A starts the countdown and lets it play to
+      the end without clicking. When A's audio finishes, A's client reports the end,
+      the server clears the state, and every button unlocks on its own.
+- [ ] **Starter leaving mid-countdown unlocks everyone** — A starts the countdown,
+      then A leaves (or closes the tab). B and C stop hearing it and their buttons
+      unlock — the control never stays stuck locked with no one able to stop it.
+- [ ] **Non-starter cannot hijack** — while A's countdown runs, nothing B or C does
+      (the disabled button, or a crafted frame) can stop A's run or start a second
+      one; the server refuses silently and the UI stays consistent.
+
 ## Chat + moderation feed
 
 - [ ] **Chat sends and fans out** — type a message in A's chat box and press Enter

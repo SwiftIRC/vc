@@ -55,6 +55,11 @@ var (
 	ErrIdentifiedOnly = errors.New("room: identified only")
 	ErrNotOp          = errors.New("room: not op")
 	ErrNoSuchPeer     = errors.New("room: no such peer")
+
+	ErrCountdownActive   = errors.New("room: countdown already active")
+	ErrCountdownInactive = errors.New("room: no countdown active")
+	ErrCountdownNotOwner = errors.New("room: only the starter can stop the countdown")
+	ErrBadCountdown      = errors.New("room: bad countdown action")
 )
 
 // evictGrace is how long a kicked/banned client's socket stays open after its
@@ -74,6 +79,10 @@ type Room struct {
 	bannedIPs      map[string]struct{}
 	emptySince     time.Time
 	hasBeenJoined  bool
+	// Synced countdown sound. countdownActive gates the control for everyone;
+	// countdownBy is the starter's participant ID so only they may stop it.
+	countdownActive bool
+	countdownBy     string
 }
 
 func New(cfg Config) *Room {
@@ -140,9 +149,64 @@ func (r *Room) Leave(id string) {
 	if len(r.parts) == 0 {
 		r.emptySince = r.cfg.Now()
 	}
+	// If the leaver owned an active countdown, clear it so the control does not
+	// stay locked for everyone else with no one able to stop it.
+	countdownCleared := r.countdownActive && r.countdownBy == id
+	if countdownCleared {
+		r.countdownActive = false
+		r.countdownBy = ""
+	}
 	r.mu.Unlock()
-	_ = p
+	if countdownCleared {
+		r.Broadcast(signal.CountdownEvent{Action: "stop", By: p.Name}, "")
+	}
 	r.Broadcast(signal.PeerLeft{ID: id}, "")
+}
+
+// Countdown starts or stops the room's synced countdown sound. It is
+// authoritative: a start is refused when one is already running, and only the
+// participant who started it may stop it. Mutations happen under the mutex; the
+// resulting CountdownEvent fans out after the lock is released (lock discipline
+// matching Chat/SetLock). A late joiner is not synced — the sound is short, so a
+// client that arrives mid-countdown simply won't hear it or see the lock.
+func (r *Room) Countdown(actorID, action string) error {
+	r.mu.Lock()
+	actor, ok := r.parts[actorID]
+	if !ok {
+		r.mu.Unlock()
+		return ErrNoSuchPeer
+	}
+	switch action {
+	case "start":
+		if r.countdownActive {
+			r.mu.Unlock()
+			return ErrCountdownActive
+		}
+		r.countdownActive = true
+		r.countdownBy = actorID
+		by := actor.Name
+		r.mu.Unlock()
+		r.Broadcast(signal.CountdownEvent{Action: "start", By: by}, "")
+		return nil
+	case "stop":
+		if !r.countdownActive {
+			r.mu.Unlock()
+			return ErrCountdownInactive
+		}
+		if r.countdownBy != actorID {
+			r.mu.Unlock()
+			return ErrCountdownNotOwner
+		}
+		r.countdownActive = false
+		r.countdownBy = ""
+		by := actor.Name
+		r.mu.Unlock()
+		r.Broadcast(signal.CountdownEvent{Action: "stop", By: by}, "")
+		return nil
+	default:
+		r.mu.Unlock()
+		return ErrBadCountdown
+	}
 }
 
 func (r *Room) Chat(fromID, text string) {

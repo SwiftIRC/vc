@@ -264,6 +264,7 @@ function renderInCall(msg) {
   signaling.on("muted", (m) => controls.onMuted(m.kind));
   signaling.on("room-locked", () => controls.onLock(true));
   signaling.on("room-unlocked", () => controls.onLock(false));
+  signaling.on("countdown", (m) => controls.onCountdown(m));
   signaling.on("chat", (m) => {
     chat.onChat(m);
     controls.notifyChatActivity(); // bumps the unread badge while chat is hidden

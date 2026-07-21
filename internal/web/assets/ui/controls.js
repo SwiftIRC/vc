@@ -51,6 +51,18 @@ export class Controls {
 
     this.sharing = false; // local screen-share active?
     this.locked = false; // authoritative room lock state (from broadcasts)
+
+    // Synced countdown sound. State is driven ENTIRELY by the server's
+    // countdown broadcasts (non-authoritative UI): countdownActive locks the
+    // control for everyone, countdownByMe is true only for the participant who
+    // started this run (they alone may stop it). _startPending records that WE
+    // just asked to start, so when the accepting broadcast returns we know it is
+    // ours. The Audio element is created lazily on first use.
+    this.countdownActive = false;
+    this.countdownByMe = false;
+    this._startPending = false;
+    this.countdownAudio = null;
+    this._onCountdownEnded = () => this._reportCountdownEnded();
     this.nsOn = false; // noise suppression active? (opt-in; default OFF, like Jitsi)
     this.nsBusy = false; // true while the ~2MB worklet loads / graph (re)builds
 
@@ -164,6 +176,15 @@ export class Controls {
       this.chatBadge,
     );
 
+    // Countdown: a compact icon (matching the chat toggle) that plays the shared
+    // rocket-countdown sound for everyone, synchronized. Non-authoritative — the
+    // click just sends intent; the server's broadcast drives the actual state.
+    this.countdownBtn = el(
+      "button",
+      { type: "button", class: "ctl countdown icon", title: "Play countdown for everyone", "aria-label": "Play countdown for everyone", onClick: () => this._toggleCountdown() },
+      el("span", { class: "glyph", text: "🚀" }),
+    );
+
     const leaveBtn = el("button", { type: "button", class: "ctl leave", onClick: () => this.onLeave() }, "Leave");
 
     // A mic/camera button is meaningless with no such track; disable it up front.
@@ -175,10 +196,11 @@ export class Controls {
     this._setCameraButton(this.media && this.media.cameraTrack ? this.media.cameraTrack.enabled : false);
     this._setScreenButton(false);
     this._setNsButton(false, false); // default OFF
+    this._setCountdownButton();
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.muteBtn, this.cameraBtn, this.screenBtn, this.nsBtn, this.chatBtn];
+    const children = [this.muteBtn, this.cameraBtn, this.screenBtn, this.nsBtn, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -289,6 +311,95 @@ export class Controls {
     if (this.lockBtn) this._setLockButton(this.locked);
   }
 
+  // --- synced countdown sound ---
+
+  // Click handler. Non-authoritative: we only send intent and let the server's
+  // broadcast flip our state. When idle, ask to start (and remember it was us,
+  // so the accepting broadcast is recognized as ours). When WE own an active
+  // run, ask to stop. When someone else owns it the button is disabled, so the
+  // active/not-mine branch is unreachable from a click.
+  _toggleCountdown() {
+    if (this.countdownActive) {
+      if (this.countdownByMe) this._send("countdown", { action: "stop" });
+      return;
+    }
+    this._startPending = true;
+    this._send("countdown", { action: "start" });
+  }
+
+  // Inbound `countdown` {action, by} broadcast. On start, lock the control for
+  // everyone and play the sound (ours iff we had a start pending); on stop,
+  // unlock and reset. The audio itself is best-effort (see _playCountdown).
+  onCountdown(msg = {}) {
+    const action = msg && msg.action;
+    if (action === "start") {
+      this.countdownActive = true;
+      this.countdownByMe = this._startPending;
+      this._startPending = false;
+      this._setCountdownButton();
+      this._playCountdown();
+    } else if (action === "stop") {
+      this.countdownActive = false;
+      this.countdownByMe = false;
+      this._startPending = false;
+      this._setCountdownButton();
+      this._stopCountdown();
+    }
+  }
+
+  // Reflect countdown state on the button. While a run is active the control is
+  // locked for everyone EXCEPT its starter, who sees a highlighted "stop"
+  // affordance.
+  _setCountdownButton() {
+    const active = this.countdownActive;
+    const mine = this.countdownByMe;
+    this.countdownBtn.classList.toggle("active", active);
+    this.countdownBtn.disabled = active && !mine;
+    this.countdownBtn.title = active
+      ? mine
+        ? "Stop the countdown"
+        : "Countdown in progress"
+      : "Play countdown for everyone";
+  }
+
+  // Lazily build the Audio element and wire its natural-end handler once.
+  _countdownSound() {
+    if (!this.countdownAudio) {
+      this.countdownAudio = new Audio("/RocketCountdown.mp3");
+      this.countdownAudio.addEventListener("ended", this._onCountdownEnded);
+    }
+    return this.countdownAudio;
+  }
+
+  _playCountdown() {
+    const audio = this._countdownSound();
+    try {
+      audio.currentTime = 0;
+    } catch {}
+    // Autoplay policy: for the STARTER this play() runs in the call stack of
+    // their click (a user gesture), so it is allowed. For OTHERS it is triggered
+    // by a network message and the browser may block it — that is acceptable and
+    // best-effort. Swallow the rejection so it is not an unhandled promise.
+    const p = audio.play();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  }
+
+  _stopCountdown() {
+    if (!this.countdownAudio) return;
+    this.countdownAudio.pause();
+    try {
+      this.countdownAudio.currentTime = 0;
+    } catch {}
+  }
+
+  // The sound finished on its own. Only the starter reports the end, which lets
+  // the server clear the authoritative state and unlock the control for everyone
+  // (others just let their own copy finish). A manual stop pauses instead, so it
+  // never fires this.
+  _reportCountdownEnded() {
+    if (this.countdownByMe) this._send("countdown", { action: "stop" });
+  }
+
   // --- op controls ---
 
   // Build a remote tile's op-action group, or null for non-ops (so no op markup
@@ -381,6 +492,14 @@ export class Controls {
     if (this._hideTimer) {
       clearTimeout(this._hideTimer);
       this._hideTimer = null;
+    }
+    // Stop and release the countdown Audio so it doesn't keep playing after the
+    // call is torn down.
+    if (this.countdownAudio) {
+      this.countdownAudio.removeEventListener("ended", this._onCountdownEnded);
+      this.countdownAudio.pause();
+      this.countdownAudio.src = "";
+      this.countdownAudio = null;
     }
   }
 }

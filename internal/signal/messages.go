@@ -42,6 +42,13 @@ type MutePeer struct {
 type Ban struct {
 	ID string `json:"id"`
 }
+
+// Countdown is a client's request to start or stop the synced countdown sound.
+// Action ∈ start|stop. The server is authoritative: only the participant who
+// started it may stop it, and while it runs others are locked out.
+type Countdown struct {
+	Action string `json:"action"` // "start" | "stop"
+}
 type Leave struct{}
 
 // ---- server → client ----
@@ -84,6 +91,13 @@ type Moderation struct {
 	Action string `json:"action"`
 	Target string `json:"target,omitempty"`
 	Kind   string `json:"kind,omitempty"` // for mute: which track
+}
+// CountdownEvent tells every client the synced countdown started or stopped.
+// By is the starter's display name. On start clients play /RocketCountdown.mp3
+// and lock the control for everyone but the starter; on stop they reset it.
+type CountdownEvent struct {
+	Action string `json:"action"` // "start" | "stop"
+	By     string `json:"by"`
 }
 type Kicked struct {
 	By string `json:"by"`
@@ -133,6 +147,8 @@ func Decode(data []byte) (any, error) {
 		v = &MutePeer{}
 	case "ban":
 		v = &Ban{}
+	case "countdown":
+		v = &Countdown{}
 	case "leave":
 		v = &Leave{}
 	default:
@@ -182,6 +198,8 @@ func serverTypeName(v any) (string, error) {
 		return "chat", nil
 	case Moderation, *Moderation:
 		return "moderation", nil
+	case CountdownEvent, *CountdownEvent:
+		return "countdown", nil
 	case Kicked, *Kicked:
 		return "kicked", nil
 	case Banned, *Banned:

@@ -20,6 +20,8 @@ func TestDecodeClientMessages(t *testing.T) {
 		{`{"type":"kick","id":"p1"}`, &Kick{ID: "p1"}},
 		{`{"type":"mute-peer","id":"p1","kind":"mic"}`, &MutePeer{ID: "p1", Kind: "mic"}},
 		{`{"type":"ban","id":"p1"}`, &Ban{ID: "p1"}},
+		{`{"type":"countdown","action":"start"}`, &Countdown{Action: "start"}},
+		{`{"type":"countdown","action":"stop"}`, &Countdown{Action: "stop"}},
 		{`{"type":"leave"}`, &Leave{}},
 	}
 	for _, c := range cases {
@@ -72,6 +74,7 @@ func TestEncodeServerMessages(t *testing.T) {
 		{Tracks{Tracks: []TrackInfo{{Mid: "0", ParticipantID: "p2", Kind: "camera"}}}, "tracks", []string{`"participantId":"p2"`}},
 		{ChatEvent{From: "alice", Text: "hi", TS: 1753000000}, "chat", []string{`"ts":1753000000`}},
 		{Moderation{Actor: "alice", Action: "kick", Target: "bob"}, "moderation", nil},
+		{CountdownEvent{Action: "start", By: "alice"}, "countdown", []string{`"action":"start"`, `"by":"alice"`}},
 		{Kicked{By: "alice"}, "kicked", nil},
 		{Banned{By: "alice"}, "banned", nil},
 		{Muted{Kind: "mic"}, "muted", nil},

@@ -421,6 +421,13 @@ video.mirror {
   line-height: 1;
 }
 
+/* Countdown is locked for everyone except its starter while it runs; make the
+   locked state read as non-interactive (scoped so other buttons are untouched). */
+.controls .ctl.countdown:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* Noise-suppression toggle: the vendored worklet is ~2MB, so the first enable
    shows a wait cursor while it loads (the button is disabled during that time). */
 .controls .ctl.ns.loading {

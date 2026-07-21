@@ -234,7 +234,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		switch m := v.(type) {
 		case *signal.Leave:
 			return
-		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban:
+		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.Countdown:
 			h.dispatch(rm, p, m)
 		case *signal.Offer:
 			if err := mp.HandleOffer(m.SDP); err != nil {
@@ -285,6 +285,17 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 			return
 		}
 		rm.Chat(p.ID, text)
+		return
+	case *signal.Countdown:
+		// Countdown refusals (already active, not the starter, idle stop) are
+		// deliberately silent: the client control already reflects the
+		// authoritative state from the broadcast, and a lost start/stop race
+		// self-heals when the winner's CountdownEvent arrives. We also avoid
+		// sending an "error" frame here, which the in-call client would treat as
+		// a terminal join error.
+		if err := rm.Countdown(p.ID, m.Action); err != nil {
+			h.log.Debug("countdown refused", "from", p.ID, "action", m.Action, "err", err)
+		}
 		return
 	case *signal.SetLock:
 		err = rm.SetLock(p.ID, m.Password)

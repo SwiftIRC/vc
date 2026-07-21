@@ -86,6 +86,33 @@ func TestBanOverWSBlocksRejoin(t *testing.T) {
 	}
 }
 
+func TestCountdownSyncedOverWS(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+	a := dialRoom(t, srv, "cafe")
+	send(t, a, map[string]any{"type": "join", "name": "alice"})
+	recv(t, a, "joined")
+	b := dialRoom(t, srv, "cafe")
+	send(t, b, map[string]any{"type": "join", "name": "bob"})
+	recv(t, b, "joined")
+
+	// alice starts: everyone (including alice) gets a start naming the starter.
+	send(t, a, map[string]any{"type": "countdown", "action": "start"})
+	if m := recv(t, b, "countdown"); m["action"] != "start" || m["by"] != "alice" {
+		t.Errorf("bob start = %v", m)
+	}
+	if m := recv(t, a, "countdown"); m["action"] != "start" {
+		t.Errorf("alice start = %v", m)
+	}
+
+	// bob (not the starter) tries to stop: refused, no broadcast. alice stops:
+	// the only stop bob sees is alice's — so the first stop must be "by alice".
+	send(t, b, map[string]any{"type": "countdown", "action": "stop"})
+	send(t, a, map[string]any{"type": "countdown", "action": "stop"})
+	if m := recv(t, b, "countdown"); m["action"] != "stop" || m["by"] != "alice" {
+		t.Errorf("bob stop = %v (want stop by alice; a non-starter stop must not broadcast)", m)
+	}
+}
+
 func TestOversizedChatDropped(t *testing.T) {
 	_, srv := newTestHub(t, "", true)
 	a := dialRoom(t, srv, "cafe")
