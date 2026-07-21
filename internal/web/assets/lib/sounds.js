@@ -1,0 +1,32 @@
+// Short UI sound effects for room events: someone joins ("sing"), disconnects
+// ("drop"), or starts a share ("bloop"). Each file is loaded into a single reused
+// <audio> the first time it plays, so repeat plays don't refetch it.
+//
+// play() is best-effort: these are triggered by network events (a peer joining), not
+// a user gesture, so a browser's autoplay policy may reject them. In practice the user
+// clicked "Join" and live WebRTC audio is already playing, so the page is unlocked —
+// but we still swallow the rejection, because a missed blip is harmless.
+const FILES = {
+  sing: "/sounds_sing.ogg", // a peer joined
+  drop: "/sounds_drop.ogg", // a peer disconnected
+  bloop: "/sounds_bloop.ogg", // a peer started a share
+};
+
+const cache = {};
+
+export function playSound(name) {
+  const src = FILES[name];
+  if (!src) return;
+  let audio = cache[name];
+  if (!audio) {
+    audio = new Audio(src);
+    cache[name] = audio;
+  }
+  try {
+    audio.currentTime = 0; // restart if it's still playing from a rapid prior event
+  } catch {
+    /* not seekable yet — play() below still starts it */
+  }
+  const p = audio.play();
+  if (p && typeof p.catch === "function") p.catch(() => {});
+}

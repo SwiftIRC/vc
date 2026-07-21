@@ -27,6 +27,8 @@
 // Injection-safety: every participant-controlled string (name, role) is written
 // via textContent (the el() "text" key), never innerHTML.
 
+import { playSound } from "../lib/sounds.js";
+
 // Tiny DOM helper: el("div", {class:"x", onClick:fn}, child, "text"...). The
 // "text" key sets textContent, so caller-supplied strings can never inject markup.
 function el(tag, attrs = {}, ...kids) {
@@ -553,6 +555,11 @@ export class Grid {
     this.screens.set(id, rec);
     this.el.append(elNode);
     this._relayout();
+    // A screen tile just came into existence = someone (self or a peer) started a
+    // share. This is the single creation point for all share kinds (video, audio-only,
+    // or both funnel through here) and is idempotent, so a reconnect that re-forwards
+    // an existing share reuses the tile and does NOT re-chime.
+    playSound("bloop");
     return rec;
   }
 

@@ -21,6 +21,7 @@ import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
 import { parseToken, parseInvite } from "./lib/protocol.js";
+import { playSound } from "./lib/sounds.js";
 import { Prejoin } from "./ui/prejoin.js";
 import { Grid } from "./ui/grid.js";
 import { Controls } from "./ui/controls.js";
@@ -322,9 +323,18 @@ function renderInCall(msg) {
     if (!replaced && track) peer.publish(track, "camera").catch((err) => console.error("camera publish failed", err));
   });
 
-  // Roster + moderation + chat from the signaling socket.
-  signaling.on("peer-joined", (m) => addRosterPeer(m));
-  signaling.on("peer-left", (m) => grid.removePeer(m.id));
+  // Roster + moderation + chat from the signaling socket. The join/leave chimes live
+  // on the peer-joined/left events (a peer arriving/leaving mid-call), NOT on
+  // addRosterPeer — which also runs for each existing peer in the initial `joined`
+  // roster, and we don't want a burst of chimes when WE join a populated room.
+  signaling.on("peer-joined", (m) => {
+    addRosterPeer(m);
+    playSound("sing");
+  });
+  signaling.on("peer-left", (m) => {
+    grid.removePeer(m.id);
+    playSound("drop");
+  });
   // Authoritative per-peer mic/camera state: drives the remote mute indicators.
   signaling.on("peer-media-state", (m) => grid.setPeerMedia(m.id, { mic: m.mic, camera: m.camera }));
   signaling.on("muted", (m) => controls.onMuted(m.kind));
