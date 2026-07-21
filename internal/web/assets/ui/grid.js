@@ -333,11 +333,14 @@ export class Grid {
   // remembers the level on the tile (so a later mic (re)attach honors it) and
   // applies it to the currently-attached <audio> sink if any.
   _setVolume(id, value) {
-    const v = Math.min(1, Math.max(0, Number.isFinite(value) ? value : 1));
+    const v = Math.min(2, Math.max(0, Number.isFinite(value) ? value : 1)); // 0-200%
     const tile = this.tiles.get(id);
     if (tile) tile.volume = v;
     const a = this.audio.get(id);
-    if (a && a.audioEl) a.audioEl.volume = v;
+    if (a) {
+      if (a.gain) a.gain.gain.value = v; // WebAudio path: full 0-200% range
+      else if (a.audioEl) a.audioEl.volume = Math.min(1, v); // element fallback: 0-100%
+    }
   }
 
   // Update a participant's role badge from a role-change broadcast (op promotion).
@@ -436,10 +439,10 @@ export class Grid {
         type: "range",
         class: "vol",
         min: "0",
-        max: "1",
+        max: "2",
         step: "0.05",
         value: "1",
-        title: "Volume",
+        title: "Volume (up to 200%)",
         "aria-label": "Volume",
         onInput: (e) => this._setVolume(id, Number(e.target.value)),
       });
@@ -516,7 +519,7 @@ export class Grid {
       const ops = this.screenOpActionsFor({ id, name });
       if (ops) elNode.append(ops);
     }
-    rec = { el: elNode, video, nameEl, audioEl: null, volumeEl: null };
+    rec = { el: elNode, video, nameEl, audioEl: null, volumeEl: null, source: null, gain: null };
     this.screens.set(id, rec);
     this.el.append(elNode);
     this._relayout();
@@ -538,30 +541,60 @@ export class Grid {
     if (!stream) return;
     const rec = this._ensureScreenTile(id, name);
     if (!rec.audioEl) {
+      // Muted <audio> = stream puller; playback + 0-200% volume run through the gain
+      // node below (same pattern as _attachAudio).
       rec.audioEl = el("audio", { class: "sink", autoplay: true });
+      rec.audioEl.muted = true;
       rec.el.append(rec.audioEl);
       rec.volumeEl = el("input", {
         type: "range",
         class: "vol",
         min: "0",
-        max: "1",
+        max: "2",
         step: "0.05",
         value: "1",
-        title: "Screen volume",
+        title: "Screen volume (up to 200%)",
         "aria-label": "Screen volume",
         onInput: (e) => {
-          if (rec.audioEl) rec.audioEl.volume = Math.min(1, Math.max(0, Number(e.target.value)));
+          const v = Math.min(2, Math.max(0, Number(e.target.value)));
+          if (rec.gain) rec.gain.gain.value = v;
+          else if (rec.audioEl) rec.audioEl.volume = Math.min(1, v);
         },
       });
       rec.el.append(rec.volumeEl);
     }
     rec.audioEl.srcObject = stream;
+    if (rec.source) {
+      try { rec.source.disconnect(); } catch { /* already gone */ }
+    }
+    if (rec.gain) {
+      try { rec.gain.disconnect(); } catch { /* already gone */ }
+    }
+    rec.source = null;
+    rec.gain = null;
+    try {
+      const ctx = this._ensureAudioCtx();
+      rec.source = ctx.createMediaStreamSource(stream);
+      rec.gain = ctx.createGain();
+      rec.gain.gain.value = rec.volumeEl ? Number(rec.volumeEl.value) : 1;
+      rec.source.connect(rec.gain).connect(ctx.destination);
+    } catch {
+      rec.audioEl.muted = false; // WebAudio unavailable: element playback (0-100%)
+    }
     rec.audioEl.play().catch(() => {});
   }
 
   _detachScreenAudio(id) {
     const rec = this.screens.get(id);
     if (!rec || !rec.audioEl) return;
+    if (rec.source) {
+      try { rec.source.disconnect(); } catch { /* already gone */ }
+    }
+    if (rec.gain) {
+      try { rec.gain.disconnect(); } catch { /* already gone */ }
+    }
+    rec.source = null;
+    rec.gain = null;
     rec.audioEl.srcObject = null;
     rec.audioEl.remove();
     rec.audioEl = null;
@@ -574,6 +607,12 @@ export class Grid {
   _removeScreenTile(id) {
     const rec = this.screens.get(id);
     if (!rec) return;
+    if (rec.source) {
+      try { rec.source.disconnect(); } catch { /* already gone */ }
+    }
+    if (rec.gain) {
+      try { rec.gain.disconnect(); } catch { /* already gone */ }
+    }
     rec.video.srcObject = null;
     if (rec.audioEl) rec.audioEl.srcObject = null;
     rec.el.remove();
@@ -599,29 +638,42 @@ export class Grid {
     const tile = this.tiles.get(id);
     if (!tile || !stream) return;
 
+    const vol = typeof tile.volume === "number" ? tile.volume : 1;
+    // Playback runs through a WebAudio gain node so the slider can boost PAST 100%
+    // (an <audio> element's .volume caps at 1.0). The muted <audio> element is kept
+    // only as a stream puller — belt-and-suspenders for browsers that won't render a
+    // bare MediaStreamSource. If WebAudio is unavailable we fall back to element
+    // playback (0-100% only).
     const audioEl = el("audio", { class: "sink", autoplay: true });
-    audioEl.srcObject = stream; // playback: hearing the remote peer
-    audioEl.volume = typeof tile.volume === "number" ? tile.volume : 1; // honor this tile's slider
+    audioEl.srcObject = stream;
+    audioEl.muted = true;
     tile.el.append(audioEl);
 
     let source = null;
+    let gain = null;
     let analyser = null;
     let data = null;
     try {
       const ctx = this._ensureAudioCtx();
       source = ctx.createMediaStreamSource(stream);
+      gain = ctx.createGain();
+      gain.gain.value = vol;
+      source.connect(gain).connect(ctx.destination); // audible; gain 0-2 = 0-200%
       analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyser.smoothingTimeConstant = 0.8;
-      source.connect(analyser); // NOT to destination: the <audio> element does the playback
+      source.connect(analyser); // parallel tap for the active-speaker meter
       data = new Uint8Array(analyser.fftSize);
     } catch {
-      // WebAudio unavailable/blocked: keep playback, skip this tile's highlight.
+      // WebAudio unavailable/blocked: play via the element (capped at 100%), no meter.
+      audioEl.muted = false;
+      audioEl.volume = Math.min(1, vol);
       source = null;
+      gain = null;
       analyser = null;
     }
 
-    this.audio.set(id, { audioEl, source, analyser, data });
+    this.audio.set(id, { audioEl, source, gain, analyser, data });
     this._ensureLevelLoop();
   }
 
@@ -668,6 +720,13 @@ export class Grid {
     if (a.analyser) {
       try {
         a.analyser.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+    }
+    if (a.gain) {
+      try {
+        a.gain.disconnect();
       } catch {
         /* already disconnected */
       }
