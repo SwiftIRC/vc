@@ -99,6 +99,7 @@ export class Grid {
     this._removeScreenTile(id);
     const tile = this.tiles.get(id);
     if (tile) {
+      if (tile.cameraVideo) tile.cameraVideo.srcObject = null; // release the stream, matching the other removal paths
       tile.el.remove();
       this.tiles.delete(id);
     }
