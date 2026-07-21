@@ -24,8 +24,99 @@ make -C tests test
 
 ## Anope module (deployment build)
 
-_(Filled in Task 10.)_
+`m_webrtc_chat.cpp` is the Anope 2.1 glue: the `VC` command, `!vc`/`!chat`
+fantasy handling, per-channel settings persistence, and the libcurl provision
+POST. It `#include`s the header-only `core/` (defining `WVC_HAVE_CURL` so the
+libcurl `postProvision` is compiled in).
+
+There is **no Anope SDK on the development host**, so the glue is not compiled by
+the local CI — it is written to the documented Anope 2.1 API and built in the
+SwiftIRC Anope tree. Every Anope API call the author confirmed against the 2.1
+headers carries an inline `// VERIFY(anope-2.1):` marker naming the header /
+example module to re-check during review.
+
+### Build & install against Anope 2.1
+
+1. Copy the module **and its core** into the Anope source tree:
+
+   ```
+   cp m_webrtc_chat.cpp   <anope-src>/modules/third/
+   cp -r core             <anope-src>/modules/third/
+   ```
+
+   (`m_webrtc_chat.cpp` includes `core/…`, so the `core/` directory must sit next
+   to it under `modules/third/`.)
+
+2. Ensure the OpenSSL and libcurl development packages are installed
+   (`libssl-dev`, `libcurl4-openssl-dev` on Debian/Ubuntu). The module links them
+   automatically via the inline-CMake block at the top of `m_webrtc_chat.cpp`
+   (`find_package(OpenSSL)`, `find_package(CURL)`, `target_link_libraries(...
+   OpenSSL::Crypto CURL::libcurl)`); no manual link flags are needed.
+
+3. Build and install:
+
+   ```
+   cd <anope-src>
+   ./Config && make && make install
+   ```
+
+4. Add the config from `anope.conf.example` (see below) and restart / rehash
+   services.
 
 ## Config
 
-_(Filled in Task 10.)_
+Copy the blocks from [`anope.conf.example`](anope.conf.example) into your services
+configuration:
+
+- a `module { name = "m_webrtc_chat"; … }` block with `secret`, `apiurl`,
+  `linkorigin`, and `ttl`;
+- a `command { service = "ChanServ"; name = "VC"; command = "chanserv/vc"; }`
+  block (exposes `/msg ChanServ VC`);
+- two `fantasy { … command = "chanserv/vc"; prepend_channel = yes; }` blocks for
+  the `!vc` and `!chat` in-channel triggers.
+
+**`secret` MUST equal webrtc-chat's `-secret` (`WVC_SECRET`)** — it is the shared
+HMAC key. It is never handed to users and never logged.
+
+Usage once configured:
+
+- `!vc` / `!chat` in a channel (or `/msg ChanServ VC #channel`) — posts the public
+  room link, sends identified users a personal `#t=<token>` link that joins with
+  their channel role, and provisions the room.
+- `/msg ChanServ VC #channel SET ENABLED {ON|OFF}` — turn video chat on/off.
+- `/msg ChanServ VC #channel SET IDENTIFIED {ON|OFF}` — restrict joining to
+  NickServ-identified users.
+- `/msg ChanServ VC #channel SET ROOM <slug>` — set the room slug (lowercase,
+  `a-z 0-9 -`, must be unique across channels).
+
+`SET` requires the channel `SET` privilege (op/founder) or a services oper.
+
+## Cross-implementation token interop
+
+The token format is fixed by the Go side and must interoperate byte-for-byte. The
+C++ `wvc::sign` in `core/token.h` reproduces the two `want:"ok"` vectors in
+`internal/token/testdata/vectors.json` exactly (see `tests/test_token.h`), so any
+token this module mints validates in Go's `token.Verify`.
+
+Re-verify after any change to the core or the claims shape:
+
+```
+make -C tests test
+```
+
+If the Go `Claims` shape or JSON key order ever changes, update `core/claims.h`
+**and** the shared vectors together, then re-run the test above.
+
+## Deployment smoke test
+
+After deploying, verify end-to-end:
+
+1. Run webrtc-chat with `-secret <s>`; set the same `secret = "<s>"` in the module
+   config block.
+2. `/msg ChanServ VC #chan SET ENABLED ON`.
+3. Run `!vc` in `#chan` and confirm:
+   - the public room link appears in the channel;
+   - a NickServ-identified user receives a private `#t=<token>` link by NOTICE;
+   - webrtc-chat logs a `/api/provision` request ("provisioned");
+   - opening the tokened link joins the room with the caller's role/badge.
+

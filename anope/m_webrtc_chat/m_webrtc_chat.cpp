@@ -14,6 +14,17 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only
 
+// Link this third-party module against OpenSSL (HMAC-SHA256 for token signing) and
+// libcurl (provision POST). Anope's build reads this inline-CMake block from the
+// source; idiom copied from modules/extra/ssl_openssl.cpp and modules/extra/sqlite.cpp.
+// VERIFY(anope-2.1): inline `/// BEGIN CMAKE` link mechanism — modules/CMakeLists.txt
+// (inline_cmake/build_module) and modules/extra/ssl_openssl.cpp.
+/// BEGIN CMAKE
+/// find_package("OpenSSL" REQUIRED)
+/// find_package("CURL" REQUIRED)
+/// target_link_libraries(${SO} PRIVATE OpenSSL::Crypto CURL::libcurl)
+/// END CMAKE
+
 // The deployment build links libcurl, so enable core/provision.h's postProvision().
 // NOTE: core/provision.h does `#include <curl/curl.h>` *inside* `namespace wvc`.
 // Including curl at global scope first means that in-namespace include is a no-op

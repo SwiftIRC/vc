@@ -1,0 +1,69 @@
+/*
+ * m_webrtc_chat — SwiftIRC video chat services module.
+ *
+ * Install: copy m_webrtc_chat.cpp AND the core/ directory into your Anope source
+ * tree under modules/third/ (so you have modules/third/m_webrtc_chat.cpp and
+ * modules/third/core/*.h), then rebuild and install:
+ *
+ *     ./Config && make && make install
+ *
+ * The module links OpenSSL and libcurl automatically via the inline-CMake block in
+ * m_webrtc_chat.cpp; both dev packages (libssl-dev, libcurl-dev) must be present.
+ *
+ * Then add the blocks below to your services configuration and rehash (or restart).
+ */
+
+/*
+ * The module itself. Loaded like any other module.
+ */
+module
+{
+	name = "m_webrtc_chat"
+
+	/*
+	 * Shared HMAC secret. This MUST be byte-for-byte identical to webrtc-chat's
+	 * -secret (WVC_SECRET) so the tokens this module mints validate on the Go side.
+	 * Use a long random value. It is never handed to users and never written to logs.
+	 */
+	secret = "change-me-to-a-long-random-value"
+
+	/*
+	 * Where the module POSTs provision snapshots ({base}/api/provision). This is a
+	 * server-local address, so plain HTTP is fine.
+	 */
+	apiurl = "http://127.0.0.1:8080"
+
+	/*
+	 * Public origin used to build the room links handed to users, with no trailing
+	 * slash. A link looks like linkorigin + "/" + <room slug> (+ "#t=<token>").
+	 */
+	linkorigin = "https://vc.swiftirc.net"
+
+	/*
+	 * Token lifetime in seconds — how long a handed-out personal link stays valid
+	 * (time to click it). Defaults to 600 (10 minutes) if omitted.
+	 */
+	ttl = 600
+}
+
+/*
+ * Expose the command as: /msg ChanServ VC #channel [SET {ENABLED|IDENTIFIED|ROOM} value]
+ * Place this alongside the other ChanServ `command { }` blocks.
+ */
+command { service = "ChanServ"; name = "VC"; command = "chanserv/vc"; }
+
+/*
+ * In-channel fantasy triggers: !vc and !chat (both do the same thing — post the
+ * room link, hand identified users a personal link, and provision the room).
+ *
+ *   prepend_channel = yes  — passes the channel as the command's first argument
+ *                            (the command requires it); leave this on.
+ *   require_privilege = no — lets any channel user, including guests, fetch the
+ *                            public link. Set it to yes to require the FANTASY
+ *                            channel privilege instead.
+ *
+ * Fantasy commands additionally require BotServ fantasy to be enabled on the
+ * channel and a service bot assigned to it.
+ */
+fantasy { name = "vc"; command = "chanserv/vc"; prepend_channel = yes; require_privilege = no; }
+fantasy { name = "chat"; command = "chanserv/vc"; prepend_channel = yes; require_privilege = no; }
