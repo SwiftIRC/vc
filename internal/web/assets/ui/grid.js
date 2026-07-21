@@ -92,7 +92,10 @@ export class Grid {
     this._levelTimer = null; // active-speaker polling handle (null when idle)
 
     // Bound Media listeners for the self tile; kept so destroy() can detach them.
-    this._onMicTrack = () => this.refreshSelf();
+    this._onMicTrack = () => {
+      this._attachSelfAnalyser(); // re-point the self active-speaker meter at the new mic track
+      this.refreshSelf();
+    };
     this._onCameraTrack = () => {
       if (this._selfTile && this.media) this._selfTile.cameraVideo.srcObject = this.media.stream;
       this.refreshSelf();
@@ -113,6 +116,7 @@ export class Grid {
     if (this._resizeObserver) this._resizeObserver.observe(this.el);
 
     this._addSelfTile(selfRole);
+    this._attachSelfAnalyser(); // light the self tile's outline when the local user talks
   }
 
   // Choose the column count (and thus rows) that keeps tiles closest to TILE_ASPECT
@@ -585,6 +589,34 @@ export class Grid {
     }
 
     this.audio.set(id, { audioEl, source, analyser, data });
+    this._ensureLevelLoop();
+  }
+
+  // Analyse the LOCAL mic so the self tile joins the active-speaker highlight — the
+  // user sees the same blue outline when they talk, confirming their mic is live.
+  // No <audio> element (never play your own mic back — that's echo); the analyser is
+  // for the meter only. A muted mic is a disabled track = silence = no outline, which
+  // correctly reads as "not transmitting". Re-run on every mic-track change (device
+  // switch, noise-suppression swap).
+  _attachSelfAnalyser() {
+    this._detachAudio(this.selfId); // drop any prior source before re-pointing it
+    const track = this.media ? this.media.micTrack : null;
+    if (!track) return;
+    let source = null;
+    let analyser = null;
+    let data = null;
+    try {
+      const ctx = this._ensureAudioCtx();
+      source = ctx.createMediaStreamSource(new MediaStream([track]));
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.8;
+      source.connect(analyser); // analysis only — never connected to the destination
+      data = new Uint8Array(analyser.fftSize);
+    } catch {
+      return; // WebAudio unavailable/blocked: skip the self highlight
+    }
+    this.audio.set(this.selfId, { audioEl: null, source, analyser, data });
     this._ensureLevelLoop();
   }
 
