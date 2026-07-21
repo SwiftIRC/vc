@@ -1,0 +1,416 @@
+// The in-call tile grid. One base tile per participant (self + each remote),
+// plus a SEPARATE tile for any active screen-share. A base tile carries the
+// participant's name, an op/+voice role badge, their camera video, and mic/av
+// indicators. Screen-shares are their own tiles so a share never displaces the
+// sharer's camera.
+//
+// Tiles are driven by two event sources, wired from app.js:
+//   - Peer      "remote-track" {participantId, kind, stream} / "peer-gone"
+//               {participantId, kind}  — remote media coming and going. kind is
+//               "mic" | "camera" | "screen".
+//   - Signaling "peer-joined" {id,name,role} / "peer-left" {id} — roster changes,
+//               which name/role a tile shows and when a participant's tiles go away.
+//   - Media     mic-track / camera-track / screen-start / screen-stop — the SELF
+//               tile's own media (its preview and its screen-share tile).
+//
+// Active-speaker highlight: a single AudioContext feeds one AnalyserNode per
+// REMOTE mic stream; a light polling loop reads each analyser's level and marks
+// the loudest tile ".active". Every source/analyser is torn down when its tile
+// (or the whole grid) goes away — no leaked audio nodes.
+//
+// Injection-safety: every participant-controlled string (name, role) is written
+// via textContent (the el() "text" key), never innerHTML.
+
+// Tiny DOM helper: el("div", {class:"x", onClick:fn}, child, "text"...). The
+// "text" key sets textContent, so caller-supplied strings can never inject markup.
+function el(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (v === true) node.setAttribute(k, "");
+    else if (v !== false && v != null) node.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid != null) node.append(kid);
+  return node;
+}
+
+// How often (ms) to re-read audio levels for the active-speaker highlight. Fast
+// enough to feel live, slow enough to cost nothing.
+const LEVEL_INTERVAL_MS = 150;
+// RMS level (0..1) a stream must exceed to be considered "speaking"; also the
+// floor a tile must beat to steal the highlight, so background hiss stays quiet.
+const ACTIVE_THRESHOLD = 0.03;
+
+export class Grid {
+  // { selfId, selfName, selfRole, media, opActionsFor }. opActionsFor(participant)
+  // returns a per-tile op-controls node (kick/mute/ban) or null for non-ops; it is
+  // owned by controls.js and only placed here.
+  constructor({ selfId, selfName, selfRole, media, opActionsFor } = {}) {
+    this.selfId = selfId;
+    this.selfName = selfName || "You";
+    this.media = media || null;
+    this.opActionsFor = typeof opActionsFor === "function" ? opActionsFor : () => null;
+
+    this.el = el("div", { class: "grid" });
+
+    this.tiles = new Map(); // participantId -> base-tile record
+    this.screens = new Map(); // participantId -> screen-tile element
+    this.audio = new Map(); // participantId -> { audioEl, source, analyser, data }
+
+    this.activeId = null; // participantId of the currently highlighted tile
+    this._audioCtx = null; // shared AudioContext (lazy: created with the first remote mic)
+    this._levelTimer = null; // active-speaker polling handle (null when idle)
+
+    // Bound Media listeners for the self tile; kept so destroy() can detach them.
+    this._onMicTrack = () => this.refreshSelf();
+    this._onCameraTrack = () => {
+      if (this._selfTile && this.media) this._selfTile.cameraVideo.srcObject = this.media.stream;
+      this.refreshSelf();
+    };
+    this._onScreenStart = () => this._addScreenTile(this.selfId, this.selfName, this.media && this.media.screenStream);
+    this._onScreenStop = () => this._removeScreenTile(this.selfId);
+    if (this.media) {
+      this.media.addEventListener("mic-track", this._onMicTrack);
+      this.media.addEventListener("camera-track", this._onCameraTrack);
+      this.media.addEventListener("screen-start", this._onScreenStart);
+      this.media.addEventListener("screen-stop", this._onScreenStop);
+    }
+
+    this._addSelfTile(selfRole);
+  }
+
+  // --- roster ---
+
+  // Add or update a remote participant's base tile (name/role). No-op for self.
+  addPeer(peer) {
+    if (!peer || !peer.id || peer.id === this.selfId) return;
+    const tile = this._ensureTile(peer.id, peer.name, peer.role);
+    if (peer.name != null && peer.name !== "") this._setName(tile, peer.name);
+    if (peer.role != null) this._setRole(tile, peer.role);
+  }
+
+  // A participant left the room: drop their base tile, any screen tile, and their
+  // audio analyser/playback so nothing leaks.
+  removePeer(id) {
+    if (!id || id === this.selfId) return;
+    this._detachAudio(id);
+    this._removeScreenTile(id);
+    const tile = this.tiles.get(id);
+    if (tile) {
+      tile.el.remove();
+      this.tiles.delete(id);
+    }
+    if (this.activeId === id) this._setActive(null);
+  }
+
+  // --- remote media ---
+
+  // A forwarded remote track arrived. Camera fills the base tile's video, mic wires
+  // playback + the active-speaker analyser, and screen gets its own tile.
+  onRemoteTrack({ participantId, kind, stream } = {}) {
+    if (!participantId) return;
+    if (kind === "screen") {
+      const known = this.tiles.get(participantId);
+      this._addScreenTile(participantId, (known && known.name) || "guest", stream);
+      return;
+    }
+    const tile = this._ensureTile(participantId);
+    if (kind === "camera") {
+      tile.cameraVideo.srcObject = stream;
+      tile.hasCamera = true;
+      this._setIndicator(tile.avPill, true);
+    } else if (kind === "mic") {
+      this._attachAudio(participantId, stream);
+      this._setIndicator(tile.micPill, true);
+    }
+  }
+
+  // A forwarded remote track ended (publisher toggled it off or left mid-track).
+  onPeerGone({ participantId, kind } = {}) {
+    if (!participantId) return;
+    if (kind === "screen") {
+      this._removeScreenTile(participantId);
+      return;
+    }
+    const tile = this.tiles.get(participantId);
+    if (kind === "camera") {
+      if (tile) {
+        tile.cameraVideo.srcObject = null;
+        tile.hasCamera = false;
+        this._setIndicator(tile.avPill, false);
+      }
+    } else if (kind === "mic") {
+      this._detachAudio(participantId);
+      if (tile) this._setIndicator(tile.micPill, false);
+    }
+  }
+
+  // --- self tile ---
+
+  // Re-read the local media's live enabled state onto the self tile's indicators.
+  // Called by controls.js after a mute/camera toggle (which fires no Media event).
+  refreshSelf() {
+    const tile = this._selfTile;
+    if (!tile) return;
+    const mic = this.media ? this.media.micTrack : null;
+    const cam = this.media ? this.media.cameraTrack : null;
+    this._setIndicator(tile.micPill, !!(mic && mic.enabled));
+    this._setIndicator(tile.avPill, !!(cam && cam.enabled));
+  }
+
+  _addSelfTile(role) {
+    const tile = this._buildTile(this.selfId, this.selfName, role, { self: true });
+    tile.cameraVideo.muted = true; // never monitor your own mic
+    if (this.media && this.media.stream) tile.cameraVideo.srcObject = this.media.stream;
+    this._selfTile = tile;
+    this.tiles.set(this.selfId, tile);
+    this.el.append(tile.el);
+    this.refreshSelf();
+  }
+
+  // --- tile construction ---
+
+  _ensureTile(id, name, role) {
+    let tile = this.tiles.get(id);
+    if (tile) return tile;
+    tile = this._buildTile(id, name || "guest", role, { self: false });
+    this.tiles.set(id, tile);
+    this.el.append(tile.el);
+    return tile;
+  }
+
+  _buildTile(id, name, role, { self }) {
+    const cameraVideo = el("video", { class: "cam", autoplay: true, playsinline: true });
+    const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
+    const badgeEl = el("span", { class: "badge", hidden: true });
+    const micPill = el("span", { class: "pill mic", text: "mic" });
+    const avPill = el("span", { class: "pill av", text: "cam" });
+
+    const meta = el(
+      "div",
+      { class: "meta" },
+      nameEl,
+      badgeEl,
+      el("span", { class: "pills" }, micPill, avPill),
+    );
+
+    const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, meta);
+
+    const tile = { el: tileEl, cameraVideo, nameEl, badgeEl, micPill, avPill, name, hasCamera: false, self };
+    this._setRole(tile, role);
+    this._setIndicator(micPill, false);
+    this._setIndicator(avPill, false);
+
+    if (!self) {
+      const ops = this.opActionsFor({ id, name });
+      if (ops) tileEl.append(ops);
+    }
+    return tile;
+  }
+
+  _setName(tile, name) {
+    tile.name = name;
+    tile.nameEl.textContent = tile.self ? `${name} (you)` : name;
+    const screen = this.screens.get(tile.el.getAttribute("data-id"));
+    if (screen) screen.nameEl.textContent = `${name} (screen)`;
+  }
+
+  // op -> "op" badge; voice -> "+" badge; everything else -> no badge.
+  _setRole(tile, role) {
+    const badge = tile.badgeEl;
+    if (role === "op") {
+      badge.textContent = "op";
+      badge.className = "badge op";
+      badge.hidden = false;
+    } else if (role === "voice") {
+      badge.textContent = "+";
+      badge.className = "badge voice";
+      badge.hidden = false;
+    } else {
+      badge.textContent = "";
+      badge.hidden = true;
+    }
+  }
+
+  _setIndicator(pill, on) {
+    pill.classList.toggle("on", !!on);
+    pill.classList.toggle("off", !on);
+  }
+
+  // --- screen tiles ---
+
+  _addScreenTile(id, name, stream) {
+    if (!stream) return;
+    let rec = this.screens.get(id);
+    if (!rec) {
+      const video = el("video", { class: "cam", autoplay: true, playsinline: true });
+      video.muted = true; // the sharer's audio (if any) is the mic tile's job
+      const nameEl = el("span", { class: "name", text: `${name} (screen)` });
+      const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, nameEl));
+      rec = { el: elNode, video, nameEl };
+      this.screens.set(id, rec);
+      this.el.append(elNode);
+    } else {
+      rec.nameEl.textContent = `${name} (screen)`;
+    }
+    rec.video.srcObject = stream;
+  }
+
+  _removeScreenTile(id) {
+    const rec = this.screens.get(id);
+    if (!rec) return;
+    rec.video.srcObject = null;
+    rec.el.remove();
+    this.screens.delete(id);
+  }
+
+  // --- active-speaker (WebAudio) ---
+
+  _ensureAudioCtx() {
+    if (!this._audioCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      this._audioCtx = new Ctx();
+    }
+    if (this._audioCtx.state === "suspended") this._audioCtx.resume().catch(() => {});
+    return this._audioCtx;
+  }
+
+  // Wire a remote mic stream to (a) a hidden <audio> so it is audible and (b) an
+  // AnalyserNode for the active-speaker meter. Idempotent per participant.
+  _attachAudio(id, stream) {
+    this._detachAudio(id);
+    const tile = this.tiles.get(id);
+    if (!tile || !stream) return;
+
+    const audioEl = el("audio", { class: "sink", autoplay: true });
+    audioEl.srcObject = stream; // playback: hearing the remote peer
+    tile.el.append(audioEl);
+
+    let source = null;
+    let analyser = null;
+    let data = null;
+    try {
+      const ctx = this._ensureAudioCtx();
+      source = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.8;
+      source.connect(analyser); // NOT to destination: the <audio> element does the playback
+      data = new Uint8Array(analyser.fftSize);
+    } catch {
+      // WebAudio unavailable/blocked: keep playback, skip this tile's highlight.
+      source = null;
+      analyser = null;
+    }
+
+    this.audio.set(id, { audioEl, source, analyser, data });
+    this._ensureLevelLoop();
+  }
+
+  // Tear down a participant's playback + analyser. Safe to call when absent.
+  _detachAudio(id) {
+    const a = this.audio.get(id);
+    if (!a) return;
+    this.audio.delete(id);
+    if (a.source) {
+      try {
+        a.source.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+    }
+    if (a.analyser) {
+      try {
+        a.analyser.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+    }
+    if (a.audioEl) {
+      a.audioEl.srcObject = null;
+      a.audioEl.remove();
+    }
+    if (this.activeId === id) this._setActive(null);
+    if (this.audio.size === 0) this._stopLevelLoop();
+  }
+
+  _ensureLevelLoop() {
+    if (this._levelTimer !== null || this.audio.size === 0) return;
+    const tick = () => {
+      this._computeActive();
+      this._levelTimer = setTimeout(tick, LEVEL_INTERVAL_MS);
+    };
+    this._levelTimer = setTimeout(tick, LEVEL_INTERVAL_MS);
+  }
+
+  _stopLevelLoop() {
+    if (this._levelTimer !== null) {
+      clearTimeout(this._levelTimer);
+      this._levelTimer = null;
+    }
+  }
+
+  _computeActive() {
+    let bestId = null;
+    let bestLevel = ACTIVE_THRESHOLD;
+    for (const [id, a] of this.audio) {
+      if (!a.analyser || !a.data) continue;
+      a.analyser.getByteTimeDomainData(a.data);
+      let sum = 0;
+      for (let i = 0; i < a.data.length; i++) {
+        const v = (a.data[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / a.data.length);
+      if (rms > bestLevel) {
+        bestLevel = rms;
+        bestId = id;
+      }
+    }
+    this._setActive(bestId);
+  }
+
+  _setActive(id) {
+    if (this.activeId === id) return;
+    if (this.activeId) {
+      const prev = this.tiles.get(this.activeId);
+      if (prev) prev.el.classList.remove("active");
+    }
+    this.activeId = id;
+    if (id) {
+      const next = this.tiles.get(id);
+      if (next) next.el.classList.add("active");
+    }
+  }
+
+  // --- teardown ---
+
+  // Detach Media listeners, tear down every audio node, close the AudioContext,
+  // and empty the grid. After this the Grid holds no timers or media references.
+  destroy() {
+    this._stopLevelLoop();
+    for (const id of [...this.audio.keys()]) this._detachAudio(id);
+    if (this._audioCtx) {
+      try {
+        this._audioCtx.close();
+      } catch {
+        /* already closed */
+      }
+      this._audioCtx = null;
+    }
+    if (this.media) {
+      this.media.removeEventListener("mic-track", this._onMicTrack);
+      this.media.removeEventListener("camera-track", this._onCameraTrack);
+      this.media.removeEventListener("screen-start", this._onScreenStart);
+      this.media.removeEventListener("screen-stop", this._onScreenStop);
+    }
+    for (const tile of this.tiles.values()) tile.cameraVideo.srcObject = null;
+    for (const rec of this.screens.values()) rec.video.srcObject = null;
+    this.tiles.clear();
+    this.screens.clear();
+    this._selfTile = null;
+    this.el.replaceChildren();
+  }
+}

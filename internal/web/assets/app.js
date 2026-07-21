@@ -5,14 +5,16 @@
 // Routes off the URL:
 //   /            -> home: pick a room name, navigate to /<name>
 //   /<slug>      -> pre-join lobby (ui/prejoin.js); #t=<token> supplies identity
-// A successful join swaps the lobby for an in-call placeholder that wires up the
-// media plane (Peer) so the transition is real; Tasks 8-9 replace that placeholder
-// with the real grid / controls / chat.
+// A successful join swaps the lobby for the in-call view: the tile grid
+// (ui/grid.js) and control bar (ui/controls.js), wired to the media plane (Peer)
+// and the live socket (Signaling). Chat (Task 9) still lands here later.
 import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
 import { parseToken } from "./lib/protocol.js";
 import { Prejoin } from "./ui/prejoin.js";
+import { Grid } from "./ui/grid.js";
+import { Controls } from "./ui/controls.js";
 
 // Mirror of the server's room-slug rule (internal/server: slugRe). A path that
 // doesn't match can never join, so we route it to home with a hint instead.
@@ -24,10 +26,13 @@ const root = document.getElementById("app");
 // (re)created as the user moves lobby -> call -> lobby.
 let slug = "";
 let token = "";
+let selfName = ""; // display name chosen in the lobby; labels the self tile
 let media = null;
 let signaling = null;
 let peer = null;
 let prejoin = null;
+let grid = null;
+let controls = null;
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -108,6 +113,7 @@ function renderPrejoin() {
 // and routes the server's reply. A prior socket (from a rejected attempt) is
 // stopped first so its close can't trigger a reconnect.
 function onJoin({ name, password }) {
+  selfName = name || "";
   if (signaling) signaling.stop();
   signaling = new Signaling(`/ws/${slug}`);
   signaling.on("joined", onJoined);
@@ -135,76 +141,52 @@ function onJoined(msg) {
   renderInCall(msg);
 }
 
-// --- in-call placeholder (Tasks 8-9 replace this) ---
+// --- in-call view: tile grid + control bar ---
 
-// Brings the media plane up on the live socket and shows a minimal call view:
-// the local preview, who's here, and any forwarded remote streams. No grid,
-// controls, or chat yet — just enough that the join is provably real.
+// Brings the media plane up on the live socket and renders the real in-call UI:
+// the tile grid (self + remotes, screen-shares, active-speaker) and the control
+// bar (local mute/camera/screenshare/leave, plus op moderation).
 function renderInCall(msg) {
-  const localVideo = el("video", { class: "preview", autoplay: true, muted: true, playsinline: true });
-  localVideo.muted = true;
-  if (media && media.stream) localVideo.srcObject = media.stream;
-
-  const remotes = el("div", { class: "remotes" });
-  const remoteEls = new Map(); // participantId:kind -> <video>
-
-  const peerList = el("ul", { class: "peers" });
-  const renderPeers = (peers) => {
-    peerList.replaceChildren(
-      ...(peers || []).map((p) => el("li", {}, `${p.name || "guest"} — ${p.role}`)),
-    );
-    if (!peers || peers.length === 0) peerList.append(el("li", { class: "muted", text: "no one else yet" }));
-  };
-  renderPeers(msg.peers);
-
-  const leaveBtn = el("button", { class: "leave", type: "button", onClick: leave }, "Leave");
-
-  root.replaceChildren(
-    el(
-      "div",
-      { class: "incall" },
-      el("h1", { text: `In #${slug}` }),
-      el("p", { class: "self", text: `You are ${msg.selfId} (${msg.role})` }),
-      localVideo,
-      el("h2", { text: "In call" }),
-      peerList,
-      remotes,
-      leaveBtn,
-    ),
-  );
-
   // Media plane. Peer registers its own offer/answer/candidate/tracks handlers in
   // its constructor; that must happen before start() sends the first offer, and
   // synchronously here so it precedes any inbound SFU frame on this socket.
   peer = new Peer(signaling);
 
-  peer.addEventListener("remote-track", (e) => {
-    const { participantId, kind, stream } = e.detail;
-    const key = `${participantId}:${kind}`;
-    let v = remoteEls.get(key);
-    if (!v) {
-      v = el("video", { class: "remote", autoplay: true, playsinline: true });
-      remoteEls.set(key, v);
-      remotes.append(v);
-    }
-    v.srcObject = stream;
+  // Controls first: the grid asks it for each remote tile's op-action group.
+  controls = new Controls({ media, peer, signaling, role: msg.role, onLeave: leave });
+  grid = new Grid({
+    selfId: msg.selfId,
+    selfName,
+    selfRole: msg.role,
+    media,
+    opActionsFor: (p) => controls.opActionsFor(p),
   });
-  peer.addEventListener("peer-gone", (e) => {
-    const key = `${e.detail.participantId}:${e.detail.kind}`;
-    const v = remoteEls.get(key);
-    if (v) {
-      v.srcObject = null;
-      v.remove();
-      remoteEls.delete(key);
-    }
-  });
+  controls.attachGrid(grid); // toggles refresh the self tile's indicators
+
+  root.replaceChildren(
+    el(
+      "div",
+      { class: "incall" },
+      el("header", { class: "call-head" }, el("h1", { text: `#${slug}` })),
+      grid.el,
+      controls.el,
+    ),
+  );
+
+  // Seed the roster the server already knew about at join time.
+  for (const p of msg.peers || []) grid.addPeer(p);
+
+  // Remote media -> tiles.
+  peer.addEventListener("remote-track", (e) => grid.onRemoteTrack(e.detail));
+  peer.addEventListener("peer-gone", (e) => grid.onPeerGone(e.detail));
   peer.addEventListener("error", (e) => console.error("peer error", e.detail.phase, e.detail.error));
 
-  // Live roster upkeep for the placeholder list (best-effort; Task 8 owns the grid).
-  signaling.on("peer-joined", (m) => {
-    peerList.querySelector(".muted")?.remove();
-    peerList.append(el("li", {}, `${m.name || "guest"} — ${m.role}`));
-  });
+  // Roster + moderation from the signaling socket.
+  signaling.on("peer-joined", (m) => grid.addPeer(m));
+  signaling.on("peer-left", (m) => grid.removePeer(m.id));
+  signaling.on("muted", (m) => controls.onMuted(m.kind));
+  signaling.on("room-locked", () => controls.onLock(true));
+  signaling.on("room-unlocked", () => controls.onLock(false));
 
   const localTracks = [];
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });
@@ -212,9 +194,19 @@ function renderInCall(msg) {
   peer.start(localTracks).catch((err) => console.error("peer start failed", err));
 }
 
-// Full teardown back to the lobby: close the peer, stop the socket permanently,
-// release the camera/mic, then re-render pre-join with a fresh Media.
+// Full teardown back to the lobby. Tear down the UI first so its Media listeners
+// (grid's self tile, controls' screen-share) are detached before media.stop()
+// fires screen-stop into a closing peer; then close the peer, stop the socket
+// permanently, release the camera/mic, and re-render pre-join with a fresh Media.
 function leave() {
+  if (controls) {
+    controls.destroy();
+    controls = null;
+  }
+  if (grid) {
+    grid.destroy();
+    grid = null;
+  }
   if (peer) {
     peer.close();
     peer = null;

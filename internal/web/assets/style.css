@@ -99,19 +99,12 @@ input[readonly] {
   flex: 1;
 }
 
-.preview,
-.remote {
+.preview {
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
   border-radius: 8px;
   object-fit: cover;
-}
-
-.remotes {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-  gap: 0.5rem;
 }
 
 .count-row {
@@ -123,8 +116,7 @@ input[readonly] {
   color: var(--fg);
 }
 
-button.join,
-button.leave {
+button.join {
   background: var(--accent);
   border-color: transparent;
   color: #fff;
@@ -132,32 +124,9 @@ button.leave {
   cursor: pointer;
 }
 
-button.leave {
-  background: #3a3f48;
-}
-
 button:disabled {
   opacity: 0.6;
   cursor: default;
-}
-
-.peers {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.peers .muted {
-  color: var(--muted);
-}
-
-.self {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
 }
 
 .error {
@@ -167,8 +136,185 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+/* --- in-call: the grid is wider than the lobby card --- */
+
+.incall {
+  max-width: 76rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  gap: 0.75rem;
+}
+
+.call-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.6rem;
+  align-content: start;
+}
+
+.tile {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.tile.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.tile .cam {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.tile.self .cam {
+  transform: scaleX(-1); /* mirror your own preview, as call apps do */
+}
+
+.tile.screen .cam {
+  object-fit: contain; /* show the whole shared surface, don't crop */
+}
+
+/* Hidden per-tile <audio> sink used only for remote playback. */
+.tile .sink {
+  display: none;
+}
+
+.tile .meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  font-size: 0.85rem;
+}
+
+.tile .meta .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile .badge {
+  flex: none;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+}
+
+.tile .badge.voice {
+  background: #2f9e6b;
+}
+
+.tile .pills {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.tile .pill {
+  padding: 0.05rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tile .pill.on {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--fg);
+}
+
+.tile .pill.off {
+  background: rgba(255, 107, 107, 0.22);
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.op-actions {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.op-actions .op {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.72rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.op-actions .op.ban {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.controls .ctl {
+  cursor: pointer;
+}
+
+.controls .ctl.active {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.controls .ctl.leave {
+  margin-left: auto;
+  background: #3a3f48;
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.controls .lock-status {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 @media (max-width: 30rem) {
   .devices {
+    grid-template-columns: 1fr;
+  }
+
+  .grid {
     grid-template-columns: 1fr;
   }
 }

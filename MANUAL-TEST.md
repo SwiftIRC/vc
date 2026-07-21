@@ -33,3 +33,34 @@ camera/microphone permission when prompted.
       and releases the camera/mic.
 - [ ] **Media flows** — with two tabs joined, each shows the other's forwarded
       video in the placeholder's remote area (full grid/controls arrive in Tasks 8–9).
+
+## In-call grid + controls (Task 8)
+
+- [ ] **Grid lays out N tiles** — join a room from several tabs. Each participant
+      (self + every remote) gets one tile with a name and, for an op/voice user, an
+      `op` / `+` badge. Your own tile is labelled "(you)" and mirrored. Tiles reflow
+      responsively as the count changes; a leaving peer's tile disappears.
+- [ ] **Screen-share is its own tile** — start a screen-share (Share screen). A new
+      tile appears for the shared surface without displacing the sharer's camera
+      tile; other tabs see the same separate screen tile. Stop it (button or the
+      browser's "Stop sharing") and the screen tile — and only it — goes away.
+- [ ] **Active speaker highlights** — with 2+ remote participants, whoever is
+      talking gets a highlighted (accent-outlined) tile; it follows the loudest
+      voice and clears when the room goes quiet.
+- [ ] **Mute / camera controls work** — Mute toggles your mic (label flips
+      Mute/Unmute, your tile's mic indicator turns off); Stop video toggles your
+      camera (label + av indicator + your preview). Others stop hearing/seeing you.
+- [ ] **Screenshare control works** — Share screen prompts the picker, publishes,
+      and shows the screen tile everywhere; Stop share removes it everywhere.
+- [ ] **Op sees kick/mute/ban + lock; non-op does not** — an op sees per-remote
+      kick / mute / ban buttons and a Lock room toggle; a non-op (plain user/guest)
+      sees none of these (they are never rendered), only the local controls.
+- [ ] **Op kick removes the target for everyone** — an op clicks kick on a remote
+      tile; the target is removed and their tile vanishes for all remaining
+      participants (the kicked client closes itself).
+- [ ] **Op mute nudges the target (re-enableable)** — an op clicks mute on a remote
+      tile; that client's mic goes off (its Mute button flips to Unmute) but the
+      user can click Unmute to speak again — it is a nudge, not a hard lock.
+- [ ] **Lock indicator reacts to lock state** — when an op locks the room, every
+      client shows a "Room locked" indicator; unlocking clears it. The op's toggle
+      label tracks the same state (it reflects the server broadcast, not the click).
