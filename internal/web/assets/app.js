@@ -240,6 +240,14 @@ function renderInCall(msg) {
   peer.addEventListener("peer-gone", (e) => grid.onPeerGone(e.detail));
   peer.addEventListener("error", (e) => console.error("peer error", e.detail.phase, e.detail.error));
 
+  // Local mic track swapped (noise-suppression toggle): replace what we publish for
+  // "mic" in place — replaceTrack needs no renegotiation for a same-kind track. The
+  // `media` singleton is discarded on leave, so this listener dies with the call.
+  media.addEventListener("mic-track", (e) => {
+    const track = e && e.detail ? e.detail.track : null;
+    if (peer && track) peer.replaceTrack("mic", track).catch((err) => console.error("mic replaceTrack failed", err));
+  });
+
   // Roster + moderation + chat from the signaling socket.
   signaling.on("peer-joined", (m) => grid.addPeer(m));
   signaling.on("peer-left", (m) => grid.removePeer(m.id));

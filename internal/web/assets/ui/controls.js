@@ -51,6 +51,8 @@ export class Controls {
 
     this.sharing = false; // local screen-share active?
     this.locked = false; // authoritative room lock state (from broadcasts)
+    this.nsOn = false; // noise suppression active? (opt-in; default OFF, like Jitsi)
+    this.nsBusy = false; // true while the ~2MB worklet loads / graph (re)builds
 
     this._build();
 
@@ -146,6 +148,9 @@ export class Controls {
     this.muteBtn = el("button", { type: "button", class: "ctl mic", onClick: () => this._toggleMic() });
     this.cameraBtn = el("button", { type: "button", class: "ctl cam", onClick: () => this._toggleCamera() });
     this.screenBtn = el("button", { type: "button", class: "ctl screen", onClick: () => this._toggleScreen() });
+    // Noise suppression: opt-in (default OFF — it adds CPU/latency, so the user
+    // enables it), and disabled while the large worklet loads on first enable.
+    this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._toggleNoiseSuppression() });
 
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
@@ -160,16 +165,18 @@ export class Controls {
     const leaveBtn = el("button", { type: "button", class: "ctl leave", onClick: () => this.onLeave() }, "Leave");
 
     // A mic/camera button is meaningless with no such track; disable it up front.
+    // Noise suppression likewise needs a mic to process.
     if (!(this.media && this.media.micTrack)) this.muteBtn.disabled = true;
     if (!(this.media && this.media.cameraTrack)) this.cameraBtn.disabled = true;
 
     this._setMicButton(this.media && this.media.micTrack ? this.media.micTrack.enabled : false);
     this._setCameraButton(this.media && this.media.cameraTrack ? this.media.cameraTrack.enabled : false);
     this._setScreenButton(false);
+    this._setNsButton(false, false); // default OFF
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.muteBtn, this.cameraBtn, this.screenBtn, this.chatBtn];
+    const children = [this.muteBtn, this.cameraBtn, this.screenBtn, this.nsBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -204,6 +211,26 @@ export class Controls {
       // Rejection (user cancelled the picker) is non-fatal; Media emits its own
       // error and no screen-start fires, so the button simply stays "Share screen".
       this.media.startScreen().catch(() => {});
+    }
+  }
+
+  // Toggle mic noise suppression. First enable loads the ~2MB worklet, so disable
+  // the button and show "Loading…" until Media settles. Media re-reads its own
+  // authoritative state (noiseSuppressionOn), so a load failure (raw mic left in
+  // place) simply lands us back on OFF — the user is never stuck.
+  async _toggleNoiseSuppression() {
+    if (!this.media || this.nsBusy) return;
+    const target = !this.nsOn;
+    this.nsBusy = true;
+    this._setNsButton(this.nsOn, true);
+    try {
+      await this.media.setNoiseSuppression(target);
+    } catch (err) {
+      console.error("noise suppression toggle failed", err);
+    } finally {
+      this.nsBusy = false;
+      this.nsOn = !!this.media.noiseSuppressionOn; // trust Media's real state
+      this._setNsButton(this.nsOn, false);
     }
   }
 
@@ -302,6 +329,15 @@ export class Controls {
     if (!this.lockBtn) return;
     this.lockBtn.textContent = locked ? "Unlock room" : "Lock room";
     this.lockBtn.classList.toggle("active", locked);
+  }
+
+  // Reflect noise-suppression state. `busy` shows a loading/disabled state while
+  // the worklet loads; the button is also disabled when there is no mic to process.
+  _setNsButton(on, busy) {
+    this.nsBtn.textContent = busy ? "Loading…" : on ? "Denoise on" : "Denoise off";
+    this.nsBtn.classList.toggle("active", on && !busy);
+    this.nsBtn.classList.toggle("loading", busy);
+    this.nsBtn.disabled = busy || !(this.media && this.media.micTrack);
   }
 
   // Detach Media + activity listeners and cancel the idle timer. After this the

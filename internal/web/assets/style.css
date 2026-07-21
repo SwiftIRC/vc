@@ -376,6 +376,12 @@ video.mirror {
   position: relative; /* anchor for the unread badge */
 }
 
+/* Noise-suppression toggle: the vendored worklet is ~2MB, so the first enable
+   shows a wait cursor while it loads (the button is disabled during that time). */
+.controls .ctl.ns.loading {
+  cursor: progress;
+}
+
 .chat-badge {
   position: absolute;
   top: -0.4rem;

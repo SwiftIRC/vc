@@ -82,6 +82,19 @@ export class Peer extends EventTarget {
     this._addLocal(track, kind);
   }
 
+  // Swap the media on an already-published kind WITHOUT renegotiation. The sender
+  // for `kind` was recorded in _addLocal (keyed off the MSID stream id), so this
+  // finds it and calls sender.replaceTrack(newTrack). replaceTrack needs no
+  // offer/answer for a same-kind track (e.g. raw mic <-> noise-suppressed mic): it
+  // changes what flows on the existing m-line in place. Returns true if a sender
+  // was found and swapped, false if that kind isn't currently published.
+  async replaceTrack(kind, newTrack) {
+    const sender = this._senders.get(kind);
+    if (!sender) return false;
+    await sender.replaceTrack(newTrack);
+    return true;
+  }
+
   // Remove a published track (kind) and renegotiate it away. removeTrack clears the
   // sender and flags negotiation-needed, so onnegotiationneeded re-offers without
   // the track.
