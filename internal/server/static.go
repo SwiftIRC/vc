@@ -1,12 +1,20 @@
 package server
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ryanwohara/webrtc-chat/internal/web"
 )
+
+// startTime stamps every served asset's Last-Modified. embed.FS reports a zero
+// modtime, which makes browsers revalidate to 304 and keep stale JS/CSS forever;
+// a real per-process time means a redeploy (new process) busts client caches
+// while assets still cache within a single run.
+var startTime = time.Now()
 
 // shell is the SPA app shell (index.html), read once from the embedded FS at
 // startup so serving it is a plain byte write with an explicit content type.
@@ -31,10 +39,23 @@ func (h *Hub) handleStatic(w http.ResponseWriter, r *http.Request) {
 		// fs.Stat validates the path (rejecting "..") and tells a real asset
 		// apart from a room slug. Directories fall through to the shell.
 		if f, err := fs.Stat(web.Assets, p); err == nil && !f.IsDir() {
-			http.FileServerFS(web.Assets).ServeHTTP(w, r)
+			file, err := web.Assets.Open(p)
+			if err == nil {
+				defer file.Close()
+				// embed.FS files are seekable; ServeContent then sets the
+				// Content-Type from the extension and handles Range + conditional
+				// requests against startTime.
+				if rs, ok := file.(io.ReadSeeker); ok {
+					w.Header().Set("Cache-Control", "no-cache") // revalidate; 304 within a run, 200 after redeploy
+					http.ServeContent(w, r, p, startTime, rs)
+					return
+				}
+			}
+			http.FileServerFS(web.Assets).ServeHTTP(w, r) // fallback (should not happen for embed)
 			return
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(shell)
 }

@@ -376,15 +376,21 @@ video.mirror {
   position: relative; /* anchor for the unread badge */
 }
 
-/* Compact icon buttons (e.g. chat toggle): square-ish, glyph-sized, not a wide
-   text button. */
+/* Compact icon buttons (e.g. chat toggle): a fixed square, not a wide text
+   button — width/min-width pin it so flex can't stretch it. */
 .controls .ctl.icon {
-  padding: 0.45rem 0.55rem;
-  line-height: 1;
+  width: 2.5rem;
+  min-width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .controls .ctl.icon .glyph {
-  font-size: 1.1rem;
-  display: block;
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 /* Noise-suppression toggle: the vendored worklet is ~2MB, so the first enable
