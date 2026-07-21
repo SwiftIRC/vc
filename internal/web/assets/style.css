@@ -596,6 +596,38 @@ video.mirror {
   font-weight: 600;
 }
 
+/* Share button + its Screen/Audio popover (pops UP from the bottom control bar). */
+.share-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.share-menu {
+  position: absolute;
+  bottom: calc(100% + 0.3rem);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.3rem;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 10;
+}
+.share-item {
+  padding: 0.4rem 0.9rem;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.share-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 /* --- chat panel + moderation feed --- */
 
 /* Chat is an overlay panel on the right edge of the stage. Hidden by default

@@ -95,6 +95,13 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.addEventListener(ev, this._onActivity, { passive: true });
     }
+    // Close the Share menu on any pointer-down outside it.
+    this._onDocPointer = (e) => {
+      if (this.shareMenu && !this.shareMenu.hidden && this.shareWrap && !this.shareWrap.contains(e.target)) {
+        this.shareMenu.hidden = true;
+      }
+    };
+    document.addEventListener("pointerdown", this._onDocPointer);
     this._revealControls(); // start visible, then arm the idle timer
   }
 
@@ -162,7 +169,16 @@ export class Controls {
   _build() {
     this.muteBtn = el("button", { type: "button", class: "ctl mic", onClick: () => this._toggleMic() });
     this.cameraBtn = el("button", { type: "button", class: "ctl cam", onClick: () => this._toggleCamera() });
-    this.screenBtn = el("button", { type: "button", class: "ctl screen", onClick: () => this._toggleScreen() });
+    // "Share" opens a small menu (Screen / Audio) when idle; while sharing it becomes
+    // "Stop share" and a click stops it. One share at a time (one screenStream).
+    this.shareBtn = el("button", { type: "button", class: "ctl share", onClick: () => this._onShareClick() });
+    this.shareMenu = el(
+      "div",
+      { class: "share-menu", hidden: true },
+      el("button", { type: "button", class: "share-item", onClick: () => this._share("screen") }, "Screen"),
+      el("button", { type: "button", class: "share-item", onClick: () => this._share("audio") }, "Audio"),
+    );
+    this.shareWrap = el("div", { class: "share-wrap" }, this.shareBtn, this.shareMenu);
     // Noise suppression: opt-in (default OFF — it adds CPU/latency, so the user
     // enables it), and disabled while the large worklet loads on first enable.
     this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._onNsToggle() });
@@ -199,13 +215,13 @@ export class Controls {
 
     this._setMicButton(this.media && this.media.micTrack ? this.media.micTrack.enabled : false);
     this._setCameraButton(!!(this.media && this.media.cameraTrack));
-    this._setScreenButton(false);
+    this._setShareButton(false);
     this._setNsButton(false, false); // default OFF
     this._setCountdownButton();
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.muteBtn, this.cameraBtn, this.screenBtn, this.nsBtn, this.countdownBtn, this.chatBtn];
+    const children = [this.muteBtn, this.cameraBtn, this.shareWrap, this.nsBtn, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -257,15 +273,23 @@ export class Controls {
     saveMediaPrefs({ mic, camera }); // remember for the next call's lobby
   }
 
-  _toggleScreen() {
+  _onShareClick() {
     if (!this.media) return;
     if (this.sharing) {
       this.media.stopScreen(); // -> screen-stop -> unpublish + button
-    } else {
-      // Rejection (user cancelled the picker) is non-fatal; Media emits its own
-      // error and no screen-start fires, so the button simply stays "Share screen".
-      this.media.startScreen().catch(() => {});
+      return;
     }
+    this.shareMenu.hidden = !this.shareMenu.hidden; // toggle the Screen/Audio menu
+  }
+
+  // A menu choice: a screen share (video + optional audio) or an audio-only share.
+  // Rejection (cancelled picker, or no audio shared) is non-fatal — Media emits its
+  // own error and no screen-start fires, so the button simply stays "Share".
+  _share(kind) {
+    this.shareMenu.hidden = true;
+    if (!this.media) return;
+    if (kind === "audio") this.media.startScreenAudioOnly().catch(() => {});
+    else this.media.startScreen().catch(() => {});
   }
 
   // Toggle mic noise suppression. First enable loads the ~2MB worklet, so disable
@@ -312,7 +336,7 @@ export class Controls {
     // it forwards as its own track, keyed distinctly from the screen video).
     if (this.peer && detail.audioTrack) this.peer.publish(detail.audioTrack, "screen-audio");
     this.sharing = true;
-    this._setScreenButton(true);
+    this._setShareButton(true);
   }
 
   _onScreenStopped() {
@@ -321,7 +345,7 @@ export class Controls {
       this.peer.unpublish("screen-audio");
     }
     this.sharing = false;
-    this._setScreenButton(false);
+    this._setShareButton(false);
   }
 
   // --- inbound moderation reflected on this client ---
@@ -520,9 +544,10 @@ export class Controls {
     this.cameraBtn.classList.toggle("active", !enabled);
   }
 
-  _setScreenButton(sharing) {
-    this.screenBtn.textContent = sharing ? "Stop share" : "Share screen";
-    this.screenBtn.classList.toggle("active", sharing);
+  _setShareButton(sharing) {
+    this.shareBtn.textContent = sharing ? "Stop share" : "Share";
+    this.shareBtn.classList.toggle("active", sharing);
+    if (sharing) this.shareMenu.hidden = true; // no menu while a share is active
   }
 
   _setLockButton(locked) {
@@ -550,6 +575,7 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.removeEventListener(ev, this._onActivity);
     }
+    document.removeEventListener("pointerdown", this._onDocPointer);
     if (this._hideTimer) {
       clearTimeout(this._hideTimer);
       this._hideTimer = null;

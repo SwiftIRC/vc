@@ -510,8 +510,17 @@ export class Grid {
     if (rec) return rec;
     const video = el("video", { class: "cam", autoplay: true, playsinline: true });
     video.muted = true;
+    // Shown when the share carries no video (an audio-only share); hidden once a video
+    // track arrives (see _addScreenTile). pointer-events:none (.cam-off) so a click
+    // still focuses the tile.
+    const placeholder = el(
+      "div",
+      { class: "cam-off" },
+      el("span", { class: "cam-off-icon", text: "🔊" }),
+      el("span", { class: "cam-off-text", text: "Sharing audio" }),
+    );
     const nameEl = el("span", { class: "name", text: `${name} (screen)` });
-    const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, nameEl));
+    const elNode = el("div", { class: "tile screen" }, video, placeholder, el("div", { class: "meta" }, nameEl));
     video.title = "Click to focus";
     video.addEventListener("click", () => this._toggleFocus(elNode));
     // Ops can stop a remote participant's screenshare (never your own tile).
@@ -519,7 +528,7 @@ export class Grid {
       const ops = this.screenOpActionsFor({ id, name });
       if (ops) elNode.append(ops);
     }
-    rec = { el: elNode, video, nameEl, audioEl: null, volumeEl: null, source: null, gain: null };
+    rec = { el: elNode, video, nameEl, placeholder, audioEl: null, volumeEl: null, source: null, gain: null };
     this.screens.set(id, rec);
     this.el.append(elNode);
     this._relayout();
@@ -532,6 +541,7 @@ export class Grid {
     rec.nameEl.textContent = `${name} (screen)`;
     rec.video.srcObject = stream;
     rec.video.play().catch(() => {}); // nudge playback in case autoplay stalled
+    if (rec.placeholder) rec.placeholder.hidden = stream.getVideoTracks().length > 0;
   }
 
   // Attach a REMOTE screen share's audio (its own "screen-audio" track) so it is

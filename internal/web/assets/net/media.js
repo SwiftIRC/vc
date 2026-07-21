@@ -178,6 +178,37 @@ export class Media extends EventTarget {
     return track;
   }
 
+  // Share tab/system audio WITHOUT video. getDisplayMedia always needs a surface (so
+  // the user still picks one and ticks "share audio"), but we immediately drop the
+  // video track and keep only the audio. Emits "screen-start" with track:null. Rejects
+  // if the user shared no audio (nothing to send). "screen-stop" ends it like a normal
+  // share, since it reuses screenStream.
+  async startScreenAudioOnly() {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch (error) {
+      this._emitError(error, "getDisplayMedia");
+      throw error;
+    }
+    for (const t of stream.getVideoTracks()) {
+      t.stop();
+      stream.removeTrack(t); // audio only — release the captured surface's video
+    }
+    const audio = stream.getAudioTracks()[0] || null;
+    if (!audio) {
+      for (const t of stream.getTracks()) t.stop();
+      const err = new Error("no audio was shared");
+      this._emitError(err, "getDisplayMedia");
+      throw err;
+    }
+    this._stopScreenStream();
+    this.screenStream = stream;
+    audio.addEventListener("ended", () => this.stopScreen(), { once: true });
+    this.dispatchEvent(new CustomEvent("screen-start", { detail: { track: null, audioTrack: audio } }));
+    return audio;
+  }
+
   // Stop screen sharing and emit "screen-stop". Idempotent: a redundant call
   // (e.g. the "ended" handler racing an explicit stop) is a no-op and emits
   // nothing, so downstream never sees a duplicate stop.
