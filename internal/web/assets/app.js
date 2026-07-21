@@ -433,5 +433,54 @@ window.addEventListener("pagehide", () => {
   if (media) media.stop();
 });
 
+// --- outdated-page detection ---
+
+// The asset version this page loaded with; if a later poll of /api/version returns a
+// different one, the server has been redeployed and this page is stale.
+let bootVersion = null;
+let updateBannerShown = false;
+
+async function fetchVersion() {
+  try {
+    const r = await fetch("/api/version", { cache: "no-store" });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return (data && data.version) || null;
+  } catch {
+    return null;
+  }
+}
+
+function showUpdateBanner() {
+  if (updateBannerShown) return;
+  updateBannerShown = true;
+  document.body.append(
+    el(
+      "div",
+      { class: "update-banner", role: "status" },
+      el("span", { text: "A new version of SwiftIRC VC is available." }),
+      el("button", { type: "button", class: "update-reload", onClick: () => location.reload() }, "Reload"),
+    ),
+  );
+}
+
+// Record the version at boot, then poll for changes (and re-check whenever the tab is
+// refocused). A changed version means a redeploy — OFFER a reload rather than forcing
+// one, so an in-call user is never interrupted mid-call.
+async function watchVersion() {
+  bootVersion = await fetchVersion();
+  if (!bootVersion) return; // endpoint unavailable — skip silently
+  const check = async () => {
+    if (updateBannerShown) return;
+    const v = await fetchVersion();
+    if (v && v !== bootVersion) showUpdateBanner();
+  };
+  setInterval(check, 60000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") check();
+  });
+}
+
 console.log("SwiftIRC VC loaded");
 boot();
+watchVersion();

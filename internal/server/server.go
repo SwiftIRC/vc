@@ -93,6 +93,7 @@ func (h *Hub) Routes() http.Handler {
 	})
 	mux.HandleFunc("GET /ws/{room}", h.handleWS)
 	mux.HandleFunc("GET /api/rooms/{room}", h.handleRoomPeek)
+	mux.HandleFunc("GET /api/version", h.handleVersion)
 	mux.HandleFunc("POST /api/provision", h.handleProvision)
 	// Catch-all app shell + static assets. The specific routes above are more
 	// specific and still win under Go 1.22 mux precedence (verified in tests).

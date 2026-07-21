@@ -1,6 +1,9 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net/http"
@@ -26,6 +29,41 @@ func mustReadShell() []byte {
 		panic(err)
 	}
 	return b
+}
+
+// assetsVersion is a digest of the embedded client assets, computed once at startup.
+// The client fetches it at boot and polls /api/version; when it changes, the served
+// page is out of date and the client offers a reload. It is derived from the asset
+// CONTENTS (not the process start time), so a same-binary restart keeps it stable and
+// only a redeploy that actually changed the client bumps it.
+var assetsVersion = computeAssetsVersion()
+
+func computeAssetsVersion() string {
+	h := sha256.New()
+	// fs.WalkDir visits in lexical order, so the digest is deterministic across runs
+	// of the same build.
+	_ = fs.WalkDir(web.Assets, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, readErr := fs.ReadFile(web.Assets, path)
+		if readErr != nil {
+			return readErr
+		}
+		io.WriteString(h, path)
+		h.Write([]byte{0})
+		h.Write(b)
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// handleVersion reports the running build's asset version so a client with an older
+// page loaded can detect it and prompt a reload. Never cached.
+func (h *Hub) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": assetsVersion})
 }
 
 // handleStatic serves an embedded asset, or the SPA shell (index.html) for the

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -59,6 +60,34 @@ func TestStaticShellAndAssets(t *testing.T) {
 }
 
 // TestStaticDoesNotShadowRoutes guards the Go 1.22 mux precedence: the GET /
+// The version endpoint reports a non-empty asset digest so the client can detect a
+// redeploy. It must not be cached.
+func TestVersionEndpoint(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+
+	resp, body := httpGet(t, srv.URL+"/api/version")
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET /api/version = %d, want 200", resp.StatusCode)
+	}
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	if v.Version == "" {
+		t.Errorf("empty version in %q", body)
+	}
+	// Stable across calls within one build.
+	_, body2 := httpGet(t, srv.URL+"/api/version")
+	if body2 != body {
+		t.Errorf("version changed between calls: %q vs %q", body, body2)
+	}
+}
+
 // catch-all must not swallow the more specific health/WS routes.
 func TestStaticDoesNotShadowRoutes(t *testing.T) {
 	_, srv := newTestHub(t, "", true)
