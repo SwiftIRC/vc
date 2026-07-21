@@ -276,6 +276,8 @@ body.in-call #app {
 }
 
 .grid {
+  position: relative; /* anchors the absolute .strip-toggle */
+  --strip-w: clamp(120px, 18vw, 240px); /* focus-mode filmstrip width; shared with JS + .strip-toggle */
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -289,12 +291,47 @@ body.in-call #app {
   overflow: hidden;
 }
 
-/* Click-to-focus: the focused tile fills the whole grid and the rest hide. */
-.grid.has-focus .tile:not(.focused) {
-  display: none;
+/* Click-to-focus: the focused tile fills the main area (column 1, all rows); the
+   other tiles stack in a right-hand strip (column 2, laid out by Grid._layoutFocus). */
+.grid.has-focus .tile.focused {
+  grid-column: 1;
+  grid-row: 1 / -1;
 }
 .grid.has-focus .tile.focused .cam {
-  object-fit: contain; /* it's the only thing on screen — show the whole frame */
+  object-fit: contain; /* it's the main view — show the whole frame */
+}
+.grid.has-focus.strip-hidden .tile:not(.focused) {
+  display: none; /* strip collapsed — the focused tile goes full-width */
+}
+
+/* 3-up: two tiles on top, the third full-width across the bottom row. */
+.tile.span-full {
+  grid-column: 1 / -1;
+}
+
+/* Handle to hide/show the focus-mode strip; pinned at the strip's inner edge. */
+.strip-toggle {
+  display: none;
+  position: absolute;
+  top: 50%;
+  right: var(--strip-w);
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 1.4rem;
+  height: 2.6rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--fg);
+  cursor: pointer;
+}
+.grid.has-focus .strip-toggle {
+  display: inline-flex;
+}
+.grid.has-focus.strip-hidden .strip-toggle {
+  right: 0; /* strip gone — the handle sits at the right edge */
 }
 
 .tile {

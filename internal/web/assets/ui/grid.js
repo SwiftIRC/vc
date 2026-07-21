@@ -68,7 +68,16 @@ export class Grid {
     this.screenOpActionsFor = typeof screenOpActionsFor === "function" ? screenOpActionsFor : () => null;
 
     this.el = el("div", { class: "grid" });
-    this._focusedEl = null; // the tile element shown full-window, or null for the normal grid
+    this._focusedEl = null; // the tile element shown large in focus mode, or null for the normal grid
+    // A handle — visible only in focus mode — that hides/shows the right-hand strip
+    // of the other cameras. Absolute-positioned, so it is never a grid cell.
+    this._stripGlyph = el("span", { class: "glyph", text: "›" });
+    this._stripToggle = el(
+      "button",
+      { class: "strip-toggle", type: "button", title: "Hide/show camera strip", "aria-label": "Toggle camera strip", onClick: () => this._toggleStrip() },
+      this._stripGlyph,
+    );
+    this.el.append(this._stripToggle);
 
     this.tiles = new Map(); // participantId -> base-tile record
     this.screens = new Map(); // participantId -> screen-tile element
@@ -111,12 +120,25 @@ export class Grid {
   // No-op in focus mode (the focused tile fills the grid via .has-focus). Cheap;
   // called on every tile add/remove and on resize.
   _relayout() {
-    if (!this.el || this._focusedEl) return;
-    const n = this.el.querySelectorAll(":scope > .tile").length;
+    if (!this.el) return;
+    const tiles = [...this.el.querySelectorAll(":scope > .tile")];
+    for (const t of tiles) t.classList.remove("span-full"); // recomputed below
+    if (this._focusedEl) {
+      this._layoutFocus(tiles);
+      return;
+    }
+    const n = tiles.length;
     if (!n) return;
     const w = this.el.clientWidth;
     const h = this.el.clientHeight;
     if (!w || !h) return; // not mounted/sized yet; the ResizeObserver will call again
+    // 3-up special case: two tiles on top, the third full-width across the bottom.
+    if (n === 3) {
+      this.el.style.gridTemplateColumns = "repeat(2, 1fr)";
+      this.el.style.gridTemplateRows = "repeat(2, 1fr)";
+      tiles[2].classList.add("span-full");
+      return;
+    }
     let bestCols = 1;
     let bestArea = -1;
     for (let cols = 1; cols <= n; cols++) {
@@ -137,6 +159,32 @@ export class Grid {
     this.el.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
   }
 
+  // Focus layout: the focused tile fills the main area (grid column 1, all rows) and
+  // the other tiles stack in a right-hand strip (column 2). When the strip is hidden
+  // (or the focused tile is the only one), the focused tile is full-width. The strip
+  // width lives in the --strip-w CSS var so this and the .strip-toggle stay in sync.
+  _layoutFocus(tiles) {
+    const others = tiles.filter((t) => t !== this._focusedEl).length;
+    if (!others || this.el.classList.contains("strip-hidden")) {
+      this.el.style.gridTemplateColumns = "1fr";
+      this.el.style.gridTemplateRows = "1fr";
+    } else {
+      this.el.style.gridTemplateColumns = "1fr var(--strip-w)";
+      this.el.style.gridTemplateRows = `repeat(${others}, 1fr)`;
+    }
+  }
+
+  _toggleStrip() {
+    this.el.classList.toggle("strip-hidden");
+    this._setStripGlyph();
+    this._relayout();
+  }
+
+  _setStripGlyph() {
+    // "›" = strip visible (click to collapse it rightward); "‹" = hidden (click to show).
+    if (this._stripGlyph) this._stripGlyph.textContent = this.el.classList.contains("strip-hidden") ? "‹" : "›";
+  }
+
   // Toggle a tile between the normal grid and filling the whole window. Clicking the
   // focused tile again (or another tile) restores/switches. Driven by a click on the
   // tile's video (the controls sit above it, so they still work).
@@ -149,8 +197,9 @@ export class Grid {
     this._focusedEl = tileEl;
     tileEl.classList.add("focused");
     this.el.classList.add("has-focus");
-    this.el.style.gridTemplateColumns = "1fr";
-    this.el.style.gridTemplateRows = "1fr";
+    this.el.classList.remove("strip-hidden"); // each new focus starts with the strip visible
+    this._setStripGlyph();
+    this._relayout();
   }
 
   _clearFocus() {
