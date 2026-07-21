@@ -46,6 +46,7 @@ let grid = null;
 let controls = null;
 let chat = null;
 let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-call)
+let mediaAlertEl = null; // in-call "media connection lost" prompt (null when not in-call)
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -215,6 +216,10 @@ function renderInCall(msg) {
   controls.attachChat(chat); // chat starts hidden; the control-bar toggle reveals it
 
   statusEl = el("span", { class: "call-status", role: "status", hidden: true });
+  // A separate, persistent signal from the "Reconnecting…" one: the media transport
+  // failed and could not self-heal, so the only fix is a reload. role="alert" so it
+  // is announced; it is not cleared by a socket reconnect (that's a different path).
+  mediaAlertEl = el("span", { class: "call-status", role: "alert", hidden: true });
 
   // Full-bleed layout for the call route (see body.in-call in style.css); cleared
   // by renderHome / renderPrejoin / renderRemoved when we leave the call.
@@ -226,7 +231,7 @@ function renderInCall(msg) {
     el(
       "div",
       { class: "incall" },
-      el("header", { class: "call-head" }, el("h1", { text: `#${slug}` }), statusEl),
+      el("header", { class: "call-head" }, el("h1", { text: `#${slug}` }), statusEl, mediaAlertEl),
       el("div", { class: "stage" }, grid.el, chat.el),
       controls.el,
     ),
@@ -239,6 +244,10 @@ function renderInCall(msg) {
   peer.addEventListener("remote-track", (e) => grid.onRemoteTrack(e.detail));
   peer.addEventListener("peer-gone", (e) => grid.onPeerGone(e.detail));
   peer.addEventListener("error", (e) => console.error("peer error", e.detail.phase, e.detail.error));
+  // The media plane failed and one ICE restart didn't recover it. Surface a visible,
+  // non-blocking prompt; unlike kicked/banned we do NOT stop() the socket — the WS
+  // may still be fine (chat/roster keep working), and a reload rebuilds the call.
+  peer.addEventListener("media-failed", showMediaFailed);
 
   // Local mic track swapped (noise-suppression toggle): replace what we publish for
   // "mic" in place — replaceTrack needs no renegotiation for a same-kind track. The
@@ -274,6 +283,18 @@ function showReconnecting(on) {
   statusEl.textContent = on ? "Reconnecting…" : "";
 }
 
+// The media transport died and self-healing (one ICE restart) failed. Show a clear,
+// non-blocking prompt telling the user the fix is a reload. This deliberately does
+// NOT stop() the signaling (the socket may still be healthy) and does NOT tear the
+// call down — it is a distinct, non-terminal signal from kicked/banned. Full media
+// auto-recovery without a reload is a documented follow-up. textContent keeps the
+// message inert (no markup), matching the rest of the app.
+function showMediaFailed() {
+  if (!mediaAlertEl) return;
+  mediaAlertEl.textContent = "Media connection lost — reload to reconnect.";
+  mediaAlertEl.hidden = false;
+}
+
 // Tear down the in-call UI + media plane, leaving Media and Signaling for the
 // caller to handle (leave releases them; a reconnect keeps them). UI is torn down
 // before any media.stop() so grid/controls Media listeners are already detached.
@@ -295,6 +316,7 @@ function teardownInCall() {
     peer = null;
   }
   statusEl = null;
+  mediaAlertEl = null;
 }
 
 // The op kicked or banned this client. Stop the socket FIRST so the reconnect is

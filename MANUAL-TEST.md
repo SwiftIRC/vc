@@ -109,11 +109,24 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       returns to the room (you reappear in your own grid; for an ad-hoc room the
       first to reconnect becomes op of the fresh instance). *Note: the media plane
       is re-established by renegotiation; after a full restart, reload a client if
-      its video tiles do not resume.*
+      its video tiles do not resume. If ICE itself fails (not just the socket), the
+      client now makes one silent ICE-restart attempt and, failing that, surfaces a
+      "Media connection lost — reload to reconnect." prompt (see the media-failure
+      check below); full media auto-recovery without a reload remains a follow-up.*
 - [ ] **Transient network blip → rejoin** — briefly break connectivity (devtools
       "Offline", then back online, or block the port for a few seconds). The socket
       drops and reconnects with backoff; the client re-sends join and is back in the
       room's roster and chat (chat history is replayed, not duplicated).
+- [ ] **Media path dies but socket stays up → reload prompt** — with A and B in a
+      call, kill only the *media* path while leaving the WebSocket alive: drop the
+      UDP/ICE traffic (firewall the SFU's media port, or force a NAT rebind /
+      network change) without cutting the `/ws/` socket. The client makes one silent
+      ICE-restart attempt; if the transport does not recover within a few seconds
+      (`connectionState`/`iceConnectionState` stuck at `failed`), a non-blocking
+      **"Media connection lost — reload to reconnect."** message appears in the call
+      header. Crucially the socket is **not** closed — chat and the roster keep
+      working — and reloading the page rebuilds the call. This is distinct from
+      kicked/banned (which close the socket and never rejoin); here the WS is fine.
 - [ ] **Tab close releases devices** — close a joined browser's tab. Its camera
       light goes out and, within the GC window, its tile disappears for everyone
       else (the server reaps it on socket close).

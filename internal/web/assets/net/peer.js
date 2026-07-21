@@ -19,7 +19,14 @@
 //   "remote-track" {participantId, kind, stream}  a forwarded remote track, labelled
 //   "peer-gone"    {participantId, kind}           a forwarded stream ended
 //   "error"        {error, phase}                  a signaling/negotiation step failed
+//   "media-failed" (no detail)                     the media transport failed and one
+//                                                  ICE restart did not recover it
 import { handleRemoteOffer } from "../lib/negotiation.js";
+
+// How long to let a single ICE restart try to reconnect before we give up and tell
+// the user. The transport goes failed -> (restart) -> checking -> connected on a
+// recovery, so this only needs to cover a fresh gather + connectivity checks.
+const ICE_RESTART_GRACE_MS = 6000;
 
 export class Peer extends EventTarget {
   constructor(signaling) {
@@ -44,6 +51,15 @@ export class Peer extends EventTarget {
     // kind -> RTCRtpSender for locally published tracks, so unpublish can find it.
     this._senders = new Map();
 
+    // Media-plane health. If the ICE/DTLS transport fails while the signaling
+    // socket is still up (NAT rebinding, network change), the call freezes with no
+    // recovery. We make exactly ONE ICE-restart attempt, then, if it doesn't heal,
+    // emit "media-failed" so the app can prompt a reload. These guard against
+    // looping and against emitting twice.
+    this._restartedIce = false;
+    this._mediaFailedEmitted = false;
+    this._iceGraceTimer = null;
+
     // Trickle each local candidate to the SFU as it is gathered. A null candidate
     // is the end-of-gathering sentinel and carries nothing to send.
     this.pc.onicecandidate = (event) => {
@@ -58,6 +74,13 @@ export class Peer extends EventTarget {
     };
 
     this.pc.ontrack = (event) => this._onTrack(event);
+
+    // Media-plane failure detection. connectionState is the aggregate transport
+    // health (ICE + DTLS); "failed" is the terminal signal we act on. We also watch
+    // iceConnectionState for browsers that surface a hard ICE "failed" there first —
+    // both funnel into the same one-shot recovery path.
+    this.pc.onconnectionstatechange = () => this._onConnectionStateChange();
+    this.pc.oniceconnectionstatechange = () => this._onConnectionStateChange();
 
     // Inbound signaling. Handlers receive the decoded frame ({type, ...fields}).
     signaling.on("offer", (msg) => this._onRemoteOffer(msg).catch((err) => this._emitError(err, "offer")));
@@ -107,6 +130,10 @@ export class Peer extends EventTarget {
 
   // Tear down the peer connection.
   close() {
+    if (this._iceGraceTimer) {
+      clearTimeout(this._iceGraceTimer);
+      this._iceGraceTimer = null;
+    }
     this.pc.close();
   }
 
@@ -238,6 +265,60 @@ export class Peer extends EventTarget {
     this.dispatchEvent(
       new CustomEvent("peer-gone", { detail: { participantId: info.participantId, kind: info.kind } }),
     );
+  }
+
+  // --- media-plane health ---
+
+  // Fired for both connectionState and iceConnectionState transitions. A recovery
+  // (our ICE restart landing, or a transient blip clearing) shows up as "connected";
+  // drop any pending grace timer so we don't warn about a link that came back. A
+  // hard "failed" on either state machine kicks off the one-shot recovery.
+  _onConnectionStateChange() {
+    if (this.pc.connectionState === "connected") {
+      if (this._iceGraceTimer) {
+        clearTimeout(this._iceGraceTimer);
+        this._iceGraceTimer = null;
+      }
+      return;
+    }
+    if (this.pc.connectionState === "failed" || this.pc.iceConnectionState === "failed") {
+      this._handleMediaFailure();
+    }
+  }
+
+  // One cheap recovery attempt, then surrender to the user. restartIce() flags the
+  // next negotiation as an ICE restart; onnegotiationneeded then re-offers through
+  // the normal perfect-negotiation path (the polite peer still yields on glare), so
+  // it composes with the existing flow rather than bypassing it. If the restart
+  // doesn't reconnect within the grace window — or the browser lacks restartIce, or
+  // it already ran and failed again — we emit "media-failed" once. We never loop.
+  _handleMediaFailure() {
+    if (this._mediaFailedEmitted) return;
+    if (!this._restartedIce && typeof this.pc.restartIce === "function") {
+      this._restartedIce = true;
+      try {
+        this.pc.restartIce();
+      } catch (err) {
+        this._emitError(err, "ice-restart");
+      }
+      if (this._iceGraceTimer) clearTimeout(this._iceGraceTimer);
+      this._iceGraceTimer = setTimeout(() => {
+        this._iceGraceTimer = null;
+        if (this.pc.connectionState !== "connected") this._emitMediaFailed();
+      }, ICE_RESTART_GRACE_MS);
+      return;
+    }
+    this._emitMediaFailed();
+  }
+
+  _emitMediaFailed() {
+    if (this._mediaFailedEmitted) return;
+    this._mediaFailedEmitted = true;
+    if (this._iceGraceTimer) {
+      clearTimeout(this._iceGraceTimer);
+      this._iceGraceTimer = null;
+    }
+    this.dispatchEvent(new CustomEvent("media-failed"));
   }
 
   _emitError(error, phase) {
