@@ -20,7 +20,7 @@
 import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
-import { parseToken } from "./lib/protocol.js";
+import { parseToken, parseInvite } from "./lib/protocol.js";
 import { Prejoin } from "./ui/prejoin.js";
 import { Grid } from "./ui/grid.js";
 import { Controls } from "./ui/controls.js";
@@ -35,9 +35,10 @@ const root = document.getElementById("app");
 // Live top-level state. slug/token are fixed for the page load; the rest are
 // (re)created as the user moves lobby -> call -> lobby.
 let slug = "";
-let token = "";
+let token = ""; // long-link identity token (#t=); still accepted for old links
+let invite = ""; // short invite id (#i=), resolved server-side — the current link form
 let selfName = ""; // display name chosen in the lobby; labels the self tile
-let pendingJoin = null; // {name, password, token} re-sent on every socket (re)open
+let pendingJoin = null; // {name, password, token, invite} re-sent on every socket (re)open
 let media = null;
 let signaling = null;
 let peer = null;
@@ -74,6 +75,7 @@ function slugify(text) {
 function boot() {
   slug = location.pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
   token = parseToken(location.hash);
+  invite = parseInvite(location.hash);
   if (!slug) {
     renderHome();
     return;
@@ -121,7 +123,7 @@ function renderHome(message) {
 function renderPrejoin() {
   document.body.classList.remove("in-call");
   media = new Media();
-  prejoin = new Prejoin({ root, slug, token, media, onJoin });
+  prejoin = new Prejoin({ root, slug, token, invite, media, onJoin });
   prejoin.mount().catch((err) => console.error("prejoin mount failed", err));
 }
 
@@ -131,7 +133,8 @@ function renderPrejoin() {
 // rejected attempt) is stopped first so its close can't trigger a reconnect.
 function onJoin({ name, password }) {
   selfName = name || "";
-  pendingJoin = { name, password, token };
+  // token and invite are page-fixed; whichever is present is the identity.
+  pendingJoin = { name, password, token, invite };
   if (signaling) signaling.stop();
   signaling = new Signaling(`/ws/${slug}`);
   signaling.on("joined", onJoined);

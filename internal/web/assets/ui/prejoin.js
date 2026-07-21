@@ -82,20 +82,36 @@ function saveName(name) {
 export class Prejoin {
   // { root, slug, token, media, onJoin }. onJoin({name, password}) is called once
   // per Join click; app.js drives the socket and calls back showError/destroy.
-  constructor({ root, slug, token, media, onJoin }) {
+  constructor({ root, slug, token, invite, media, onJoin }) {
     this.root = root;
     this.slug = slug;
     this.token = token || "";
+    this.invite = invite || "";
     this.media = media;
     this.onJoin = onJoin;
-    this.nick = nickFromToken(this.token); // "" when no token / no nick claim
+    this.nick = nickFromToken(this.token); // "" when no token / no nick claim (filled from the invite in mount)
     this.locked = false;
     this.destroyed = false;
     this.pollTimer = null;
   }
 
+  // Fetch the display name a short invite (#i=) grants, so the name field can be
+  // pre-filled + locked exactly like a token link. Best-effort: on failure (or no
+  // invite) the field stays a normal editable input.
+  async _resolveInviteName() {
+    try {
+      const r = await fetch("/api/invite/" + encodeURIComponent(this.invite), { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.name) this.nick = d.name;
+    } catch {
+      /* leave the name field editable */
+    }
+  }
+
   // Build the DOM, start the preview + device lists, and begin polling occupancy.
   async mount() {
+    if (this.invite && !this.nick) await this._resolveInviteName(); // fill the name before _build locks the field
     this._build();
     await this._startPreview();
     await this._populateDevices();

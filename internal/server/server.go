@@ -40,6 +40,8 @@ type Hub struct {
 	log *slog.Logger
 	now func() time.Time
 	sfu *sfu.SFU
+	// invites maps short link ids -> token claims, so !vc links stay short (see invite.go).
+	invites *inviteStore
 	// conns tracks each connection's writePump goroutine so their lifetime
 	// is joinable (graceful drain, and a happens-before edge for tests that
 	// mutate the ws.go tunables).
@@ -50,7 +52,7 @@ func NewHub(cfg config.Config, reg *room.Registry, log *slog.Logger, now func() 
 	if now == nil {
 		now = time.Now
 	}
-	return &Hub{cfg: cfg, reg: reg, log: log, now: now, sfu: mediaSFU}
+	return &Hub{cfg: cfg, reg: reg, log: log, now: now, sfu: mediaSFU, invites: newInviteStore(now)}
 }
 
 // shutdownGrace is how long Shutdown waits after broadcasting ServerRestarting
@@ -80,6 +82,7 @@ func (h *Hub) RunGC(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			h.reg.Sweep()
+			h.invites.sweep()
 		case <-ctx.Done():
 			return
 		}
@@ -95,6 +98,8 @@ func (h *Hub) Routes() http.Handler {
 	mux.HandleFunc("GET /api/rooms/{room}", h.handleRoomPeek)
 	mux.HandleFunc("GET /api/version", h.handleVersion)
 	mux.HandleFunc("POST /api/provision", h.handleProvision)
+	mux.HandleFunc("POST /api/invite", h.handleInvite)
+	mux.HandleFunc("GET /api/invite/{id}", h.handleInvitePeek)
 	// Catch-all app shell + static assets. The specific routes above are more
 	// specific and still win under Go 1.22 mux precedence (verified in tests).
 	mux.HandleFunc("GET /", h.handleStatic)
@@ -179,7 +184,17 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 	}
 
 	var claims *token.Claims
-	if join.Token != "" {
+	switch {
+	case join.Invite != "":
+		// Short invite link (#i=<id>): the identity was registered server-side, so
+		// look it up rather than verify a token. Missing or expired reads the same.
+		cl, ok := h.invites.get(join.Invite)
+		if !ok {
+			reject(c, signal.Error{Code: "token-invalid", Message: "invite link invalid or expired; run !vc again"})
+			return
+		}
+		claims = &cl
+	case join.Token != "":
 		if h.cfg.Secret == "" {
 			reject(c, signal.Error{Code: "token-invalid", Message: "tokens not enabled on this server"})
 			return
@@ -193,11 +208,11 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 			reject(c, signal.Error{Code: "token-invalid", Message: "invalid token"})
 			return
 		}
-		if cl.Room != slug {
-			reject(c, signal.Error{Code: "token-invalid", Message: "token is for another room"})
-			return
-		}
 		claims = &cl
+	}
+	if claims != nil && claims.Room != slug {
+		reject(c, signal.Error{Code: "token-invalid", Message: "invite is for another room"})
+		return
 	}
 
 	rm, err := h.reg.Resolve(slug, claims)

@@ -13,7 +13,8 @@ import (
 type Join struct {
 	Name     string `json:"name,omitempty"`     // guest display name
 	Password string `json:"password,omitempty"` // for locked rooms
-	Token    string `json:"token,omitempty"`    // identity token from !vc
+	Token    string `json:"token,omitempty"`    // identity token from !vc (long link, #t=)
+	Invite   string `json:"invite,omitempty"`   // short invite id resolved server-side (#i=)
 	// Mic/Camera is the joiner's initial self-reported media state, so existing
 	// peers render the correct mute indicators the instant this peer appears —
 	// with no "briefly un-muted" flash while a separate media-state frame
