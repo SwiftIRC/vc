@@ -346,6 +346,61 @@ func TestRemovePeerDeletesOnlyDepartedTracks(t *testing.T) {
 	}
 }
 
+// TestPeerVideoSubscriptions verifies the selection behind the post-renegotiation
+// keyframe refresh: a peer's own tracks are excluded, mic/screen-audio (no keyframes)
+// are excluded, and every OTHER peer's camera/screen is included — so a screenshare
+// toggle refreshes exactly the video tiles that would otherwise freeze.
+func TestPeerVideoSubscriptions(t *testing.T) {
+	s := testSFU(t)
+	sink := SignalerFunc(func(any) bool { return true })
+	p1, err := s.AddPeer("room", "p1", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.AddPeer("room", "p2", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inject := func(pub *Peer, kind string) {
+		local, err := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, kind, pub.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.mu.Lock()
+		s.rooms["room"].tracks[pub.id+":"+kind] = &localTrack{
+			publisherID: pub.id, kind: kind, track: local, publisher: pub,
+		}
+		s.mu.Unlock()
+	}
+	inject(p1, "camera")
+	inject(p1, "screen")
+	inject(p1, "mic")          // audio: no keyframes, must be excluded
+	inject(p1, "screen-audio") // audio: excluded
+	inject(p2, "camera")       // p2's OWN track: excluded from p2's subscriptions
+
+	got := map[string]bool{}
+	for _, lt := range s.peerVideoSubscriptions(p2) {
+		got[lt.publisherID+":"+lt.kind] = true
+	}
+
+	want := map[string]bool{"p1:camera": true, "p1:screen": true}
+	for k := range want {
+		if !got[k] {
+			t.Errorf("p2 should receive %s but it was not selected for a keyframe refresh", k)
+		}
+	}
+	for _, bad := range []string{"p1:mic", "p1:screen-audio", "p2:camera"} {
+		if got[bad] {
+			t.Errorf("%s must not be selected (audio, or p2's own track)", bad)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("selected %v, want exactly %v", got, want)
+	}
+}
+
 // TestRemovePeerDropsTracksAndRenegotiates verifies that when a publisher leaves,
 // RemovePeer deletes the tracks it published and renegotiates the remaining
 // subscribers so they drop the departed sender. p2 subscribes to p1's camera,

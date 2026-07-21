@@ -408,6 +408,39 @@ func (s *SFU) pliBurst(lt *localTrack) {
 	}
 }
 
+// pliPeerSubscriptions bursts a keyframe request to every video track peer p
+// RECEIVES (every room camera/screen not published by p). A client only re-offers to
+// add or remove a screenshare, and Chrome pauses p's OTHER inbound video decoders
+// across that offer/answer — without a fresh keyframe they stay frozen until the next
+// periodic keyframe (up to keyFrameInterval, ~3s). Bursting a PLI to each subscribed
+// publisher recovers those tiles immediately. Mic/screen-audio have no keyframes and
+// are skipped; a peer never receives its own tracks. Called without s.mu.
+func (s *SFU) pliPeerSubscriptions(p *Peer) {
+	for _, lt := range s.peerVideoSubscriptions(p) {
+		s.pliBurst(lt)
+	}
+}
+
+// peerVideoSubscriptions returns the room's camera/screen tracks peer p receives
+// (published by others). Split out from pliPeerSubscriptions so the selection —
+// exclude p's own tracks, keep only keyframe-bearing video — is unit-testable without
+// RTCP. Returns nil if the room is gone. Takes s.mu.
+func (s *SFU) peerVideoSubscriptions(p *Peer) []*localTrack {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.rooms[p.slug]
+	if r == nil {
+		return nil
+	}
+	var subs []*localTrack
+	for _, lt := range r.tracks {
+		if lt.publisherID != p.id && (lt.kind == "camera" || lt.kind == "screen") {
+			subs = append(subs, lt)
+		}
+	}
+	return subs
+}
+
 // dispatchKeyFrame PLIs every video publisher in the room, so subscribers that
 // joined mid-stream keep getting keyframes. Tracks are snapshotted under s.mu
 // and the RTCP writes happen after the lock is released.

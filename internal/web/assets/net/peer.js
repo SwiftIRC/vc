@@ -43,6 +43,11 @@ export class Peer extends EventTarget {
     // creating+applying its own offer, so an inbound offer that arrives in that
     // window is recognised as a glare (handleRemoteOffer) and answered politely.
     this.makingOffer = false;
+    // Set when a renegotiation was needed (screenshare add/remove) but could not be
+    // offered because the PC wasn't stable — a rolled-back offer, or a raced server
+    // offer. _flushPendingOffer re-sends it the moment we return to stable, so a
+    // screenshare toggle can't be silently lost mid-glare.
+    this._negotiationPending = false;
 
     // ICE candidates that arrived before the remote description was set; applied
     // once setRemoteDescription lands (addIceCandidate rejects otherwise).
@@ -187,7 +192,14 @@ export class Peer extends EventTarget {
   // onnegotiationneeded, or a burst of publishes) collapse into a single offer and
   // never fire while an offer/answer is already in flight.
   async _makeOffer() {
-    if (this.makingOffer || this.pc.signalingState !== "stable") return;
+    if (this.makingOffer || this.pc.signalingState !== "stable") {
+      // Can't offer right now (an exchange is in flight). Remember that we still owe
+      // one; _flushPendingOffer re-tries when we're stable again. Without this, a
+      // screenshare add/remove that raced a server offer would be dropped silently.
+      this._negotiationPending = true;
+      return;
+    }
+    this._negotiationPending = false;
     try {
       this.makingOffer = true;
       const offer = await this.pc.createOffer();
@@ -201,6 +213,14 @@ export class Peer extends EventTarget {
     } finally {
       this.makingOffer = false;
     }
+  }
+
+  // Re-send an offer that was deferred (see _makeOffer) or discarded by a rollback,
+  // once the PC is back to stable. Only fires when WE explicitly deferred an offer —
+  // a plain browser-deferred negotiationneeded leaves _negotiationPending false and
+  // re-fires on its own, so this never double-offers.
+  _flushPendingOffer() {
+    if (this._negotiationPending) this._makeOffer().catch((err) => this._emitError(err, "negotiation"));
   }
 
   // --- inbound signaling ---
@@ -238,19 +258,22 @@ export class Peer extends EventTarget {
       throw err;
     }
     this.signaling.send("answer", { sdp: this.pc.localDescription.sdp });
-    // Glare recovery: we just discarded our own in-flight offer. Re-run _makeOffer so
-    // any transceiver added while that offer was pending (screenshare) is offered
-    // again. _makeOffer is guarded (only offers from a stable state, never while one
-    // is already in flight) and createOffer reflects the live transceiver set, so this
-    // reliably re-publishes the pending track and is a harmless no-op when there is
-    // nothing new to negotiate.
-    if (rolledBack) this._makeOffer().catch((err) => this._emitError(err, "negotiation"));
+    // A rollback discarded our own in-flight offer; the transceivers it carried
+    // (a screenshare) are still on the PC but unnegotiated, so we owe a fresh offer.
+    // Flush that (and any offer deferred while we weren't stable) now — AFTER the
+    // answer above, so ordering with the server is preserved. _makeOffer is guarded
+    // and reflects the live transceiver set, so it re-publishes the pending track and
+    // is a harmless no-op when nothing new needs negotiating.
+    if (rolledBack) this._negotiationPending = true;
+    this._flushPendingOffer();
   }
 
   // Our own offer was accepted; complete the exchange.
   async _onRemoteAnswer(msg) {
     await this.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
     await this._drainCandidates();
+    // Back to stable — send any offer that was deferred while this one was in flight.
+    this._flushPendingOffer();
   }
 
   // A remote ICE candidate. addIceCandidate throws if no remote description is set

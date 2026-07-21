@@ -96,6 +96,12 @@ func (p *Peer) handleOfferLocked(sdp string) error {
 		return err
 	}
 	p.sig.Send(signal.Answer{SDP: answer.SDP})
+	// A client re-offers only to add/remove a screenshare; that renegotiation stalls
+	// the client's OTHER inbound video decoders until a keyframe, so refresh them now
+	// instead of leaving those tiles frozen until the periodic keyframe. On a goroutine:
+	// pliPeerSubscriptions takes s.mu and writes RTCP, neither of which should run while
+	// the caller holds p.mu.
+	go p.sfu.pliPeerSubscriptions(p)
 	return nil
 }
 
