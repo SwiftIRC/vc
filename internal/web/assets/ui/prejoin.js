@@ -8,6 +8,8 @@
 // This module owns no Signaling/Peer state: app.js constructs Media and passes
 // it in so the very stream previewed here is the one published once in-call.
 
+import { loadMediaPrefs, saveMediaPrefs } from "../lib/prefs.js";
+
 const POLL_INTERVAL_MS = 3000;
 
 // Human-readable copy for each server reject code (signal.Error.Code). Anything
@@ -97,8 +99,23 @@ export class Prejoin {
     this._build();
     await this._startPreview();
     await this._populateDevices();
+    await this._applyMediaPrefs(); // restore the mic/camera choice from last time
     this._syncMediaState(); // now that tracks exist, reflect their presence + enabled state
     this._poll(); // fires immediately, then reschedules itself
+  }
+
+  // Apply the persisted mic/camera on-off preference to the freshly-started preview,
+  // so someone who last joined muted / camera-off lands back in that state. start()
+  // brings both up ON, so we only need to turn things OFF here; _syncMediaState (the
+  // caller) then reflects it on the toggles + overlay.
+  async _applyMediaPrefs() {
+    const prefs = loadMediaPrefs();
+    if (prefs.mic === false && this.media.micTrack && this.media.micTrack.enabled) {
+      this.media.toggleMic(); // mute to match last time (device stays open)
+    }
+    if (prefs.camera === false && this.media.cameraTrack) {
+      this.media.disableCamera(); // release the camera to match last time
+    }
   }
 
   _build() {
@@ -267,7 +284,9 @@ export class Prejoin {
 
   _toggleMic() {
     if (!this.media.micTrack) return; // button is disabled without a track; guard anyway
-    this._setMicToggle(this.media.toggleMic(), true);
+    const on = this.media.toggleMic();
+    this._setMicToggle(on, true);
+    saveMediaPrefs({ mic: on });
   }
 
   async _toggleCamera() {
@@ -282,6 +301,7 @@ export class Prejoin {
       /* re-acquire failed: stay off (media.js emits its own error) */
     }
     this._syncMediaState();
+    saveMediaPrefs({ camera: !!this.media.cameraTrack });
   }
 
   _setMicToggle(enabled, present) {

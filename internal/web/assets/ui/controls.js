@@ -23,6 +23,8 @@
 // Inbound "muted" {kind} (an op muted THIS client) disables the named local
 // track as a re-enableable nudge and reflects it on the buttons + self tile.
 
+import { loadMediaPrefs, saveMediaPrefs } from "../lib/prefs.js";
+
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
 // sets textContent, so any caller string is inert markup-wise.
 function el(tag, attrs = {}, ...kids) {
@@ -163,7 +165,7 @@ export class Controls {
     this.screenBtn = el("button", { type: "button", class: "ctl screen", onClick: () => this._toggleScreen() });
     // Noise suppression: opt-in (default OFF — it adds CPU/latency, so the user
     // enables it), and disabled while the large worklet loads on first enable.
-    this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._toggleNoiseSuppression() });
+    this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._onNsToggle() });
 
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
@@ -252,6 +254,7 @@ export class Controls {
     const mic = !!(this.media && this.media.micTrack && this.media.micTrack.enabled);
     const camera = !!(this.media && this.media.cameraTrack && this.media.cameraTrack.enabled);
     this._send("media-state", { mic, camera });
+    saveMediaPrefs({ mic, camera }); // remember for the next call's lobby
   }
 
   _toggleScreen() {
@@ -272,9 +275,18 @@ export class Controls {
   // Turn on noise suppression by default at call start (opt-out via the button).
   // Called after peer.start so the mic sender exists for the processed-track swap.
   enableDefaultNoiseSuppression() {
+    if (loadMediaPrefs().ns === false) return; // user last turned denoise OFF — respect it
     if (this.media && this.media.micTrack && !this.nsOn && !this.nsBusy) {
       this._toggleNoiseSuppression();
     }
+  }
+
+  // The denoise BUTTON handler: toggle, then persist the settled state. Kept separate
+  // from _toggleNoiseSuppression so the default-on path (and a worklet-load failure)
+  // never writes a preference — only an explicit user click does.
+  async _onNsToggle() {
+    await this._toggleNoiseSuppression();
+    saveMediaPrefs({ ns: this.nsOn });
   }
 
   async _toggleNoiseSuppression() {
