@@ -102,9 +102,11 @@ export class Prejoin {
       this.nameInput.title = "Name provided by your invite link";
     }
 
-    this.passwordInput = el("input", { class: "password", type: "password", placeholder: "Room password", autocomplete: "off" });
+    this.passwordInput = el("input", { class: "password", type: "password", placeholder: "Room password (if locked)", autocomplete: "off" });
+    // Always shown: it's optional (an unlocked room ignores it server-side), and
+    // the /api/rooms poll can't always tell us a room is locked before we try
+    // (e.g. a not-yet-active channel room), so let the user enter one preemptively.
     this.passwordField = el("label", { class: "field" }, el("span", { text: "Password" }), this.passwordInput);
-    this.passwordField.hidden = true; // revealed only when the room is locked
 
     this.countLabel = el("span", { class: "count", text: "…" });
     this.errorLabel = el("p", { class: "error", role: "alert" });
@@ -202,14 +204,13 @@ export class Prejoin {
 
   _renderCount({ count, locked }) {
     const n = Number.isFinite(count) ? count : 0;
-    this.countLabel.textContent = `${n} in call`;
+    this.countLabel.textContent = locked ? `${n} in call · locked` : `${n} in call`;
     this.locked = !!locked;
-    this.passwordField.hidden = !this.locked;
   }
 
   _submit() {
     const name = this.nick || this.nameInput.value.trim();
-    const password = this.locked ? this.passwordInput.value : "";
+    const password = this.passwordInput.value; // sent always; unlocked rooms ignore it server-side
     this.errorLabel.textContent = "";
     this.joinButton.disabled = true;
     this.joinButton.textContent = "Joining…";

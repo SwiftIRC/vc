@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -45,7 +46,13 @@ func main() {
 		srv.Shutdown(sctx)
 	}()
 
-	log.Info("listening", "addr", cfg.Addr, "adhoc", cfg.AdhocRooms, "tokens", cfg.Secret != "")
+	log.Info("listening", "addr", cfg.Addr, "adhoc", cfg.AdhocRooms, "tokens", cfg.Secret != "",
+		"publicIP", cfg.PublicIP, "udp", fmt.Sprintf("%d-%d", cfg.UDPPortMin, cfg.UDPPortMax))
+	if cfg.PublicIP == "" {
+		log.Warn("no -public-ip set: the SFU will advertise only its local interface addresses, " +
+			"so browsers on other hosts (e.g. behind a reverse proxy) will get no media (black video). " +
+			"Set -public-ip to the address clients reach, and open the -udp-min..-udp-max range in the firewall.")
+	}
 	if cfg.TLSCert != "" {
 		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
 	} else {
