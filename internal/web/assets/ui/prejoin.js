@@ -82,7 +82,8 @@ export class Prejoin {
   }
 
   _build() {
-    this.video = el("video", { class: "preview", autoplay: true, muted: true, playsinline: true });
+    // `mirror` gives the local preview a selfie (horizontally flipped) view.
+    this.video = el("video", { class: "preview mirror", autoplay: true, muted: true, playsinline: true });
     this.video.muted = true; // attribute + property: some browsers honour only the property
 
     this.cameraSelect = el("select", { class: "device", onChange: () => this._switchCamera() });

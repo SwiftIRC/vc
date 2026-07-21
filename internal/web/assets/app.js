@@ -87,6 +87,7 @@ function boot() {
 // --- home ---
 
 function renderHome(message) {
+  document.body.classList.remove("in-call");
   const input = el("input", { class: "name", type: "text", placeholder: "room name", autocomplete: "off", maxlength: "32" });
   const error = el("p", { class: "error", role: "alert", text: message || "" });
   const go = () => {
@@ -117,6 +118,7 @@ function renderHome(message) {
 // --- pre-join ---
 
 function renderPrejoin() {
+  document.body.classList.remove("in-call");
   media = new Media();
   prejoin = new Prejoin({ root, slug, token, media, onJoin });
   prejoin.mount().catch((err) => console.error("prejoin mount failed", err));
@@ -210,20 +212,23 @@ function renderInCall(msg) {
   });
   controls.attachGrid(grid); // toggles refresh the self tile's indicators
   chat = new Chat({ signaling });
+  controls.attachChat(chat); // chat starts hidden; the control-bar toggle reveals it
 
   statusEl = el("span", { class: "call-status", role: "status", hidden: true });
 
+  // Full-bleed layout for the call route (see body.in-call in style.css); cleared
+  // by renderHome / renderPrejoin / renderRemoved when we leave the call.
+  document.body.classList.add("in-call");
+
+  // Stage holds the grid with the chat panel overlaid; the control bar floats over
+  // the bottom of the whole in-call view (autohiding when idle).
   root.replaceChildren(
     el(
       "div",
       { class: "incall" },
       el("header", { class: "call-head" }, el("h1", { text: `#${slug}` }), statusEl),
-      el(
-        "div",
-        { class: "stage" },
-        el("div", { class: "stage-main" }, grid.el, controls.el),
-        chat.el,
-      ),
+      el("div", { class: "stage" }, grid.el, chat.el),
+      controls.el,
     ),
   );
 
@@ -241,7 +246,10 @@ function renderInCall(msg) {
   signaling.on("muted", (m) => controls.onMuted(m.kind));
   signaling.on("room-locked", () => controls.onLock(true));
   signaling.on("room-unlocked", () => controls.onLock(false));
-  signaling.on("chat", (m) => chat.onChat(m));
+  signaling.on("chat", (m) => {
+    chat.onChat(m);
+    controls.notifyChatActivity(); // bumps the unread badge while chat is hidden
+  });
   signaling.on("moderation", (m) => chat.onModeration(m));
 
   const localTracks = [];
@@ -303,6 +311,7 @@ function onRemoved(kind, by) {
 }
 
 function renderRemoved(kind, by) {
+  document.body.classList.remove("in-call");
   const verb = kind === "banned" ? "banned" : "kicked";
   root.replaceChildren(
     el(

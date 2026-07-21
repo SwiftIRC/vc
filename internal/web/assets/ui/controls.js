@@ -63,16 +63,100 @@ export class Controls {
       this.media.addEventListener("screen-start", this._onScreenStart);
       this.media.addEventListener("screen-stop", this._onScreenStop);
     }
+
+    // Chat panel state (wired via attachChat).
+    this.chat = null;
+    this.chatOpen = false;
+    this.unread = 0;
+
+    // Autohide: reveal on any pointer/keyboard activity, hide after a few seconds
+    // idle. Window-level so activity anywhere on the call surface counts.
+    this._hideDelayMs = 3000;
+    this._hideTimer = null;
+    this._activityEvents = ["mousemove", "mousedown", "touchstart", "keydown", "focusin"];
+    this._onActivity = () => this._revealControls();
+    for (const ev of this._activityEvents) {
+      window.addEventListener(ev, this._onActivity, { passive: true });
+    }
+    this._revealControls(); // start visible, then arm the idle timer
   }
 
   attachGrid(grid) {
     this.grid = grid || null;
   }
 
+  // --- chat panel toggle ---
+
+  // Wire the chat panel so the toggle button shows/hides it. The panel starts
+  // hidden; keep the button + unread badge in sync with that.
+  attachChat(chat) {
+    this.chat = chat || null;
+    this.chatOpen = false;
+    if (this.chat) this.chat.setVisible(false);
+    this._clearUnread();
+    this._setChatButton();
+  }
+
+  _toggleChat() {
+    if (!this.chat) return;
+    this.chatOpen = !this.chatOpen;
+    this.chat.setVisible(this.chatOpen);
+    if (this.chatOpen) this._clearUnread();
+    this._setChatButton();
+  }
+
+  // Called by app.js on every inbound chat frame. While the panel is closed this
+  // bumps an unread badge so new messages don't go unnoticed.
+  notifyChatActivity() {
+    if (this.chatOpen) return;
+    this.unread += 1;
+    this.chatBadge.textContent = this.unread > 99 ? "99+" : String(this.unread);
+    this.chatBadge.hidden = false;
+  }
+
+  _clearUnread() {
+    this.unread = 0;
+    this.chatBadge.textContent = "";
+    this.chatBadge.hidden = true;
+  }
+
+  _setChatButton() {
+    this.chatBtn.classList.toggle("active", this.chatOpen);
+  }
+
+  // --- autohide control bar ---
+
+  _revealControls() {
+    this.el.classList.remove("is-hidden");
+    if (this._hideTimer) clearTimeout(this._hideTimer);
+    this._hideTimer = setTimeout(() => this._maybeHide(), this._hideDelayMs);
+  }
+
+  _maybeHide() {
+    this._hideTimer = null;
+    // Never hide while a control has focus (keyboard users) — reschedule instead.
+    if (this.el.contains(document.activeElement)) {
+      this._hideTimer = setTimeout(() => this._maybeHide(), this._hideDelayMs);
+      return;
+    }
+    this.el.classList.add("is-hidden");
+  }
+
   _build() {
     this.muteBtn = el("button", { type: "button", class: "ctl mic", onClick: () => this._toggleMic() });
     this.cameraBtn = el("button", { type: "button", class: "ctl cam", onClick: () => this._toggleCamera() });
     this.screenBtn = el("button", { type: "button", class: "ctl screen", onClick: () => this._toggleScreen() });
+
+    // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
+    // unread messages that arrive while the panel is closed.
+    this.chatBadge = el("span", { class: "chat-badge", hidden: true });
+    this.chatBtn = el(
+      "button",
+      { type: "button", class: "ctl chat", title: "Toggle chat", onClick: () => this._toggleChat() },
+      el("span", { text: "Chat" }),
+      this.chatBadge,
+    );
+
     const leaveBtn = el("button", { type: "button", class: "ctl leave", onClick: () => this.onLeave() }, "Leave");
 
     // A mic/camera button is meaningless with no such track; disable it up front.
@@ -85,7 +169,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.muteBtn, this.cameraBtn, this.screenBtn];
+    const children = [this.muteBtn, this.cameraBtn, this.screenBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -220,11 +304,19 @@ export class Controls {
     this.lockBtn.classList.toggle("active", locked);
   }
 
-  // Detach Media listeners. After this the control bar drives nothing.
+  // Detach Media + activity listeners and cancel the idle timer. After this the
+  // control bar drives nothing and holds no timers.
   destroy() {
     if (this.media) {
       this.media.removeEventListener("screen-start", this._onScreenStart);
       this.media.removeEventListener("screen-stop", this._onScreenStop);
+    }
+    for (const ev of this._activityEvents) {
+      window.removeEventListener(ev, this._onActivity);
+    }
+    if (this._hideTimer) {
+      clearTimeout(this._hideTimer);
+      this._hideTimer = null;
     }
   }
 }

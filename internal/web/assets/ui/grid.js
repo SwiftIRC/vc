@@ -183,7 +183,9 @@ export class Grid {
   }
 
   _buildTile(id, name, role, { self }) {
-    const cameraVideo = el("video", { class: "cam", autoplay: true, playsinline: true });
+    // Only the local (self) camera is mirrored — a selfie view, as call apps do.
+    // Screen-share tiles are built separately (_addScreenTile) and never mirrored.
+    const cameraVideo = el("video", { class: self ? "cam mirror" : "cam", autoplay: true, playsinline: true });
     const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
     const badgeEl = el("span", { class: "badge", hidden: true });
     const micPill = el("span", { class: "pill mic", text: "mic" });

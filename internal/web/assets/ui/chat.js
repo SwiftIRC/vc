@@ -101,6 +101,18 @@ export class Chat {
     );
 
     this.el = el("div", { class: "chat" }, el("h2", { class: "chat-title", text: "Chat" }), this.log, this.form);
+
+    // Hidden by default; the control bar's Chat toggle reveals it (setVisible).
+    this.visible = false;
+    this.el.hidden = true;
+  }
+
+  // Show or hide the panel. controls.js owns the toggle; focus the compose box on
+  // reveal so the user can type immediately.
+  setVisible(visible) {
+    this.visible = !!visible;
+    this.el.hidden = !this.visible;
+    if (this.visible) this.input.focus();
   }
 
   // --- outbound ---

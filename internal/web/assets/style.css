@@ -13,6 +13,12 @@
   box-sizing: border-box;
 }
 
+/* Elements given `display: …` (e.g. .chat, .controls) would otherwise ignore the
+   HTML `hidden` attribute; make `hidden` authoritative everywhere. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -136,20 +142,51 @@ button:disabled {
   font-size: 0.9rem;
 }
 
-/* --- in-call: the grid is wider than the lobby card --- */
+/* --- in-call: a full-viewport stage; the video fills the screen --- */
 
-.incall {
-  max-width: 76rem;
-  background: transparent;
-  border: none;
-  padding: 0;
-  gap: 0.75rem;
+/* The call route is full-bleed: drop #app's centered card and page scroll. */
+body.in-call {
+  overflow: hidden;
 }
 
-.call-head {
+body.in-call #app {
+  display: block;
+  padding: 0;
+  min-height: 0;
+}
+
+.incall {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  background: #000;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  gap: 0;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The header floats over the top of the video instead of eating layout height. */
+.call-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 15;
+  display: flex;
+  align-items: center;
   gap: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+  pointer-events: none; /* clicks fall through to the tiles beneath */
+}
+
+.call-head h1 {
+  font-size: 1.05rem;
 }
 
 .call-status {
@@ -158,31 +195,30 @@ button:disabled {
   font-weight: 600;
 }
 
-/* Stage: the tile grid + controls on the left, the chat panel on the right. */
+/* The stage fills all remaining height; the grid lives here, chat overlays it. */
 .stage {
-  display: flex;
-  align-items: stretch;
-  gap: 0.75rem;
-}
-
-.stage-main {
+  position: relative;
   flex: 1 1 auto;
-  min-width: 0; /* let the grid shrink instead of overflowing the flex row */
+  min-height: 0;
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
 }
 
 .grid {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-  gap: 0.6rem;
-  align-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  grid-auto-rows: 1fr; /* rows share the height so tiles fill the screen */
+  gap: 0.4rem;
+  padding: 0.4rem;
+  align-content: stretch;
+  overflow: auto;
 }
 
 .tile {
   position: relative;
-  aspect-ratio: 16 / 9;
+  min-height: 0;
   background: #000;
   border: 2px solid var(--border);
   border-radius: 10px;
@@ -197,16 +233,19 @@ button:disabled {
 .tile .cam {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: cover; /* fill the tile, no letterboxing */
   background: #000;
 }
 
-.tile.self .cam {
-  transform: scaleX(-1); /* mirror your own preview, as call apps do */
+/* Selfie view: mirror ONLY the local camera (lobby preview + self tile). Remotes
+   are never mirrored, and a screen-share is never mirrored (see .tile.screen). */
+video.mirror {
+  transform: scaleX(-1);
 }
 
 .tile.screen .cam {
   object-fit: contain; /* show the whole shared surface, don't crop */
+  transform: none; /* a shared screen is never mirrored, even your own */
 }
 
 /* Hidden per-tile <audio> sink used only for remote playback. */
@@ -295,19 +334,36 @@ button:disabled {
   border-color: var(--error);
 }
 
+/* The control bar floats over the bottom of the stage and autohides when idle. */
 .controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
-  padding: 0.6rem;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 0.7rem 0.9rem calc(0.7rem + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  border: none;
+  border-radius: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+/* Autohidden state (controls.js toggles this after ~3s of pointer inactivity). */
+.controls.is-hidden {
+  opacity: 0;
+  transform: translateY(100%);
+  pointer-events: none;
 }
 
 .controls .ctl {
   cursor: pointer;
+  background: rgba(30, 33, 40, 0.92);
+  border: 1px solid var(--border);
 }
 
 .controls .ctl.active {
@@ -316,32 +372,58 @@ button:disabled {
   color: #fff;
 }
 
+.controls .ctl.chat {
+  position: relative; /* anchor for the unread badge */
+}
+
+.chat-badge {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.4rem;
+  min-width: 1.15rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--error);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.15rem;
+  text-align: center;
+}
+
 .controls .ctl.leave {
-  margin-left: auto;
-  background: #3a3f48;
+  background: #b23b3b;
   border-color: transparent;
   color: #fff;
   font-weight: 600;
 }
 
 .controls .lock-status {
-  color: var(--accent);
+  color: #fff;
   font-size: 0.85rem;
   font-weight: 600;
 }
 
 /* --- chat panel + moderation feed --- */
 
+/* Chat is an overlay panel on the right edge of the stage. Hidden by default
+   (Controls toggles it) so it never reflows or "breaks" the tile grid. */
 .chat {
-  flex: 0 0 20rem;
-  max-width: 20rem;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  width: min(22rem, 92vw);
+  max-width: none;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.6rem;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding-bottom: 4.75rem; /* keep the compose box clear of the controls bar */
+  background: rgba(18, 20, 25, 0.94);
+  border-left: 1px solid var(--border);
+  border-radius: 0;
 }
 
 .chat-title {
@@ -352,7 +434,7 @@ button:disabled {
 
 .chat-log {
   flex: 1 1 auto;
-  min-height: 12rem;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -422,28 +504,13 @@ button:disabled {
   color: var(--muted);
 }
 
-@media (max-width: 60rem) {
-  .stage {
-    flex-direction: column;
-  }
-
-  .chat {
-    flex: 1 1 auto;
-    max-width: none;
-  }
-
-  .chat-log {
-    min-height: 8rem;
-    max-height: 16rem;
-  }
-}
-
 @media (max-width: 30rem) {
   .devices {
     grid-template-columns: 1fr;
   }
 
-  .grid {
-    grid-template-columns: 1fr;
+  /* On phones the overlay chat takes the full width. */
+  .chat {
+    width: 100%;
   }
 }
