@@ -294,6 +294,11 @@ export class Peer extends EventTarget {
   // it already ran and failed again — we emit "media-failed" once. We never loop.
   _handleMediaFailure() {
     if (this._mediaFailedEmitted) return;
+    // A single ICE failure drives BOTH iceConnectionState and connectionState to
+    // "failed" as separate events. While a restart is in flight (grace timer
+    // armed), let only that timer decide — otherwise the sibling event would
+    // fall through to _emitMediaFailed() and warn instantly, skipping the grace.
+    if (this._iceGraceTimer) return;
     if (!this._restartedIce && typeof this.pc.restartIce === "function") {
       this._restartedIce = true;
       try {
