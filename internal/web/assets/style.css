@@ -133,6 +133,66 @@ input[readonly] {
   color: var(--fg);
 }
 
+/* Wrap the preview so the camera-off placeholder can be layered over the <video>. */
+.preview-wrap {
+  position: relative;
+}
+
+/* Camera-off placeholder: covers the frozen/black preview when the camera is
+   toggled off in the lobby, so the off-state is explicit, not an ambiguous frame.
+   The global [hidden] rule (display:none !important) wins while it is hidden. */
+.cam-off {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 8px;
+  background: #000;
+  color: var(--muted);
+}
+
+.cam-off-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.cam-off-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* Pre-join mic/camera toggles: a two-up row under the preview. */
+.media-toggles {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.media-toggles .toggle {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+
+/* Off (muted / camera-off) reads as an engaged accent, matching the in-call bar's
+   `.ctl.active` convention for a toggled-off track. */
+.media-toggles .toggle.off {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.media-toggles .toggle .glyph {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
 button.join {
   background: var(--accent);
   border-color: transparent;

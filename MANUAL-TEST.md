@@ -31,6 +31,24 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       the Join button re-enabled (the socket does not reconnect-loop).
 - [ ] **Token nick is read-only** — open `/<room>#t=<token>` from a `!vc` invite;
       the display-name field is prefilled with the token's nick and not editable.
+- [ ] **Join with mic off → others hear nothing until unmuted** — in the lobby click
+      the mic toggle so it reads "Mic off" (muted), then Join. In another browser,
+      confirm you are inaudible and your self tile shows a muted mic. Click Unmute
+      in-call; the others now hear you. The lobby choice carried straight into the
+      call (the Media instance is reused — no separate wiring).
+- [ ] **Join with camera off → others see a placeholder** — in the lobby click the
+      camera toggle so the preview shows the "Camera off" placeholder, then Join. In
+      another browser, confirm your tile shows no live video (an off/placeholder
+      state, not a frozen frame). Click Start video in-call; your camera appears for
+      everyone.
+- [ ] **Device switch preserves the off state** — in the lobby, toggle the mic
+      and/or camera OFF, then switch the Microphone / Camera device via the dropdown.
+      The new device stays off: the mic button still reads "Mic off" and the "Camera
+      off" placeholder remains over the preview (the switch does not silently
+      re-enable a muted/off track). Join and confirm the off state still holds.
+- [ ] **Missing device disables its toggle** — on a machine (or profile) with no
+      camera or no mic, the corresponding pre-join toggle is disabled rather than
+      throwing, mirroring how the in-call control is disabled for a missing track.
 
 ## Join / leave
 
