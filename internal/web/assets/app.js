@@ -296,7 +296,7 @@ function renderInCall(msg) {
       console.error("camera replaceTrack failed", err);
       return false;
     });
-    if (!replaced && track) peer.publish(track, "camera");
+    if (!replaced && track) peer.publish(track, "camera").catch((err) => console.error("camera publish failed", err));
   });
 
   // Roster + moderation + chat from the signaling socket.

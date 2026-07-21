@@ -28,6 +28,10 @@ export class Media extends EventTarget {
     // releases the device (no track), so the UI needs a separate signal to keep the
     // camera toggle usable while off — this is it.
     this.cameraAvailable = false;
+    // deviceId of the camera currently/last in use, so re-enabling after an off
+    // re-acquires the SAME camera rather than the browser's default (multi-camera
+    // users would otherwise silently switch cameras on an in-call off→on).
+    this._cameraId = null;
 
     // Noise-suppression audio graph (opt-in; see setNoiseSuppression). When on,
     // the raw mic feeds a vendored AudioWorklet and the *processed* track is what
@@ -117,7 +121,7 @@ export class Media extends EventTarget {
   // publisher republishes). Resolves with the new track; rejects (and emits "error")
   // if acquisition fails, leaving the camera off. A no-op returning the current track
   // when already on. `deviceId` optionally pins a specific camera.
-  async enableCamera(deviceId) {
+  async enableCamera(deviceId = this._cameraId) {
     if (this.cameraTrack) return this.cameraTrack;
     const video = deviceId ? { deviceId: { exact: deviceId } } : true;
     const fresh = await this._getUserMedia({ video });
@@ -333,7 +337,10 @@ export class Media extends EventTarget {
       prev.stop();
     }
     if (next) this.stream.addTrack(next);
-    if (isVideo && next) this.cameraAvailable = true;
+    if (isVideo && next) {
+      this.cameraAvailable = true;
+      this._cameraId = next.getSettings().deviceId || this._cameraId; // remember for re-enable
+    }
     const event = isVideo ? "camera-track" : "mic-track";
     this.dispatchEvent(new CustomEvent(event, { detail: { track: next } }));
   }
