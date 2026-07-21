@@ -1,0 +1,174 @@
+:root {
+  color-scheme: light dark;
+  --bg: #14161a;
+  --panel: #1d2026;
+  --fg: #e6e8ec;
+  --muted: #9aa1ac;
+  --accent: #4c8dff;
+  --error: #ff6b6b;
+  --border: #2b2f37;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 2rem 1rem;
+}
+
+.home,
+.prejoin,
+.incall {
+  width: 100%;
+  max-width: 32rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+h2 {
+  margin: 0.5rem 0 0;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.lede {
+  margin: 0;
+  color: var(--muted);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field > span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+input,
+select,
+button {
+  font: inherit;
+  color: var(--fg);
+  background: #12141a;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+}
+
+input[readonly] {
+  color: var(--muted);
+}
+
+.devices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.row .name {
+  flex: 1;
+}
+
+.preview,
+.remote {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.remotes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.5rem;
+}
+
+.count-row {
+  color: var(--muted);
+}
+
+.count {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+button.join,
+button.leave {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.leave {
+  background: #3a3f48;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.peers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.peers .muted {
+  color: var(--muted);
+}
+
+.self {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.error {
+  margin: 0;
+  color: var(--error);
+  min-height: 1.2em;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 30rem) {
+  .devices {
+    grid-template-columns: 1fr;
+  }
+}
