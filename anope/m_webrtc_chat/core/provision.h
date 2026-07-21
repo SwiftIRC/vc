@@ -1,6 +1,9 @@
 #pragma once
 #include <string>
 #include "json_escape.h"
+#ifdef WVC_HAVE_CURL
+#include <curl/curl.h> // at global scope: a system header must never be pulled into namespace wvc
+#endif
 namespace wvc {
 inline std::string buildProvisionBody(const std::string& channel, const std::string& room,
                                       bool identifiedOnly) {
@@ -9,7 +12,6 @@ inline std::string buildProvisionBody(const std::string& channel, const std::str
          "\",\"settings\":{\"identifiedOnly\":" + (identifiedOnly ? "true" : "false") + "}}";
 }
 #ifdef WVC_HAVE_CURL
-#include <curl/curl.h>
 // POST body to {baseUrl}/api/provision with Bearer auth. Best-effort: returns false
 // (and sets errOut) on transport error or non-2xx; the caller still hands out the URL.
 // timeoutMs bounds the whole request so services never block on a down webrtc-chat.
