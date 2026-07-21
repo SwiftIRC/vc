@@ -68,8 +68,28 @@ export class Media extends EventTarget {
   // Acquire the initial camera+mic stream with a single permission prompt.
   // Resolves with the owned stream; rejects (and emits "error") on failure.
   async start() {
-    const fresh = await this._getUserMedia({ audio: true, video: true });
-    this._adopt(fresh);
+    // Request the mic and camera SEPARATELY (two getUserMedia calls) rather than one
+    // {audio, video} request. A combined request rejects wholesale if either device is
+    // blocked or absent — so a covered/denied camera would also cost you the mic. Asking
+    // separately lets the user grant one and deny the other, and keeps whichever they
+    // grant. Only if BOTH fail does start() reject (and emit "error") so the lobby can
+    // fall back to its join-anyway state.
+    const grab = async (constraints) => {
+      try {
+        return await navigator.mediaDevices.getUserMedia(constraints);
+      } catch {
+        return null; // a denied/absent device must not block the other
+      }
+    };
+    const micStream = await grab({ audio: true });
+    if (micStream) this._adopt(micStream);
+    const camStream = await grab({ video: true });
+    if (camStream) this._adopt(camStream);
+    if (!this.stream) {
+      const err = new Error("microphone and camera are both unavailable");
+      this._emitError(err, "getUserMedia");
+      throw err;
+    }
     return this.stream;
   }
 
