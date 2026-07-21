@@ -250,7 +250,7 @@ func (s *SFU) signalPeerConnections(slug string) {
 		// Ask each newly-subscribed video's publisher for a keyframe so the new
 		// subscriber can start decoding without waiting for the room ticker.
 		for _, lt := range newVideo {
-			s.pli(lt)
+			s.pliBurst(lt)
 		}
 		if !retry {
 			return
@@ -356,6 +356,23 @@ func (s *SFU) pli(lt *localTrack) {
 		return
 	}
 	_ = lt.publisher.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(lt.ssrc)}})
+}
+
+// pliBurstDelays schedules extra keyframe requests shortly after a new subscription; see pliBurst.
+var pliBurstDelays = []time.Duration{250 * time.Millisecond, 750 * time.Millisecond}
+
+// pliBurst asks a freshly-subscribed video's publisher for a keyframe immediately, then
+// again a couple of times over the next ~second. A lone PLI at subscribe time races the
+// new subscriber's receiver coming up — its offer is still being answered — so the
+// keyframe that PLI triggers can arrive before the subscriber can decode it, leaving the
+// tile black until the next periodic keyframe (up to keyFrameInterval later). The short
+// burst makes at least one keyframe land after the receiver is ready. The retries are
+// safe on a since-departed publisher: pli no-ops once its PeerConnection is closed.
+func (s *SFU) pliBurst(lt *localTrack) {
+	s.pli(lt)
+	for _, d := range pliBurstDelays {
+		time.AfterFunc(d, func() { s.pli(lt) })
+	}
 }
 
 // dispatchKeyFrame PLIs every video publisher in the room, so subscribers that

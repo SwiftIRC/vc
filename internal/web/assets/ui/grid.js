@@ -260,6 +260,7 @@ export class Grid {
     const tile = this._ensureTile(participantId);
     if (kind === "camera") {
       tile.cameraVideo.srcObject = stream;
+      tile.cameraVideo.play().catch(() => {}); // nudge playback in case autoplay stalled (black tile)
       tile.hasCamera = true;
     } else if (kind === "mic") {
       this._attachAudio(participantId, stream);
@@ -504,6 +505,7 @@ export class Grid {
       rec.nameEl.textContent = `${name} (screen)`;
     }
     rec.video.srcObject = stream;
+    rec.video.play().catch(() => {}); // nudge playback in case autoplay stalled
   }
 
   _removeScreenTile(id) {
