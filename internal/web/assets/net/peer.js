@@ -117,6 +117,15 @@ export class Peer extends EventTarget {
   // rather than depending on the browser to re-fire negotiation-needed after a
   // rollback (which it does not do dependably).
   async publish(track, kind) {
+    const existing = this._senders.get(kind);
+    if (existing) {
+      // Already publishing this kind: swap the track in place rather than adding a
+      // SECOND transceiver for it. A duplicate m-line for the same kind (e.g. from a
+      // re-publish or a rapid camera-track race) gives two m-lines overlapping demux
+      // criteria, which the far side can fail to apply ("demuxer criteria").
+      await existing.replaceTrack(track);
+      return;
+    }
     this._addLocal(track, kind);
   }
 
@@ -217,7 +226,17 @@ export class Peer extends EventTarget {
     await this.pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
     await this._drainCandidates();
     const answer = await this.pc.createAnswer();
-    await this.pc.setLocalDescription(answer);
+    try {
+      await this.pc.setLocalDescription(answer);
+    } catch (err) {
+      // Applying the answer can fail with "Failed to apply demuxer criteria" when two
+      // m-lines carry indistinguishable RTP (same payload type, conflicting SSRC/MID).
+      // That's a renegotiation-shape problem — dump the m-line layout and the SDPs so
+      // the offending pair is diagnosable, then let the error propagate as usual.
+      const layout = this.pc.getTransceivers().map((t) => `${t.mid}:${t.direction}>${t.currentDirection || "-"}`).join(" ");
+      console.error("[peer] answer setLocalDescription failed:", String(err), "\ntransceivers:", layout, "\n--- SERVER OFFER ---\n" + msg.sdp + "\n--- OUR ANSWER ---\n" + answer.sdp);
+      throw err;
+    }
     this.signaling.send("answer", { sdp: this.pc.localDescription.sdp });
     // Glare recovery: we just discarded our own in-flight offer. Re-run _makeOffer so
     // any transceiver added while that offer was pending (screenshare) is offered
