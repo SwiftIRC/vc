@@ -24,6 +24,10 @@ export class Media extends EventTarget {
     super();
     this.stream = null; // owned camera+mic MediaStream (mutated in place)
     this.screenStream = null; // getDisplayMedia stream while sharing
+    // True once a camera has been acquired at least once. Turning the camera OFF
+    // releases the device (no track), so the UI needs a separate signal to keep the
+    // camera toggle usable while off — this is it.
+    this.cameraAvailable = false;
 
     // Noise-suppression audio graph (opt-in; see setNoiseSuppression). When on,
     // the raw mic feeds a vendored AudioWorklet and the *processed* track is what
@@ -96,10 +100,29 @@ export class Media extends EventTarget {
     return this._toggle(this.micTrack);
   }
 
-  // Flip the local camera track between enabled and disabled (camera off).
-  // Returns the new enabled state; false when there is no camera track.
-  toggleCamera() {
-    return this._toggle(this.cameraTrack);
+  // Turn the camera OFF by releasing the device: track.stop() frees the hardware
+  // and turns its indicator light off, unlike merely disabling the track. Removes
+  // the video track from `stream` and emits "camera-track" {track:null} so the
+  // publisher drops the outgoing frames. A no-op when the camera is already off.
+  disableCamera() {
+    const track = this.cameraTrack;
+    if (!track) return;
+    this.stream.removeTrack(track);
+    track.stop();
+    this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: null } }));
+  }
+
+  // Turn the camera back ON by re-acquiring it (a fresh getUserMedia video capture),
+  // adding it to `stream`, and emitting "camera-track" with the new track (which the
+  // publisher republishes). Resolves with the new track; rejects (and emits "error")
+  // if acquisition fails, leaving the camera off. A no-op returning the current track
+  // when already on. `deviceId` optionally pins a specific camera.
+  async enableCamera(deviceId) {
+    if (this.cameraTrack) return this.cameraTrack;
+    const video = deviceId ? { deviceId: { exact: deviceId } } : true;
+    const fresh = await this._getUserMedia({ video });
+    this._adopt(fresh); // swaps the new video track into `stream`, emits "camera-track"
+    return this.cameraTrack;
   }
 
   // Begin screen sharing. Resolves with the screen video track and emits
@@ -310,6 +333,7 @@ export class Media extends EventTarget {
       prev.stop();
     }
     if (next) this.stream.addTrack(next);
+    if (isVideo && next) this.cameraAvailable = true;
     const event = isVideo ? "camera-track" : "mic-track";
     this.dispatchEvent(new CustomEvent(event, { detail: { track: next } }));
   }

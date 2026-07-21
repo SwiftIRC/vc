@@ -231,11 +231,12 @@ export class Prejoin {
   }
 
   async _switchCamera() {
+    // If the camera is currently OFF (device released), don't re-acquire it just to
+    // change the device — the chosen camera is honored next time it is enabled.
+    if (!this.media.cameraTrack) return;
     try {
       await this.media.useDevices({ cameraId: this.cameraSelect.value });
-      // useDevices/_swapTrack carries the old track's enabled state onto the new
-      // one, so a camera-off choice survives the switch; re-sync the button + overlay.
-      this._syncMediaState();
+      this._syncMediaState(); // reflect the switch on the button + overlay
     } catch {
       /* keep the previous device; media.js emits its own error event */
     }
@@ -253,14 +254,14 @@ export class Prejoin {
   // --- pre-join mic/camera toggles ---
 
   // Reflect the live camera+mic tracks on the two toggle buttons (and the camera-off
-  // placeholder). An absent track disables its button, mirroring how the in-call
-  // control bar disables a control when its track is missing. Called once tracks
-  // exist and again after any device switch, so the user's mute/camera-off choice
-  // is preserved across a switch (Media carries `enabled` onto the new track).
+  // placeholder). The mic button follows track presence; the camera button follows
+  // cameraAvailable (a camera EXISTS) rather than a live track, since turning the
+  // camera off releases its track but must stay re-enable-able. Called once tracks
+  // exist and again after any device switch or camera on/off.
   _syncMediaState() {
     const cam = this.media.cameraTrack;
     const mic = this.media.micTrack;
-    this._setCameraToggle(cam ? cam.enabled : false, !!cam);
+    this._setCameraToggle(!!cam, this.media.cameraAvailable);
     this._setMicToggle(mic ? mic.enabled : false, !!mic);
   }
 
@@ -269,9 +270,18 @@ export class Prejoin {
     this._setMicToggle(this.media.toggleMic(), true);
   }
 
-  _toggleCamera() {
-    if (!this.media.cameraTrack) return;
-    this._setCameraToggle(this.media.toggleCamera(), true);
+  async _toggleCamera() {
+    if (!this.media.cameraAvailable) return; // no camera on this machine
+    // Camera OFF releases the device (light off); ON re-acquires it, honoring the
+    // selected device. Guard the button across the async re-acquire.
+    this.cameraToggle.disabled = true;
+    try {
+      if (this.media.cameraTrack) this.media.disableCamera();
+      else await this.media.enableCamera(this.cameraSelect.value || undefined);
+    } catch {
+      /* re-acquire failed: stay off (media.js emits its own error) */
+    }
+    this._syncMediaState();
   }
 
   _setMicToggle(enabled, present) {
@@ -283,15 +293,15 @@ export class Prejoin {
     this.micLabel.textContent = off ? "Mic off" : "Mic on";
   }
 
-  _setCameraToggle(enabled, present) {
-    const off = present && !enabled;
-    this.cameraToggle.disabled = !present;
+  _setCameraToggle(on, available) {
+    const off = available && !on;
+    this.cameraToggle.disabled = !available;
     this.cameraToggle.classList.toggle("off", off);
     this.cameraToggle.setAttribute("aria-pressed", off ? "true" : "false");
     this.cameraGlyph.textContent = off ? "🚫" : "🎥";
     this.cameraLabel.textContent = off ? "Camera off" : "Camera on";
-    // The placeholder only makes sense over a (frozen) preview: show it iff the
-    // camera is present but off.
+    // Placeholder over the (now black/frozen) preview whenever a camera is available
+    // but currently off.
     this.cameraOffOverlay.hidden = !off;
   }
 

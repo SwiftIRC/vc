@@ -283,6 +283,22 @@ function renderInCall(msg) {
     if (peer && track) peer.replaceTrack("mic", track).catch((err) => console.error("mic replaceTrack failed", err));
   });
 
+  // Local camera track released/re-acquired (camera off releases the device, on
+  // re-acquires it). Mirror it onto what we publish for "camera": replaceTrack in
+  // place when the sender already exists (no renegotiation), or publish it the first
+  // time if it does not (e.g. joined camera-off, then turned it on). A null track
+  // (camera off) replaceTrack(null)s the sender so we stop sending frames while the
+  // device is free; the media-state broadcast tells remotes to show camera-off.
+  media.addEventListener("camera-track", async (e) => {
+    const track = e && e.detail ? e.detail.track : null;
+    if (!peer) return;
+    const replaced = await peer.replaceTrack("camera", track).catch((err) => {
+      console.error("camera replaceTrack failed", err);
+      return false;
+    });
+    if (!replaced && track) peer.publish(track, "camera");
+  });
+
   // Roster + moderation + chat from the signaling socket.
   signaling.on("peer-joined", (m) => addRosterPeer(m));
   signaling.on("peer-left", (m) => grid.removePeer(m.id));

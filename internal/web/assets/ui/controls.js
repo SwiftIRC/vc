@@ -2,8 +2,9 @@
 // moderation.
 //
 // Local controls (all participants):
-//   - mute        -> Media.toggleMic()
-//   - camera      -> Media.toggleCamera()
+//   - mute        -> Media.toggleMic() (just disables the track; device stays open)
+//   - camera      -> Media.enableCamera()/disableCamera() (releases the device when
+//                    off, so its indicator light goes out; re-acquires when on)
 //   - screenshare -> Media.startScreen()/stopScreen(); the resulting track is
 //                    published to / unpublished from the SFU as kind "screen".
 //   - leave       -> onLeave() (app.js tears the call down)
@@ -190,10 +191,12 @@ export class Controls {
     // A mic/camera button is meaningless with no such track; disable it up front.
     // Noise suppression likewise needs a mic to process.
     if (!(this.media && this.media.micTrack)) this.muteBtn.disabled = true;
-    if (!(this.media && this.media.cameraTrack)) this.cameraBtn.disabled = true;
+    // Enabled whenever a camera EXISTS (even if joined with it off, so it can be
+    // turned back on), not only when a track is currently live.
+    if (!(this.media && this.media.cameraAvailable)) this.cameraBtn.disabled = true;
 
     this._setMicButton(this.media && this.media.micTrack ? this.media.micTrack.enabled : false);
-    this._setCameraButton(this.media && this.media.cameraTrack ? this.media.cameraTrack.enabled : false);
+    this._setCameraButton(!!(this.media && this.media.cameraTrack));
     this._setScreenButton(false);
     this._setNsButton(false, false); // default OFF
     this._setCountdownButton();
@@ -221,10 +224,21 @@ export class Controls {
     this.sendMediaState(); // tell the room so remote mute indicators update
   }
 
-  _toggleCamera() {
+  async _toggleCamera() {
     if (!this.media) return;
-    const enabled = this.media.toggleCamera();
-    this._setCameraButton(enabled);
+    // Camera OFF releases the device (indicator light off); ON re-acquires it.
+    // Guard the button across the async re-acquire so a double-click cannot overlap
+    // two getUserMedia captures.
+    const turningOn = !this.media.cameraTrack;
+    this.cameraBtn.disabled = true;
+    try {
+      if (turningOn) await this.media.enableCamera();
+      else this.media.disableCamera();
+    } catch {
+      /* re-acquire failed (permission/device busy): leave the camera off */
+    }
+    this.cameraBtn.disabled = !(this.media && this.media.cameraAvailable);
+    this._setCameraButton(!!this.media.cameraTrack);
     if (this.grid) this.grid.refreshSelf();
     this.sendMediaState(); // tell the room so remote camera indicators update
   }

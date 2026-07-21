@@ -182,7 +182,10 @@ export class Grid {
 
   _applyPeerMedia(tile, { mic, camera } = {}) {
     if (typeof mic === "boolean") this._setIndicator(tile.micPill, mic);
-    if (typeof camera === "boolean") this._setIndicator(tile.avPill, camera);
+    if (typeof camera === "boolean") {
+      this._setIndicator(tile.avPill, camera);
+      tile.camOff.hidden = camera; // cover the frozen/black frame when their camera is off
+    }
   }
 
   // Set a remote participant's local playback volume (0..1). Purely client-side:
@@ -205,8 +208,10 @@ export class Grid {
     if (!tile) return;
     const mic = this.media ? this.media.micTrack : null;
     const cam = this.media ? this.media.cameraTrack : null;
+    const camOn = !!(cam && cam.enabled);
     this._setIndicator(tile.micPill, !!(mic && mic.enabled));
-    this._setIndicator(tile.avPill, !!(cam && cam.enabled));
+    this._setIndicator(tile.avPill, camOn);
+    tile.camOff.hidden = camOn; // show the placeholder when your own camera is off
   }
 
   _addSelfTile(role) {
@@ -240,6 +245,15 @@ export class Grid {
     // Only the local (self) camera is mirrored — a selfie view, as call apps do.
     // Screen-share tiles are built separately (_addScreenTile) and never mirrored.
     const cameraVideo = el("video", { class: self ? "cam mirror" : "cam", autoplay: true, playsinline: true });
+    // Camera-off placeholder over the video: a released camera (or a remote peer
+    // reporting camera off) leaves the <video> black/frozen, so cover it. Driven by
+    // refreshSelf (self) and _applyPeerMedia (remotes); hidden until camera is known off.
+    const camOff = el(
+      "div",
+      { class: "cam-off", hidden: true },
+      el("span", { class: "cam-off-icon", text: "🎥" }),
+      el("span", { class: "cam-off-text", text: "Camera off" }),
+    );
     const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
     const badgeEl = el("span", { class: "badge", hidden: true });
     const micPill = el("span", { class: "pill mic", text: "mic" });
@@ -274,9 +288,9 @@ export class Grid {
       volumeEl,
     );
 
-    const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, meta);
+    const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, camOff, meta);
 
-    const tile = { el: tileEl, cameraVideo, nameEl, badgeEl, micPill, avPill, volumeEl, volume: 1, name, hasCamera: false, self };
+    const tile = { el: tileEl, cameraVideo, camOff, nameEl, badgeEl, micPill, avPill, volumeEl, volume: 1, name, hasCamera: false, self };
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);
