@@ -107,7 +107,7 @@ function renderHome(message) {
     el(
       "div",
       { class: "home" },
-      el("h1", { text: "webrtc-chat" }),
+      el("h1", { text: "SwiftIRC VC" }),
       el("p", { class: "lede", text: "Enter a room name to start or join a call." }),
       el("div", { class: "row" }, input, el("button", { class: "join", type: "button", onClick: go }, "Go")),
       error,
@@ -426,5 +426,5 @@ window.addEventListener("pagehide", () => {
   if (media) media.stop();
 });
 
-console.log("webrtc-chat loaded");
+console.log("SwiftIRC VC loaded");
 boot();

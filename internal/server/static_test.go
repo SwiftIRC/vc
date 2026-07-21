@@ -44,7 +44,7 @@ func TestStaticShellAndAssets(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "javascript") {
 		t.Errorf("GET /app.js content-type = %q, want a javascript type", ct)
 	}
-	if !strings.Contains(body, "webrtc-chat loaded") {
+	if !strings.Contains(body, "SwiftIRC VC loaded") {
 		t.Errorf("GET /app.js body = %q", body)
 	}
 
