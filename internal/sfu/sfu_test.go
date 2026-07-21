@@ -44,6 +44,30 @@ func TestPublishStoresLocalTrack(t *testing.T) {
 	}
 }
 
+// TestPublisherCameraAndScreenAreDistinctKinds verifies the SFU derives a
+// published track's kind from the MSID stream id (mirroring a browser's
+// streamIds:[kind]), NOT from the track id. One publisher sending BOTH a camera
+// and a screen video track — both video, both with opaque, kind-free track ids —
+// must be recorded as two distinct kinds (p1:camera and p1:screen), never
+// collapsed. A server that read remote.ID() cannot tell them apart: it would fall
+// back to "camera" for both and silently drop the screen share.
+func TestPublisherCameraAndScreenAreDistinctKinds(t *testing.T) {
+	s := testSFU(t)
+	c := newTestClient(t, s, "room", "p1")
+	cam := c.publish("camera")
+	screen := c.publish("screen")
+	c.waitConnected()
+	writeTestRTPLoop(t, cam)    // drive RTP so OnTrack fires for the camera
+	writeTestRTPLoop(t, screen) // and for the screen share
+
+	// Both kinds must appear as distinct room tracks. Before the fix (kind from
+	// remote.ID()) both video tracks collapse to "camera" and p1:screen never
+	// appears, so this waits out its deadline and fails.
+	waitFor(t, func() bool {
+		return s.hasTrack("room", "p1:camera") && s.hasTrack("room", "p1:screen")
+	})
+}
+
 func TestFanOutDeliversTrackToOtherPeer(t *testing.T) {
 	s := testSFU(t)
 	p1 := newTestClient(t, s, "room", "p1")
@@ -139,10 +163,13 @@ func countSenderPLI(t *testing.T, sender *webrtc.RTPSender) func() int {
 }
 
 // senderForKind returns the client PC's RTPSender carrying the given track kind.
+// The client tags kind as the MSID stream id (matching the browser's
+// streamIds:[kind]), so the sender is found by its track's StreamID, not its
+// opaque track id.
 func senderForKind(t *testing.T, pc *webrtc.PeerConnection, kind string) *webrtc.RTPSender {
 	t.Helper()
 	for _, snd := range pc.GetSenders() {
-		if tr := snd.Track(); tr != nil && tr.ID() == kind {
+		if tr := snd.Track(); tr != nil && tr.StreamID() == kind {
 			return snd
 		}
 	}

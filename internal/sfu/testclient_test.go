@@ -2,6 +2,8 @@ package sfu
 
 import (
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +12,12 @@ import (
 
 	"github.com/ryanwohara/webrtc-chat/internal/signal"
 )
+
+// trackSeq mints a unique, opaque track id per published track. A real browser's
+// MediaStreamTrack.id is a read-only UUID the SFU must ignore; the kind travels in
+// the MSID *stream id* instead (see publish). Making the track id unique and
+// kind-free proves the server never derives kind from it.
+var trackSeq atomic.Uint64
 
 // clientAPI builds a browser-like client API (same codecs, default interceptors).
 func clientAPI(t *testing.T) *webrtc.API {
@@ -164,6 +172,12 @@ func (tc *testClient) fromServer(v any) {
 // onNegotiationNeeded — so publishing a screenshare mid-call goes through the same
 // polite path and is transparently deferred/retried if it glares with a
 // concurrent server renegotiation.
+//
+// The kind is carried as the MSID *stream id* (the 3rd/streamID arg), mirroring a
+// browser's pc.addTransceiver(track, {streamIds:[kind]}): MediaStreamTrack.id is
+// read-only in a real browser, so the stream id is the only channel for the kind.
+// The track id is an opaque unique value the SERVER ignores — it derives kind from
+// remote.StreamID() and the publisherID from the Peer, never from the track id.
 func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 	tc.t.Helper()
 	mime := webrtc.MimeTypeVP8
@@ -171,7 +185,10 @@ func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 		mime = webrtc.MimeTypeOpus
 	}
 	track, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: mime}, kind /*track ID = kind*/, tc.id /*stream ID*/)
+		webrtc.RTPCodecCapability{MimeType: mime},
+		fmt.Sprintf("track-%d", trackSeq.Add(1)), /*opaque track id (ignored by the server)*/
+		kind, /*stream id = kind (browser: streamIds:[kind])*/
+	)
 	if err != nil {
 		tc.t.Fatal(err)
 	}

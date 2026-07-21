@@ -120,9 +120,11 @@ func TestHubSFUConnectsOverWebSocket(t *testing.T) {
 	t.Cleanup(cancel)
 	go mc.readLoop(ctx)
 
-	// Publish a camera track (browser contract: track ID == kind).
+	// Publish a camera track. Browser contract: kind travels in the MSID stream id
+	// (the 3rd arg), mirroring pc.addTransceiver(track, {streamIds:[kind]}); the
+	// track id is opaque and ignored by the SFU (MediaStreamTrack.id is read-only).
 	track, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "camera", "publisher")
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "track", "camera")
 	if err != nil {
 		t.Fatal(err)
 	}

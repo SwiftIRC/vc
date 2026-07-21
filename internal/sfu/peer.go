@@ -88,13 +88,15 @@ func (p *Peer) HandleCandidate(raw json.RawMessage) error {
 }
 
 // wireOnTrack sets pc.OnTrack so that each published remote track is captured
-// into a forwardable local track. The track's kind is taken from remote.ID()
-// (mic|camera|screen), defaulting by RTP media type when empty/unknown. RTP is
-// copied remote.Read -> local.Write until EOF; on exit the local track is
-// removed and the room renegotiated.
+// into a forwardable local track. The track's kind is taken from the MSID stream
+// id (remote.StreamID(), mic|camera|screen) — a browser sets it via
+// pc.addTransceiver(track, {streamIds:[kind]}), the only channel it has since
+// MediaStreamTrack.id is read-only. It defaults by RTP media type when the stream
+// id is empty/unknown. RTP is copied remote.Read -> local.Write until EOF; on exit
+// the local track is removed and the room renegotiated.
 func (p *Peer) wireOnTrack() {
 	p.pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		kind := remote.ID()
+		kind := remote.StreamID()
 		if kind != "mic" && kind != "camera" && kind != "screen" {
 			if remote.Kind() == webrtc.RTPCodecTypeAudio {
 				kind = "mic"
