@@ -173,25 +173,29 @@ func (tc *testClient) fromServer(v any) {
 // polite path and is transparently deferred/retried if it glares with a
 // concurrent server renegotiation.
 //
-// The kind is carried as the MSID *stream id* (the 3rd/streamID arg), mirroring a
-// browser's pc.addTransceiver(track, {streamIds:[kind]}): MediaStreamTrack.id is
-// read-only in a real browser, so the stream id is the only channel for the kind.
-// The track id is an opaque unique value the SERVER ignores — it derives kind from
-// remote.StreamID() and the publisherID from the Peer, never from the track id.
+// The kind is declared OUT-OF-BAND, exactly as a browser must: a real browser
+// cannot set the MSID stream id to the kind (MediaStream.id is read-only and
+// random), so it publishes under a fresh random stream id and sends a
+// {stream id -> kind} map in its offer (signal.Offer.Kinds). We mirror that here —
+// a random per-track stream id plus recordKinds — rather than the (impossible in a
+// browser) stream id == kind. The server derives kind from that map joined to
+// remote.StreamID(), and the publisherID from the Peer; the track id is ignored.
 func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 	tc.t.Helper()
 	mime := webrtc.MimeTypeVP8
 	if kind == "mic" {
 		mime = webrtc.MimeTypeOpus
 	}
+	streamID := fmt.Sprintf("stream-%d", trackSeq.Add(1)) // random MSID stream id (browser: new MediaStream())
 	track, err := webrtc.NewTrackLocalStaticRTP(
 		webrtc.RTPCodecCapability{MimeType: mime},
 		fmt.Sprintf("track-%d", trackSeq.Add(1)), /*opaque track id (ignored by the server)*/
-		kind, /*stream id = kind (browser: streamIds:[kind])*/
+		streamID,
 	)
 	if err != nil {
 		tc.t.Fatal(err)
 	}
+	tc.server.recordKinds(map[string]string{streamID: kind}) // browser: offer's `kinds` map
 	if _, err := tc.pc.AddTrack(track); err != nil {
 		tc.t.Fatal(err)
 	}

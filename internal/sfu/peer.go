@@ -23,6 +23,16 @@ type Peer struct {
 	// takes mu to coordinate its own offers with the server's renegotiations.
 	mu          sync.Mutex
 	makingOffer bool
+
+	// kinds maps each published track's MSID stream id -> kind (mic|camera|screen),
+	// as declared by the client alongside its offer (signal.Offer.Kinds). A browser
+	// cannot set an arbitrary MSID stream id — MediaStream.id is read-only and
+	// random — so the kind is conveyed here rather than read from remote.StreamID()
+	// directly (which cannot tell a screen track from a camera track: both VP8).
+	// Guarded by kindsMu: wireOnTrack's OnTrack callback (a Pion goroutine) reads it
+	// while HandleOffer (the signaling goroutine) writes it.
+	kindsMu sync.Mutex
+	kinds   map[string]string
 }
 
 // HandleOffer applies a client-initiated offer (initial publish or a mid-call
@@ -33,10 +43,38 @@ type Peer struct {
 // touching remote/local descriptions). A polite client rolls its own offer back
 // and re-offers once the server's offer settles, so the screenshare track still
 // arrives on the retry.
-func (p *Peer) HandleOffer(sdp string) error {
+func (p *Peer) HandleOffer(sdp string, kinds map[string]string) error {
+	p.recordKinds(kinds)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.handleOfferLocked(sdp)
+}
+
+// recordKinds merges the client-declared {MSID stream id -> kind} map from an
+// offer into the peer's set. Merged, never replaced: a later renegotiation (e.g.
+// an ICE restart, or removing one track) may resend a subset, and forgetting an
+// already-published track's kind would drop it back to the media-type fallback.
+func (p *Peer) recordKinds(kinds map[string]string) {
+	if len(kinds) == 0 {
+		return
+	}
+	p.kindsMu.Lock()
+	defer p.kindsMu.Unlock()
+	if p.kinds == nil {
+		p.kinds = make(map[string]string, len(kinds))
+	}
+	for streamID, kind := range kinds {
+		p.kinds[streamID] = kind
+	}
+}
+
+// kindForStream returns the client-declared kind for a published track's MSID
+// stream id, and whether one was declared.
+func (p *Peer) kindForStream(streamID string) (string, bool) {
+	p.kindsMu.Lock()
+	defer p.kindsMu.Unlock()
+	k, ok := p.kinds[streamID]
+	return k, ok
 }
 
 // handleOfferLocked is HandleOffer's body; the caller must hold p.mu. It is split
@@ -88,16 +126,18 @@ func (p *Peer) HandleCandidate(raw json.RawMessage) error {
 }
 
 // wireOnTrack sets pc.OnTrack so that each published remote track is captured
-// into a forwardable local track. The track's kind is taken from the MSID stream
-// id (remote.StreamID(), mic|camera|screen) — a browser sets it via
-// pc.addTransceiver(track, {streamIds:[kind]}), the only channel it has since
-// MediaStreamTrack.id is read-only. It defaults by RTP media type when the stream
-// id is empty/unknown. RTP is copied remote.Read -> local.Write until EOF; on exit
-// the local track is removed and the room renegotiated.
+// into a forwardable local track. The track's kind (mic|camera|screen) comes from
+// the client's out-of-band declaration (recordKinds), keyed by the track's MSID
+// stream id (remote.StreamID()) — a browser cannot set that stream id to the kind
+// itself, so it sends a {stream id -> kind} map with each offer. When nothing was
+// declared for the stream id, it defaults by RTP media type, which distinguishes
+// mic from video but NOT camera from screen. RTP is copied remote.Read ->
+// local.Write until EOF; on exit the local track is removed and the room
+// renegotiated.
 func (p *Peer) wireOnTrack() {
 	p.pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		kind := remote.StreamID()
-		if kind != "mic" && kind != "camera" && kind != "screen" {
+		kind, ok := p.kindForStream(remote.StreamID())
+		if !ok || (kind != "mic" && kind != "camera" && kind != "screen") {
 			if remote.Kind() == webrtc.RTPCodecTypeAudio {
 				kind = "mic"
 			} else {

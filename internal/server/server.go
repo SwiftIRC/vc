@@ -237,7 +237,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.Countdown, *signal.MediaState:
 			h.dispatch(rm, p, m)
 		case *signal.Offer:
-			if err := mp.HandleOffer(m.SDP); err != nil {
+			if err := mp.HandleOffer(m.SDP, m.Kinds); err != nil {
 				h.log.Debug("offer", "err", err)
 			}
 		case *signal.Answer:

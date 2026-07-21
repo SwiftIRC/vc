@@ -162,18 +162,18 @@ func countSenderPLI(t *testing.T, sender *webrtc.RTPSender) func() int {
 	}
 }
 
-// senderForKind returns the client PC's RTPSender carrying the given track kind.
-// The client tags kind as the MSID stream id (matching the browser's
-// streamIds:[kind]), so the sender is found by its track's StreamID, not its
-// opaque track id.
-func senderForKind(t *testing.T, pc *webrtc.PeerConnection, kind string) *webrtc.RTPSender {
+// senderForTrack returns the client PC's RTPSender carrying the given local
+// track, matched by identity. The client publishes each track under a random MSID
+// stream id (as a browser must — see publish), so the sender cannot be found by a
+// kind-tagged stream id; the test holds the track object publish returned.
+func senderForTrack(t *testing.T, pc *webrtc.PeerConnection, track webrtc.TrackLocal) *webrtc.RTPSender {
 	t.Helper()
 	for _, snd := range pc.GetSenders() {
-		if tr := snd.Track(); tr != nil && tr.StreamID() == kind {
+		if snd.Track() == track {
 			return snd
 		}
 	}
-	t.Fatalf("no %s sender on client PC", kind)
+	t.Fatalf("no sender for track %s on client PC", track.ID())
 	return nil
 }
 
@@ -193,7 +193,7 @@ func TestPLISentToVideoPublisher(t *testing.T) {
 	track := p1.publish("camera")
 	p1.waitConnected()
 
-	pliCount := countSenderPLI(t, senderForKind(t, p1.pc, "camera"))
+	pliCount := countSenderPLI(t, senderForTrack(t, p1.pc, track))
 
 	// Drive RTP so the server's OnTrack fires, captures the SSRC, and subscribes
 	// p2 to p1's camera (triggering a PLI to p1). The ticker backstops it.
@@ -210,7 +210,7 @@ func TestAudioPublisherGetsNoPLI(t *testing.T) {
 	p2 := newTestClient(t, s, "room", "p2")
 	mic := p2.publish("mic")
 	p2.waitConnected()
-	micPLI := countSenderPLI(t, senderForKind(t, p2.pc, "mic"))
+	micPLI := countSenderPLI(t, senderForTrack(t, p2.pc, mic))
 	writeTestRTPLoop(t, mic)
 	// Let the server capture the mic before a second peer joins, so the mic is a
 	// live room track (eligible for the ticker) yet no server offer races p1's
@@ -220,7 +220,7 @@ func TestAudioPublisherGetsNoPLI(t *testing.T) {
 	p1 := newTestClient(t, s, "room", "p1")
 	cam := p1.publish("camera")
 	p1.waitConnected()
-	camPLI := countSenderPLI(t, senderForKind(t, p1.pc, "camera"))
+	camPLI := countSenderPLI(t, senderForTrack(t, p1.pc, cam))
 	writeTestRTPLoop(t, cam)
 
 	// The camera publisher must receive PLI; confirms the room is actively
@@ -535,7 +535,7 @@ func TestHandleOfferIgnoresGlare(t *testing.T) {
 			t.Fatalf("precondition: want have-local-offer, got %v", p.pc.SignalingState())
 		}
 
-		if err := p.HandleOffer(clientOfferSDP(t, "c")); err != nil {
+		if err := p.HandleOffer(clientOfferSDP(t, "c"), nil); err != nil {
 			t.Fatalf("HandleOffer on glare returned error: %v", err)
 		}
 		if st := p.pc.SignalingState(); st != webrtc.SignalingStateHaveLocalOffer {
@@ -563,7 +563,7 @@ func TestHandleOfferIgnoresGlare(t *testing.T) {
 		p.makingOffer = true
 		p.mu.Unlock()
 
-		if err := p.HandleOffer(clientOfferSDP(t, "c")); err != nil {
+		if err := p.HandleOffer(clientOfferSDP(t, "c"), nil); err != nil {
 			t.Fatalf("HandleOffer returned error: %v", err)
 		}
 		if st := p.pc.SignalingState(); st != webrtc.SignalingStateStable {

@@ -7,13 +7,18 @@
 // No ICE servers are configured: the SFU has a public IP, so host/srflx
 // candidates gathered locally are enough — there is no STUN/TURN.
 //
-// The client conveys each published track's KIND (mic|camera|screen) through the
-// MSID *stream id* — pc.addTransceiver(track, {streamIds:[kind]}) — because
-// MediaStreamTrack.id is read-only in a browser and cannot carry it. The server
-// reads that stream id (remote.StreamID()) to key the forwarded track. Conversely,
-// the SFU labels the tracks it forwards to us out-of-band, in a `tracks` message
-// mapping each transceiver mid -> {participantId, kind}; ontrack looks the mid up
-// there to tell which remote participant/kind a stream belongs to.
+// The client conveys each published track's KIND (mic|camera|screen) to the SFU
+// OUT-OF-BAND: it publishes the track under its own MediaStream and sends a
+// {msid-stream-id -> kind} map alongside every offer (signal.Offer.kinds). A
+// browser cannot set an arbitrary MSID stream id — MediaStream.id is read-only and
+// random — so the kind cannot ride the stream id itself; instead we read the id
+// our MediaStream was assigned and tell the server what it means, and the SFU joins
+// its OnTrack's remote.StreamID() to that map. (Without this the SFU can only fall
+// back to the RTP media type, which cannot tell a screen share from a camera — both
+// VP8 — so the screen would collide with the camera and never reach anyone else.)
+// Conversely, the SFU labels the tracks it forwards to us out-of-band too, in a
+// `tracks` message mapping each transceiver mid -> {participantId, kind}; ontrack
+// looks the mid up there to tell which remote participant/kind a stream belongs to.
 //
 // Events (CustomEvent):
 //   "remote-track" {participantId, kind, stream}  a forwarded remote track, labelled
@@ -50,6 +55,13 @@ export class Peer extends EventTarget {
     this._incoming = new Map();
     // kind -> RTCRtpSender for locally published tracks, so unpublish can find it.
     this._senders = new Map();
+    // Each published track's KIND is conveyed to the SFU out-of-band, keyed by the
+    // MSID stream id of the MediaStream we publish it under (a browser cannot set an
+    // arbitrary stream id, but it CAN read the random one it was assigned). Both
+    // directions are kept: _kindByStreamId is sent to the server with each offer;
+    // _streamIdByKind lets unpublish and re-publish drop the stale mapping.
+    this._kindByStreamId = new Map();
+    this._streamIdByKind = new Map();
 
     // Media-plane health. If the ICE/DTLS transport fails while the signaling
     // socket is still up (NAT rebinding, network change), the call freezes with no
@@ -128,6 +140,11 @@ export class Peer extends EventTarget {
     const sender = this._senders.get(kind);
     if (!sender) return;
     this._senders.delete(kind);
+    const streamId = this._streamIdByKind.get(kind);
+    if (streamId) {
+      this._streamIdByKind.delete(kind);
+      this._kindByStreamId.delete(streamId);
+    }
     this.pc.removeTrack(sender);
   }
 
@@ -143,8 +160,16 @@ export class Peer extends EventTarget {
   // --- outbound negotiation ---
 
   _addLocal(track, kind) {
-    // sendonly + streamIds:[kind]: the stream id is how the SFU learns the kind.
-    const transceiver = this.pc.addTransceiver(track, { direction: "sendonly", streamIds: [kind] });
+    // Publish under a dedicated MediaStream so the outgoing SDP carries a real MSID
+    // stream id (a=msid:<stream.id> <trackid>). We read that id — which we cannot
+    // choose — and map it to the kind; _makeOffer sends the map so the SFU can tell
+    // this track's kind (it cannot distinguish camera from screen otherwise).
+    const stream = new MediaStream([track]);
+    const transceiver = this.pc.addTransceiver(track, { direction: "sendonly", streams: [stream] });
+    const prev = this._streamIdByKind.get(kind);
+    if (prev) this._kindByStreamId.delete(prev); // re-publishing a kind mints a fresh stream id
+    this._streamIdByKind.set(kind, stream.id);
+    this._kindByStreamId.set(stream.id, kind);
     this._senders.set(kind, transceiver.sender);
     return transceiver;
   }
@@ -158,7 +183,12 @@ export class Peer extends EventTarget {
       this.makingOffer = true;
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
-      this.signaling.send("offer", { sdp: this.pc.localDescription.sdp });
+      // Send the kind map with the offer so the SFU can label each published track
+      // (it reads remote.StreamID() and looks it up here). Harmless when empty.
+      this.signaling.send("offer", {
+        sdp: this.pc.localDescription.sdp,
+        kinds: Object.fromEntries(this._kindByStreamId),
+      });
     } finally {
       this.makingOffer = false;
     }

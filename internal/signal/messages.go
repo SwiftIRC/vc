@@ -17,6 +17,11 @@ type Join struct {
 }
 type Offer struct {
 	SDP string `json:"sdp"`
+	// Kinds maps each locally published track's MSID stream id -> kind
+	// (mic|camera|screen). A browser cannot set an arbitrary MSID stream id
+	// (MediaStream.id is read-only and random), so it declares the kind here rather
+	// than encoding it in the stream id; the SFU joins this to remote.StreamID().
+	Kinds map[string]string `json:"kinds,omitempty"`
 }
 type Answer struct {
 	SDP string `json:"sdp"`
