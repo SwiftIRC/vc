@@ -278,6 +278,7 @@ body.in-call #app {
 .grid {
   position: relative; /* anchors the absolute .strip-toggle */
   --strip-w: clamp(120px, 18vw, 240px); /* focus-mode filmstrip width; shared with JS + .strip-toggle */
+  --strip-tile-h: calc(var(--strip-w) * 9 / 16); /* cap for a filmstrip tile — its natural 16:9 height */
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -302,6 +303,13 @@ body.in-call #app {
 }
 .grid.has-focus.strip-hidden .tile:not(.focused) {
   display: none; /* strip collapsed — the focused tile goes full-width */
+}
+/* Filmstrip tiles: cap the height at ~16:9 of the strip width and center them in
+   their row, so a sparse strip (1-2 others) shows normal cameras instead of a tall,
+   zoomed-in crop. A full strip has shorter rows, so min() lets them shrink to fit. */
+.grid.has-focus .tile:not(.focused) {
+  align-self: center;
+  height: min(var(--strip-tile-h), 100%);
 }
 
 /* 3-up: two tiles on top, the third centered on the bottom — all the same (half)
