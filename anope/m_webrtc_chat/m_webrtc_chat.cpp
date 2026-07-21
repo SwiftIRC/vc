@@ -37,6 +37,7 @@
 #include "core/build.h"      // wvc::Role, wvc::roleString, wvc::makeClaims
 #include "core/token.h"      // wvc::sign
 #include "core/provision.h"  // wvc::buildProvisionBody, wvc::postProvision
+#include "core/invite.h"      // wvc::randomId, wvc::buildInviteBody, wvc::postInvite
 
 namespace
 {
@@ -371,37 +372,54 @@ public:
 		// include/commands.h:83-85; NickCore::display (account name) — include/account.h:150;
 		// User::SendMessage(BotInfo*, const Anope::string&) private NOTICE —
 		// include/users.h:202; Anope::CurTime (time_t) — include/anope.h:381.
+		// Best-effort server call, time-bounded so services never block on a down
+		// webrtc-chat. `err` is a curl/HTTP status string and never carries the secret.
+		std::string err;
+		bool reachable = true;
+
 		NickCore *nc = source.GetAccount();
 		if (nc && u && bi)
 		{
+			// Identified: mint a token, register it under a short random id, and hand
+			// out the compact link (origin/slug#i=<id>) so it never wraps/truncates in
+			// IRC. Registering also provisions the room from the token's claims. If the
+			// server is unreachable, fall back to the self-contained long token link
+			// (#t=<token>), which re-provisions the room on a tokened join.
 			wvc::Role role = this->RoleFor(source, ci);
 			wvc::Claims claims = wvc::makeClaims(
 				ci->name.str(), slug.str(), nc->display.str(), source.GetNick().str(),
 				role, id_only,
 				static_cast<long long>(Anope::CurTime), static_cast<long long>(this->ttl));
 			std::string token = wvc::sign(claims, this->secret.str());
-			Anope::string personal_url = this->linkorigin + "/" + slug + "#t=" + token;
-			// Token is core-tested <= 320 chars; origin+slug add a bounded prefix, so
-			// this fits one IRC line. Send the tokened link privately to its owner only.
+			std::string id = wvc::randomId();
+			Anope::string personal_url;
+			if (!id.empty() && wvc::postInvite(this->apiurl.str(), this->secret.str(), id, token, /*timeoutMs=*/2000, err))
+				personal_url = this->linkorigin + "/" + slug + "#i=" + id;
+			else
+			{
+				reachable = false;
+				personal_url = this->linkorigin + "/" + slug + "#t=" + token;
+			}
 			u->SendMessage(bi, Anope::string(_("Your personal video chat link (opens with your channel role): ")) + personal_url);
 		}
 		else if (u && bi)
 		{
+			// Guest invoker: no personal link, but still provision the room so the
+			// public link works for everyone.
+			std::string body = wvc::buildProvisionBody(ci->name.str(), slug.str(), id_only);
+			if (!wvc::postProvision(this->apiurl.str(), this->secret.str(), body, /*timeoutMs=*/2000, err))
+				reachable = false;
 			if (id_only)
 				u->SendMessage(bi, _("This room only admits users identified to NickServ \342\200\224 identify, then try again."));
 			else
 				u->SendMessage(bi, _("Identify to NickServ for a personal (op) link; the public link works for guests."));
 		}
 
-		// Best-effort provision, time-bounded so services never block on a down
-		// webrtc-chat. `err` is a curl/HTTP status string and never carries the secret.
 		// VERIFY(anope-2.1): Log(LOG_DEBUG) << ... streaming logger — include/logger.h and
 		// modules/fantasy.cpp:170.
-		std::string body = wvc::buildProvisionBody(ci->name.str(), slug.str(), id_only);
-		std::string err;
-		if (!wvc::postProvision(this->apiurl.str(), this->secret.str(), body, /*timeoutMs=*/2000, err))
+		if (!reachable)
 		{
-			Log(LOG_DEBUG) << "webrtc_chat: provision failed for " << ci->name << ": " << err;
+			Log(LOG_DEBUG) << "webrtc_chat: server unreachable for " << ci->name << ": " << err;
 			if (u && bi)
 				u->SendMessage(bi, _("Room link posted, but the video server is unreachable right now."));
 		}

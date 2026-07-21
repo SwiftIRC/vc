@@ -84,8 +84,11 @@ HMAC key. It is never handed to users and never logged.
 Usage once configured:
 
 - `!vc` / `!chat` in a channel (or `/msg ChanServ VC #channel`) — posts the public
-  room link, sends identified users a personal `#t=<token>` link that joins with
-  their channel role, and provisions the room.
+  room link, and sends identified users a personal invite link that joins with their
+  channel role. The link is a short `#i=<id>`: the module registers the token
+  server-side (`POST /api/invite`, which also provisions the room) and hands out the
+  compact id, so the link never wraps/truncates in an IRC NOTICE. If webrtc-chat is
+  unreachable it falls back to a self-contained long `#t=<token>` link.
 - `/msg ChanServ VC #channel SET ENABLED {ON|OFF}` — turn video chat on/off.
 - `/msg ChanServ VC #channel SET IDENTIFIED {ON|OFF}` — restrict joining to
   NickServ-identified users.
@@ -129,7 +132,7 @@ After deploying, verify end-to-end:
 2. `/msg ChanServ VC #chan SET ENABLED ON`.
 3. Run `!vc` in `#chan` and confirm:
    - the public room link appears in the channel;
-   - a NickServ-identified user receives a private `#t=<token>` link by NOTICE;
-   - webrtc-chat logs a `/api/provision` request ("provisioned");
-   - opening the tokened link joins the room with the caller's role/badge.
+   - a NickServ-identified user receives a private short `#i=<id>` link by NOTICE;
+   - webrtc-chat logs an `invite registered` line (which also provisions the room);
+   - opening the invite link joins the room with the caller's role/badge.
 
