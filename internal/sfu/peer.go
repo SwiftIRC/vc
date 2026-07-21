@@ -134,10 +134,20 @@ func (p *Peer) HandleCandidate(raw json.RawMessage) error {
 // mic from video but NOT camera from screen. RTP is copied remote.Read ->
 // local.Write until EOF; on exit the local track is removed and the room
 // renegotiated.
+// isKnownKind reports whether a client-declared track kind is one the SFU forwards
+// as-is; anything else falls back to the RTP media type (mic|camera).
+func isKnownKind(k string) bool {
+	switch k {
+	case "mic", "camera", "screen", "screen-audio":
+		return true
+	}
+	return false
+}
+
 func (p *Peer) wireOnTrack() {
 	p.pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		kind, ok := p.kindForStream(remote.StreamID())
-		if !ok || (kind != "mic" && kind != "camera" && kind != "screen") {
+		if !ok || !isKnownKind(kind) {
 			if remote.Kind() == webrtc.RTPCodecTypeAudio {
 				kind = "mic"
 			} else {

@@ -65,6 +65,12 @@ export class Media extends EventTarget {
     return (this.screenStream && this.screenStream.getVideoTracks()[0]) || null;
   }
 
+  // The screen share's AUDIO track, or null — present only when the user opted to
+  // share tab/system audio in the browser's picker (getDisplayMedia audio:true).
+  get screenAudioTrack() {
+    return (this.screenStream && this.screenStream.getAudioTracks()[0]) || null;
+  }
+
   // Acquire the initial camera+mic stream with a single permission prompt.
   // Resolves with the owned stream; rejects (and emits "error") on failure.
   async start() {
@@ -156,7 +162,10 @@ export class Media extends EventTarget {
   async startScreen() {
     let stream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      // audio:true makes the browser OFFER to share tab/system audio (a checkbox in
+      // its picker). If the user declines, the stream simply has no audio track, so
+      // audio stays optional and this degrades gracefully where it's unsupported.
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     } catch (error) {
       this._emitError(error, "getDisplayMedia");
       throw error;
@@ -165,7 +174,7 @@ export class Media extends EventTarget {
     this.screenStream = stream;
     const track = this.screenTrack;
     if (track) track.addEventListener("ended", () => this.stopScreen(), { once: true });
-    this.dispatchEvent(new CustomEvent("screen-start", { detail: { track } }));
+    this.dispatchEvent(new CustomEvent("screen-start", { detail: { track, audioTrack: this.screenAudioTrack } }));
     return track;
   }
 

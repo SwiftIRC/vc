@@ -306,14 +306,20 @@ export class Controls {
   }
 
   _onScreenStarted(e) {
-    const track = e && e.detail ? e.detail.track : null;
-    if (this.peer && track) this.peer.publish(track, "screen");
+    const detail = (e && e.detail) || {};
+    if (this.peer && detail.track) this.peer.publish(detail.track, "screen");
+    // Publish tab/system audio too when the user opted to share it (separate kind so
+    // it forwards as its own track, keyed distinctly from the screen video).
+    if (this.peer && detail.audioTrack) this.peer.publish(detail.audioTrack, "screen-audio");
     this.sharing = true;
     this._setScreenButton(true);
   }
 
   _onScreenStopped() {
-    if (this.peer) this.peer.unpublish("screen"); // idempotent when no sender
+    if (this.peer) {
+      this.peer.unpublish("screen"); // idempotent when no sender
+      this.peer.unpublish("screen-audio");
+    }
     this.sharing = false;
     this._setScreenButton(false);
   }

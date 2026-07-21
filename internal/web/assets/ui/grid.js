@@ -265,6 +265,11 @@ export class Grid {
       this._addScreenTile(participantId, (known && known.name) || "guest", stream);
       return;
     }
+    if (kind === "screen-audio") {
+      const known = this.tiles.get(participantId);
+      this._attachScreenAudio(participantId, (known && known.name) || "guest", stream);
+      return;
+    }
     const tile = this._ensureTile(participantId);
     if (kind === "camera") {
       tile.cameraVideo.srcObject = stream;
@@ -283,6 +288,10 @@ export class Grid {
     if (!participantId) return;
     if (kind === "screen") {
       this._removeScreenTile(participantId);
+      return;
+    }
+    if (kind === "screen-audio") {
+      this._detachScreenAudio(participantId);
       return;
     }
     const tile = this.tiles.get(participantId);
@@ -489,60 +498,84 @@ export class Grid {
 
   // --- screen tiles ---
 
+  // Build the screen tile skeleton if absent. The video is ALWAYS muted: a local
+  // share must not echo your own audio, and a REMOTE share's audio arrives as a
+  // separate "screen-audio" track played via _attachScreenAudio. Op controls and the
+  // click-to-focus are wired here.
+  _ensureScreenTile(id, name) {
+    let rec = this.screens.get(id);
+    if (rec) return rec;
+    const video = el("video", { class: "cam", autoplay: true, playsinline: true });
+    video.muted = true;
+    const nameEl = el("span", { class: "name", text: `${name} (screen)` });
+    const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, nameEl));
+    video.title = "Click to focus";
+    video.addEventListener("click", () => this._toggleFocus(elNode));
+    // Ops can stop a remote participant's screenshare (never your own tile).
+    if (id !== this.selfId) {
+      const ops = this.screenOpActionsFor({ id, name });
+      if (ops) elNode.append(ops);
+    }
+    rec = { el: elNode, video, nameEl, audioEl: null, volumeEl: null };
+    this.screens.set(id, rec);
+    this.el.append(elNode);
+    this._relayout();
+    return rec;
+  }
+
   _addScreenTile(id, name, stream) {
     if (!stream) return;
-    let rec = this.screens.get(id);
-    if (!rec) {
-      const video = el("video", { class: "cam", autoplay: true, playsinline: true });
-      // A screen share normally carries no audio (the sharer's voice is the mic
-      // tile's job), so the video is muted. If this share DOES carry audio, unmute
-      // it and give it its own local volume slider (same purely-local semantics as
-      // the base tiles).
-      const hasAudio = stream.getAudioTracks().length > 0;
-      video.muted = !hasAudio;
-      const nameEl = el("span", { class: "name", text: `${name} (screen)` });
-      const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, nameEl));
-      // A screen share with audio gets a top-right volume slider (purely local),
-      // like the base tiles.
-      if (hasAudio) {
-        elNode.append(
-          el("input", {
-            type: "range",
-            class: "vol",
-            min: "0",
-            max: "1",
-            step: "0.05",
-            value: "1",
-            title: "Volume",
-            "aria-label": "Screen volume",
-            onInput: (e) => {
-              video.volume = Math.min(1, Math.max(0, Number(e.target.value)));
-            },
-          }),
-        );
-      }
-      video.title = "Click to focus";
-      video.addEventListener("click", () => this._toggleFocus(elNode));
-      // Ops can stop a remote participant's screenshare (never your own tile).
-      if (id !== this.selfId) {
-        const ops = this.screenOpActionsFor({ id, name });
-        if (ops) elNode.append(ops);
-      }
-      rec = { el: elNode, video, nameEl };
-      this.screens.set(id, rec);
-      this.el.append(elNode);
-      this._relayout();
-    } else {
-      rec.nameEl.textContent = `${name} (screen)`;
-    }
+    const rec = this._ensureScreenTile(id, name);
+    rec.nameEl.textContent = `${name} (screen)`;
     rec.video.srcObject = stream;
     rec.video.play().catch(() => {}); // nudge playback in case autoplay stalled
+  }
+
+  // Attach a REMOTE screen share's audio (its own "screen-audio" track) so it is
+  // audible, with a purely-local volume slider at the tile's top-right. Never called
+  // for self — you already hear your own shared audio directly.
+  _attachScreenAudio(id, name, stream) {
+    if (!stream) return;
+    const rec = this._ensureScreenTile(id, name);
+    if (!rec.audioEl) {
+      rec.audioEl = el("audio", { class: "sink", autoplay: true });
+      rec.el.append(rec.audioEl);
+      rec.volumeEl = el("input", {
+        type: "range",
+        class: "vol",
+        min: "0",
+        max: "1",
+        step: "0.05",
+        value: "1",
+        title: "Screen volume",
+        "aria-label": "Screen volume",
+        onInput: (e) => {
+          if (rec.audioEl) rec.audioEl.volume = Math.min(1, Math.max(0, Number(e.target.value)));
+        },
+      });
+      rec.el.append(rec.volumeEl);
+    }
+    rec.audioEl.srcObject = stream;
+    rec.audioEl.play().catch(() => {});
+  }
+
+  _detachScreenAudio(id) {
+    const rec = this.screens.get(id);
+    if (!rec || !rec.audioEl) return;
+    rec.audioEl.srcObject = null;
+    rec.audioEl.remove();
+    rec.audioEl = null;
+    if (rec.volumeEl) {
+      rec.volumeEl.remove();
+      rec.volumeEl = null;
+    }
   }
 
   _removeScreenTile(id) {
     const rec = this.screens.get(id);
     if (!rec) return;
     rec.video.srcObject = null;
+    if (rec.audioEl) rec.audioEl.srcObject = null;
     rec.el.remove();
     this.screens.delete(id);
     this._afterRemove(rec.el);
