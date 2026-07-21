@@ -98,9 +98,12 @@ export class Peer extends EventTarget {
   }
 
   // Publish a track mid-call (e.g. a screenshare). Adding the transceiver fires
-  // onnegotiationneeded, which renegotiates via _makeOffer; if that offer glares
-  // with a concurrent server offer, the polite inbound-offer path rolls it back and
-  // the still-pending transceiver re-fires negotiation-needed so it retries.
+  // onnegotiationneeded, which renegotiates via _makeOffer. If that offer glares
+  // with a concurrent server offer, the polite inbound-offer path rolls our offer
+  // back and answers the server's — then re-offers explicitly (see _onRemoteOffer),
+  // so the still-pending screen transceiver reliably reaches the SFU on the retry
+  // rather than depending on the browser to re-fire negotiation-needed after a
+  // rollback (which it does not do dependably).
   async publish(track, kind) {
     this._addLocal(track, kind);
   }
@@ -166,14 +169,19 @@ export class Peer extends EventTarget {
   // A server-initiated offer (renegotiation). Ask lib/negotiation whether this
   // collides with an offer of our own; the polite peer rolls its own offer back
   // first, then answers either way. Rolling back discards our local offer but keeps
-  // any transceiver we had added, so onnegotiationneeded re-fires afterwards and
-  // our deferred publish (screenshare) is re-offered once we return to stable.
+  // any transceiver we had added (notably a screenshare) — that transceiver is now
+  // on the PC but absent from the negotiated description, so the SFU cannot see it.
+  // We therefore re-offer EXPLICITLY once we are back to stable rather than relying
+  // on onnegotiationneeded to re-fire after the rollback: browsers do not re-fire it
+  // dependably in that case, and without the re-offer the screen track would sit
+  // unpublished and never reach the other participants.
   async _onRemoteOffer(msg) {
     const { action } = handleRemoteOffer({
       makingOffer: this.makingOffer,
       signalingState: this.pc.signalingState,
     });
-    if (action === "rollback-then-answer") {
+    const rolledBack = action === "rollback-then-answer";
+    if (rolledBack) {
       await this.pc.setLocalDescription({ type: "rollback" });
     }
     await this.pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
@@ -181,6 +189,13 @@ export class Peer extends EventTarget {
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
     this.signaling.send("answer", { sdp: this.pc.localDescription.sdp });
+    // Glare recovery: we just discarded our own in-flight offer. Re-run _makeOffer so
+    // any transceiver added while that offer was pending (screenshare) is offered
+    // again. _makeOffer is guarded (only offers from a stable state, never while one
+    // is already in flight) and createOffer reflects the live transceiver set, so this
+    // reliably re-publishes the pending track and is a harmless no-op when there is
+    // nothing new to negotiate.
+    if (rolledBack) this._makeOffer().catch((err) => this._emitError(err, "negotiation"));
   }
 
   // Our own offer was accepted; complete the exchange.

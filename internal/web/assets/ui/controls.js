@@ -297,6 +297,24 @@ export class Controls {
     );
   }
 
+  // Build a remote SCREEN tile's op-action group (a single "Stop screenshare"
+  // action), or null for non-ops. Reuses the existing mute-peer mechanism with
+  // kind:"screen"; the server nudges the sharer, whose onMuted("screen") handler
+  // stops the share and unpublishes it. Called by grid.js per remote screen tile.
+  screenOpActionsFor(participant) {
+    if (!this.isOp || !participant || !participant.id) return null;
+    const id = participant.id;
+    return el(
+      "div",
+      { class: "op-actions" },
+      el(
+        "button",
+        { type: "button", class: "op stopshare", title: "Stop screenshare", onClick: () => this._send("mute-peer", { id, kind: "screen" }) },
+        "stop share",
+      ),
+    );
+  }
+
   _toggleLock() {
     if (this.locked) {
       this._send("set-lock", {}); // empty password = unlock

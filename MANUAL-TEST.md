@@ -56,6 +56,13 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Active speaker highlights** — with 2+ remote participants, whoever is
       talking gets an accent-outlined tile; it follows the loudest voice and clears
       when the room goes quiet.
+- [ ] **Per-participant volume (local only)** — each **remote** tile has a small
+      volume slider (0–1, default full). Drag browser A's slider for B down to zero:
+      A stops hearing B while A still hears everyone else, and **C's** perception of
+      B is unchanged (it is purely local — no wire message, nothing broadcast). The
+      level sticks if B toggles their camera/mic and the mic track re-attaches. Your
+      own (self) tile has no slider. A remote screen-share tile shows a slider only
+      when that share carries audio (this app shares video-only, so normally none).
 - [ ] **Mute / camera controls work** — Mute toggles your mic (label flips
       Mute/Unmute, your tile's mic indicator turns off); Stop video toggles your
       camera (label + av indicator + your preview). Others stop hearing/seeing you.
@@ -89,6 +96,11 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Op mute nudges the target (re-enableable)** — an op clicks mute on a remote
       tile; that client's mic goes off (its Mute button flips to Unmute) but the
       user can click Unmute to speak again — a nudge, not a hard lock.
+- [ ] **Op stops a screenshare** — while browser B is sharing its screen, an op sees
+      a **stop share** button on B's screen tile (a non-op does not). The op clicks
+      it; B's share ends (B's Share-screen button flips back from "Stop share"), and
+      B's screen tile disappears for **everyone**. B can start a new share afterward.
+      Sending it when B is not sharing is a harmless no-op.
 - [ ] **Lock indicator reacts to lock state** — when an op locks the room, every
       client shows a "Room locked" indicator; unlocking clears it. The op's toggle
       label tracks the same state (it reflects the server broadcast, not the click).
@@ -145,3 +157,7 @@ real browser — it's the manual check the Pion limitation requires.
       screen-share tile appears for everyone AND B keeps receiving the newly
       forwarded tracks. No tile is permanently stuck black and no console error
       leaves the peer connection wedged in a non-`stable` signaling state.
+      This is the manual check for the screenshare re-offer fix: after B's polite
+      rollback, `_onRemoteOffer` re-runs `_makeOffer`, so the screen is re-offered and
+      **must** still reach the others rather than sitting silently unpublished on B's
+      PC. Verify B's screen shows for every remote even when the glare is forced.

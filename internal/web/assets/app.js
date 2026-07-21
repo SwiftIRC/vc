@@ -210,6 +210,7 @@ function renderInCall(msg) {
     selfRole: msg.role,
     media,
     opActionsFor: (p) => controls.opActionsFor(p),
+    screenOpActionsFor: (p) => controls.screenOpActionsFor(p),
   });
   controls.attachGrid(grid); // toggles refresh the self tile's indicators
   chat = new Chat({ signaling });

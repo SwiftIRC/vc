@@ -312,6 +312,23 @@ video.mirror {
   text-decoration: line-through;
 }
 
+/* Per-participant local volume slider (remote base tiles, and a screen tile that
+   carries audio). Purely local: it sets the tile's playback .volume, no wire
+   traffic. Compact and pushed to the meta row's right edge. */
+.tile .meta .vol {
+  flex: none;
+  width: 72px;
+  margin-left: 0.4rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* On a screen tile the name is the only other meta item, so let it take the slack
+   and keep the slider hard-right (base tiles already right-align via .pills). */
+.tile.screen .meta .name {
+  margin-right: auto;
+}
+
 .op-actions {
   position: absolute;
   top: 0.4rem;

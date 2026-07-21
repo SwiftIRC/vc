@@ -44,14 +44,17 @@ const LEVEL_INTERVAL_MS = 150;
 const ACTIVE_THRESHOLD = 0.03;
 
 export class Grid {
-  // { selfId, selfName, selfRole, media, opActionsFor }. opActionsFor(participant)
-  // returns a per-tile op-controls node (kick/mute/ban) or null for non-ops; it is
-  // owned by controls.js and only placed here.
-  constructor({ selfId, selfName, selfRole, media, opActionsFor } = {}) {
+  // { selfId, selfName, selfRole, media, opActionsFor, screenOpActionsFor }.
+  // opActionsFor(participant) returns a base-tile op-controls node (kick/mute/ban)
+  // or null for non-ops; screenOpActionsFor(participant) returns a screen-tile
+  // op-controls node ("stop screenshare") or null. Both are owned by controls.js
+  // and only placed here.
+  constructor({ selfId, selfName, selfRole, media, opActionsFor, screenOpActionsFor } = {}) {
     this.selfId = selfId;
     this.selfName = selfName || "You";
     this.media = media || null;
     this.opActionsFor = typeof opActionsFor === "function" ? opActionsFor : () => null;
+    this.screenOpActionsFor = typeof screenOpActionsFor === "function" ? screenOpActionsFor : () => null;
 
     this.el = el("div", { class: "grid" });
 
@@ -148,6 +151,17 @@ export class Grid {
     }
   }
 
+  // Set a remote participant's local playback volume (0..1). Purely client-side:
+  // remembers the level on the tile (so a later mic (re)attach honors it) and
+  // applies it to the currently-attached <audio> sink if any.
+  _setVolume(id, value) {
+    const v = Math.min(1, Math.max(0, Number.isFinite(value) ? value : 1));
+    const tile = this.tiles.get(id);
+    if (tile) tile.volume = v;
+    const a = this.audio.get(id);
+    if (a && a.audioEl) a.audioEl.volume = v;
+  }
+
   // --- self tile ---
 
   // Re-read the local media's live enabled state onto the self tile's indicators.
@@ -191,17 +205,38 @@ export class Grid {
     const micPill = el("span", { class: "pill mic", text: "mic" });
     const avPill = el("span", { class: "pill av", text: "cam" });
 
+    // Per-participant volume (remote tiles only): a purely LOCAL slider that sets
+    // this participant's playback <audio>.volume. No wire message — everyone
+    // controls the level for themselves. Default 1.0; reapplied whenever the mic
+    // stream is (re)attached (see _attachAudio). Numeric attributes only, so it is
+    // injection-safe.
+    let volumeEl = null;
+    if (!self) {
+      volumeEl = el("input", {
+        type: "range",
+        class: "vol",
+        min: "0",
+        max: "1",
+        step: "0.05",
+        value: "1",
+        title: "Volume",
+        "aria-label": "Volume",
+        onInput: (e) => this._setVolume(id, Number(e.target.value)),
+      });
+    }
+
     const meta = el(
       "div",
       { class: "meta" },
       nameEl,
       badgeEl,
       el("span", { class: "pills" }, micPill, avPill),
+      volumeEl,
     );
 
     const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, meta);
 
-    const tile = { el: tileEl, cameraVideo, nameEl, badgeEl, micPill, avPill, name, hasCamera: false, self };
+    const tile = { el: tileEl, cameraVideo, nameEl, badgeEl, micPill, avPill, volumeEl, volume: 1, name, hasCamera: false, self };
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);
@@ -249,9 +284,37 @@ export class Grid {
     let rec = this.screens.get(id);
     if (!rec) {
       const video = el("video", { class: "cam", autoplay: true, playsinline: true });
-      video.muted = true; // the sharer's audio (if any) is the mic tile's job
+      // A screen share normally carries no audio (the sharer's voice is the mic
+      // tile's job), so the video is muted. If this share DOES carry audio, unmute
+      // it and give it its own local volume slider (same purely-local semantics as
+      // the base tiles).
+      const hasAudio = stream.getAudioTracks().length > 0;
+      video.muted = !hasAudio;
       const nameEl = el("span", { class: "name", text: `${name} (screen)` });
-      const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, nameEl));
+      const metaKids = [nameEl];
+      if (hasAudio) {
+        metaKids.push(
+          el("input", {
+            type: "range",
+            class: "vol",
+            min: "0",
+            max: "1",
+            step: "0.05",
+            value: "1",
+            title: "Volume",
+            "aria-label": "Screen volume",
+            onInput: (e) => {
+              video.volume = Math.min(1, Math.max(0, Number(e.target.value)));
+            },
+          }),
+        );
+      }
+      const elNode = el("div", { class: "tile screen" }, video, el("div", { class: "meta" }, ...metaKids));
+      // Ops can stop a remote participant's screenshare (never your own tile).
+      if (id !== this.selfId) {
+        const ops = this.screenOpActionsFor({ id, name });
+        if (ops) elNode.append(ops);
+      }
       rec = { el: elNode, video, nameEl };
       this.screens.set(id, rec);
       this.el.append(elNode);
@@ -289,6 +352,7 @@ export class Grid {
 
     const audioEl = el("audio", { class: "sink", autoplay: true });
     audioEl.srcObject = stream; // playback: hearing the remote peer
+    audioEl.volume = typeof tile.volume === "number" ? tile.volume : 1; // honor this tile's slider
     tile.el.append(audioEl);
 
     let source = null;
