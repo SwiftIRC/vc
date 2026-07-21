@@ -28,6 +28,43 @@
 #include "core/token.h"      // wvc::sign
 #include "core/provision.h"  // wvc::buildProvisionBody, wvc::postProvision
 
+namespace
+{
+	// Parse ON/OFF (case-insensitive) into `out`. Returns false on anything else.
+	bool ParseOnOff(const Anope::string &value, bool &out)
+	{
+		if (value.equals_ci("ON"))
+		{
+			out = true;
+			return true;
+		}
+		if (value.equals_ci("OFF"))
+		{
+			out = false;
+			return true;
+		}
+		return false;
+	}
+}
+
+class WebRTCChat;
+
+// The `VC` command: `/msg ChanServ VC #chan [SET {ENABLED|IDENTIFIED|ROOM} value]`
+// and, when wired as a fantasy command in anope.conf, `!vc` / `!chat` in-channel.
+// Method bodies are defined out-of-line below, after WebRTCChat is complete, so the
+// command can call the module's public API.
+class CommandVC final
+	: public Command
+{
+private:
+	WebRTCChat *module;
+
+public:
+	CommandVC(Module *creator, WebRTCChat *mod);
+	void Execute(CommandSource &source, const std::vector<Anope::string> &params) override;
+	bool OnHelp(CommandSource &source, const Anope::string &subcommand) override;
+};
+
 class WebRTCChat final
 	: public Module
 {
@@ -49,6 +86,11 @@ private:
 	Anope::string linkorigin;  // public link origin, e.g. https://vc.swiftirc.net
 	time_t ttl;                // token lifetime (seconds)
 
+	// The VC command service. Registering it here creates the "chanserv/vc"
+	// Command service; anope.conf wires it to ChanServ and to the !vc/!chat
+	// fantasy triggers (see anope.conf.example).
+	CommandVC commandvc;
+
 public:
 	// VERIFY(anope-2.1): Module(const Anope::string&, const Anope::string&, ModType)
 	// 3-arg ctor with the module type passed positionally (THIRD for third-party) —
@@ -59,6 +101,7 @@ public:
 		, identifiedonly(this, "webrtc_identifiedonly")
 		, room(this, "webrtc_room")
 		, ttl(600)
+		, commandvc(this, this)
 	{
 		// VERIFY(anope-2.1): SetAuthor/SetVersion are Module methods —
 		// include/modules.h:275,280.
@@ -215,5 +258,153 @@ public:
 		return false;
 	}
 };
+
+// VERIFY(anope-2.1): Command(Module*, sname, min_params, max_params); SetDesc,
+// SetSyntax, AllowUnregistered are Command methods — include/commands.h:133,139,142,145
+// and modules/fantasy.cpp:21-25.
+CommandVC::CommandVC(Module *creator, WebRTCChat *mod)
+	: Command(creator, "chanserv/vc", 1, 4)
+	, module(mod)
+{
+	this->SetDesc(_("Get or configure the video chat room for a channel"));
+	this->SetSyntax(_("\037#channel\037 [\002SET\002 {\002ENABLED\002 | \002IDENTIFIED\002 | \002ROOM\002} \037value\037]"));
+	// Guests (not identified to NickServ) may still run !vc / VC to get the public
+	// link; without this the fantasy dispatcher drops unidentified callers
+	// (modules/fantasy.cpp:188). Settings changes are separately gated on channel
+	// access, which requires an account anyway.
+	// VERIFY(anope-2.1): AllowUnregistered(bool) semantics — include/commands.h:145.
+	this->AllowUnregistered(true);
+}
+
+void CommandVC::Execute(CommandSource &source, const std::vector<Anope::string> &params)
+{
+	// params[0] is always the channel: supplied directly for /msg ChanServ VC #chan,
+	// or prepended by the fantasy dispatcher when prepend_channel is set for !vc/!chat.
+	// VERIFY(anope-2.1): ChannelInfo::Find + CHAN_X_NOT_REGISTERED language string —
+	// include/regchannel.h:192 and modules/fantasy.cpp:29,34.
+	ChannelInfo *ci = ChannelInfo::Find(params[0]);
+	if (!ci)
+	{
+		source.Reply(CHAN_X_NOT_REGISTERED, params[0].c_str());
+		return;
+	}
+
+	// ---- VC #chan SET <opt> <value> : op/founder-gated settings ----------
+	if (params.size() >= 2 && params[1].equals_ci("SET"))
+	{
+		// VERIFY(anope-2.1): AccessGroup AccessFor(ci).HasPriv("SET") for op/founder,
+		// source.HasPriv("chanserv/administration") for services opers, ACCESS_DENIED
+		// language string — include/access.h:151,171, include/commands.h:86,99 and
+		// modules/fantasy.cpp:38-41. "SET" is the standard ChanServ SET privilege
+		// (modules/chanserv/cs_set.cpp).
+		if (!source.AccessFor(ci).HasPriv("SET") && !source.HasPriv("chanserv/administration"))
+		{
+			source.Reply(ACCESS_DENIED);
+			return;
+		}
+		// VERIFY(anope-2.1): Anope::ReadOnly global + READ_ONLY_MODE language string —
+		// include/anope.h:390 and modules/fantasy.cpp:44-46.
+		if (Anope::ReadOnly)
+		{
+			source.Reply(READ_ONLY_MODE);
+			return;
+		}
+		if (params.size() < 4)
+		{
+			this->OnSyntaxError(source, "SET");
+			return;
+		}
+
+		const Anope::string &opt = params[2];
+		const Anope::string &value = params[3];
+		bool is_override = !source.AccessFor(ci).HasPriv("SET");
+
+		if (opt.equals_ci("ENABLED"))
+		{
+			bool on;
+			if (!ParseOnOff(value, on))
+			{
+				this->OnSyntaxError(source, "SET");
+				return;
+			}
+			module->SetEnabled(ci, on);
+			// VERIFY(anope-2.1): Log(level, source, command, ci) << msg streaming API +
+			// LOG_COMMAND/LOG_OVERRIDE — include/logger.h and modules/fantasy.cpp:53.
+			Log(is_override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci)
+				<< "to " << (on ? "enable" : "disable") << " video chat";
+			source.Reply(on
+				? _("Video chat is now \002enabled\002 on %s.")
+				: _("Video chat is now \002disabled\002 on %s."),
+				ci->name.c_str());
+		}
+		else if (opt.equals_ci("IDENTIFIED"))
+		{
+			bool on;
+			if (!ParseOnOff(value, on))
+			{
+				this->OnSyntaxError(source, "SET");
+				return;
+			}
+			module->SetIdentifiedOnly(ci, on);
+			Log(is_override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci)
+				<< "to set identified-only to " << (on ? "on" : "off");
+			source.Reply(on
+				? _("Video chat on %s now requires users to be identified to NickServ.")
+				: _("Video chat on %s now allows guests."),
+				ci->name.c_str());
+		}
+		else if (opt.equals_ci("ROOM"))
+		{
+			Anope::string slug = value.lower();
+			if (!WebRTCChat::ValidSlug(slug))
+			{
+				source.Reply(_("\002%s\002 is not a valid room name. Use lowercase letters, digits and hyphens, starting with a letter or digit."),
+					value.c_str());
+				return;
+			}
+			if (module->SlugTaken(slug, ci->name))
+			{
+				source.Reply(_("That room name is taken by another channel."));
+				return;
+			}
+			module->SetRoom(ci, slug);
+			Log(is_override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci)
+				<< "to set room to " << slug;
+			source.Reply(_("Video chat room for %s is now \002%s\002 (%s/%s)."),
+				ci->name.c_str(), slug.c_str(), module->LinkOrigin().c_str(), slug.c_str());
+		}
+		else
+		{
+			this->OnSyntaxError(source, "SET");
+		}
+		return;
+	}
+
+	// ---- VC #chan (no SET) : show current settings -----------------------
+	// (Task 9 repoints this branch to the join/link+token+provision path.)
+	Anope::string slug = module->RoomFor(ci);
+	source.Reply(_("Video chat on %s: %s, %s, room \002%s\002 (%s/%s)."),
+		ci->name.c_str(),
+		module->IsEnabled(ci) ? _("enabled") : _("disabled"),
+		module->IsIdentifiedOnly(ci) ? _("identified users only") : _("guests allowed"),
+		slug.c_str(), module->LinkOrigin().c_str(), slug.c_str());
+}
+
+bool CommandVC::OnHelp(CommandSource &source, const Anope::string &)
+{
+	this->SendSyntax(source);
+	source.Reply(" ");
+	source.Reply(_(
+		"Hands out the video chat room link for a channel and, for users "
+		"identified to NickServ, a personal link that joins with their channel "
+		"role. Used in-channel as \002!vc\002 or \002!chat\002, or as "
+		"\002/msg ChanServ VC \037#channel\037\002.\n"
+		" \n"
+		"Channel operators can configure the room:\n"
+		"\002SET\002 \037#channel\037 \002ENABLED\002 {\002ON\002 | \002OFF\002}      Turn video chat on or off.\n"
+		"\002SET\002 \037#channel\037 \002IDENTIFIED\002 {\002ON\002 | \002OFF\002}   Restrict joining to identified users.\n"
+		"\002SET\002 \037#channel\037 \002ROOM\002 \037name\037           Set the room slug (lowercase, a-z 0-9 -)."));
+	return true;
+}
 
 MODULE_INIT(WebRTCChat)
