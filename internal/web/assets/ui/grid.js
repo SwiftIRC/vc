@@ -122,7 +122,7 @@ export class Grid {
   _relayout() {
     if (!this.el) return;
     const tiles = [...this.el.querySelectorAll(":scope > .tile")];
-    for (const t of tiles) t.classList.remove("span-full"); // recomputed below
+    for (const t of tiles) t.classList.remove("pos3-a", "pos3-b", "pos3-c"); // recomputed below
     if (this._focusedEl) {
       this._layoutFocus(tiles);
       return;
@@ -132,11 +132,15 @@ export class Grid {
     const w = this.el.clientWidth;
     const h = this.el.clientHeight;
     if (!w || !h) return; // not mounted/sized yet; the ResizeObserver will call again
-    // 3-up special case: two tiles on top, the third full-width across the bottom.
+    // 3-up special case: two tiles on top, the third centered on the bottom — all
+    // the same (half) width. A 4-column grid lets the top two span cols 1-2 and 3-4
+    // and the third span the middle cols 2-3 (centered) on row 2.
     if (n === 3) {
-      this.el.style.gridTemplateColumns = "repeat(2, 1fr)";
+      this.el.style.gridTemplateColumns = "repeat(4, 1fr)";
       this.el.style.gridTemplateRows = "repeat(2, 1fr)";
-      tiles[2].classList.add("span-full");
+      tiles[0].classList.add("pos3-a");
+      tiles[1].classList.add("pos3-b");
+      tiles[2].classList.add("pos3-c");
       return;
     }
     let bestCols = 1;

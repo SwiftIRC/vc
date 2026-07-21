@@ -304,9 +304,19 @@ body.in-call #app {
   display: none; /* strip collapsed — the focused tile goes full-width */
 }
 
-/* 3-up: two tiles on top, the third full-width across the bottom row. */
-.tile.span-full {
-  grid-column: 1 / -1;
+/* 3-up: two tiles on top, the third centered on the bottom — all the same (half)
+   width, via a 4-column grid (see Grid._relayout). */
+.tile.pos3-a {
+  grid-column: 1 / 3;
+  grid-row: 1;
+}
+.tile.pos3-b {
+  grid-column: 3 / 5;
+  grid-row: 1;
+}
+.tile.pos3-c {
+  grid-column: 2 / 4;
+  grid-row: 2;
 }
 
 /* Handle to hide/show the focus-mode strip; pinned at the strip's inner edge. */
