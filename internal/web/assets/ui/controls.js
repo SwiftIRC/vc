@@ -220,6 +220,14 @@ export class Controls {
   // the button and show "Loading…" until Media settles. Media re-reads its own
   // authoritative state (noiseSuppressionOn), so a load failure (raw mic left in
   // place) simply lands us back on OFF — the user is never stuck.
+  // Turn on noise suppression by default at call start (opt-out via the button).
+  // Called after peer.start so the mic sender exists for the processed-track swap.
+  enableDefaultNoiseSuppression() {
+    if (this.media && this.media.micTrack && !this.nsOn && !this.nsBusy) {
+      this._toggleNoiseSuppression();
+    }
+  }
+
   async _toggleNoiseSuppression() {
     if (!this.media || this.nsBusy) return;
     const target = !this.nsOn;

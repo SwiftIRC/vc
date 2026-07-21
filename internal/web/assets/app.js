@@ -274,6 +274,7 @@ function renderInCall(msg) {
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });
   if (media && media.micTrack) localTracks.push({ track: media.micTrack, kind: "mic" });
   peer.start(localTracks).catch((err) => console.error("peer start failed", err));
+  controls.enableDefaultNoiseSuppression(); // denoise on by default; opt out via the control
 }
 
 // Toggle the in-call "Reconnecting…" notice (server-restarting, or any reconnect
