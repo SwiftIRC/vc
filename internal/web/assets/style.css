@@ -683,6 +683,37 @@ video.mirror {
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* Devices (gear) popover: same anchoring as the share menu, but wide enough to hold
+   two labeled <select>s for switching camera/mic mid-call. */
+.settings-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.settings-menu {
+  position: absolute;
+  bottom: calc(100% + 0.3rem);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  width: 16rem;
+  max-width: 80vw;
+  background: rgba(20, 20, 20, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 10;
+}
+/* Keep a long device name from forcing the popover wider than its column. */
+.settings-menu .field {
+  min-width: 0;
+}
+.settings-menu select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* --- chat panel + moderation feed --- */
 
 /* Chat is an overlay panel on the right edge of the stage. Hidden by default

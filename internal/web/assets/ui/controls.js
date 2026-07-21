@@ -95,10 +95,13 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.addEventListener(ev, this._onActivity, { passive: true });
     }
-    // Close the Share menu on any pointer-down outside it.
+    // Close the Share / Devices menus on any pointer-down outside them.
     this._onDocPointer = (e) => {
       if (this.shareMenu && !this.shareMenu.hidden && this.shareWrap && !this.shareWrap.contains(e.target)) {
         this.shareMenu.hidden = true;
+      }
+      if (this.settingsMenu && !this.settingsMenu.hidden && this.settingsWrap && !this.settingsWrap.contains(e.target)) {
+        this.settingsMenu.hidden = true;
       }
     };
     document.addEventListener("pointerdown", this._onDocPointer);
@@ -183,6 +186,25 @@ export class Controls {
     // enables it), and disabled while the large worklet loads on first enable.
     this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._onNsToggle() });
 
+    // Devices (gear): switch camera/mic on the fly, mid-call. The menu is populated
+    // fresh each time it opens (device labels/ids appear once permission is granted,
+    // and hot-plugged devices show up), and a change hot-swaps the device via
+    // replaceTrack — no renegotiation, and (for the mic) the NS graph is rebuilt.
+    this.cameraSelect = el("select", { class: "device", onChange: () => this._switchCameraDevice() });
+    this.micSelect = el("select", { class: "device", onChange: () => this._switchMicDevice() });
+    this.settingsBtn = el(
+      "button",
+      { type: "button", class: "ctl settings icon", title: "Input devices", "aria-label": "Input devices", onClick: () => this._toggleSettings() },
+      el("span", { class: "glyph", text: "⚙" }),
+    );
+    this.settingsMenu = el(
+      "div",
+      { class: "settings-menu", hidden: true },
+      el("label", { class: "field" }, el("span", { text: "Camera" }), this.cameraSelect),
+      el("label", { class: "field" }, el("span", { text: "Microphone" }), this.micSelect),
+    );
+    this.settingsWrap = el("div", { class: "settings-wrap" }, this.settingsBtn, this.settingsMenu);
+
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
     this.chatBadge = el("span", { class: "chat-badge", hidden: true });
@@ -221,7 +243,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.muteBtn, this.cameraBtn, this.shareWrap, this.nsBtn, this.countdownBtn, this.chatBtn];
+    const children = [this.muteBtn, this.cameraBtn, this.shareWrap, this.nsBtn, this.settingsWrap, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -290,6 +312,68 @@ export class Controls {
     if (!this.media) return;
     if (kind === "audio") this.media.startScreenAudioOnly().catch(() => {});
     else this.media.startScreen().catch(() => {});
+  }
+
+  // Toggle the Devices menu; populate it from a fresh enumerate each time it opens so
+  // late-granted labels and hot-plugged devices appear.
+  async _toggleSettings() {
+    const opening = this.settingsMenu.hidden;
+    this.settingsMenu.hidden = !opening;
+    if (opening) await this._populateDevices();
+  }
+
+  async _populateDevices() {
+    if (!this.media) return;
+    let devices;
+    try {
+      devices = await this.media.enumerate();
+    } catch {
+      return;
+    }
+    this._fillDeviceSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
+    this._fillDeviceSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
+  }
+
+  _fillDeviceSelect(select, list, activeTrack, label) {
+    const activeId = activeTrack ? activeTrack.getSettings().deviceId : "";
+    select.replaceChildren();
+    if (list.length === 0) {
+      select.append(el("option", { value: "", text: `No ${label.toLowerCase()} found` }));
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    list.forEach((d, i) => {
+      const opt = el("option", { value: d.deviceId, text: d.label || `${label} ${i + 1}` });
+      if (d.deviceId && d.deviceId === activeId) opt.selected = true;
+      select.append(opt);
+    });
+  }
+
+  // Hot-swap the camera mid-call. useDevices acquires the chosen device (turning the
+  // camera on if it was off) and fires "camera-track", which app.js forwards to the
+  // peer via replaceTrack — remotes see the new camera without renegotiation.
+  async _switchCameraDevice() {
+    if (!this.media || !this.cameraSelect.value) return;
+    try {
+      await this.media.useDevices({ cameraId: this.cameraSelect.value });
+    } catch {
+      /* media.js emits its own error event */
+    }
+    this._setCameraButton(!!this.media.cameraTrack);
+    if (this.grid) this.grid.refreshSelf();
+  }
+
+  // Hot-swap the mic mid-call. useDevices preserves the mute state, rebuilds the NS
+  // graph if noise suppression is on, and fires "mic-track" for the peer to replace.
+  async _switchMicDevice() {
+    if (!this.media || !this.micSelect.value) return;
+    try {
+      await this.media.useDevices({ micId: this.micSelect.value });
+    } catch {
+      /* media.js emits its own error event */
+    }
+    if (this.grid) this.grid.refreshSelf();
   }
 
   // Toggle mic noise suppression. First enable loads the ~2MB worklet, so disable

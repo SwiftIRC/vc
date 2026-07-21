@@ -104,10 +104,14 @@ export class Media extends EventTarget {
   // call this after start() to get named entries.
   async enumerate() {
     const devices = await navigator.mediaDevices.enumerateDevices();
-    return {
-      cameras: devices.filter((d) => d.kind === "videoinput"),
-      mics: devices.filter((d) => d.kind === "audioinput"),
-    };
+    const cameras = devices.filter((d) => d.kind === "videoinput");
+    const mics = devices.filter((d) => d.kind === "audioinput");
+    // A camera EXISTS even if the default one failed to open (busy/in use by another
+    // app). Mark it available so the camera toggle stays enabled — otherwise a failed
+    // default would disable the toggle and leave the user unable to pick a working
+    // camera from the list. Only "no camera hardware at all" leaves this false.
+    if (cameras.length > 0) this.cameraAvailable = true;
+    return { cameras, mics };
   }
 
   // Switch to the given camera and/or mic. Only the requested kinds are
@@ -116,11 +120,43 @@ export class Media extends EventTarget {
   // track inherits the old one's mute (enabled) state. Resolves with the stream.
   async useDevices({ cameraId, micId } = {}) {
     const constraints = {};
-    if (cameraId != null) constraints.video = { deviceId: { exact: cameraId } };
-    if (micId != null) constraints.audio = { deviceId: { exact: micId } };
+    // Truthy, not != null: an empty deviceId (a device with no label/id because
+    // permission was never granted) would become {exact:""} and fail the whole call.
+    if (cameraId) constraints.video = { deviceId: { exact: cameraId } };
+    if (micId) constraints.audio = { deviceId: { exact: micId } };
     if (!constraints.video && !constraints.audio) return this.stream;
+    // While NS is on the mute state lives on the PROCESSED track (micTrack), not the
+    // raw device track; remember it so a mic switch keeps the same mute state.
+    const rebuildNs = !!micId && this._nsOn;
+    const wasMuted = rebuildNs && this._processedTrack ? !this._processedTrack.enabled : false;
     const fresh = await this._getUserMedia(constraints);
+    // _adopt swaps the raw device tracks and emits camera-track; it emits mic-track too
+    // UNLESS NS is on, in which case _swapTrack stays silent and we publish the freshly
+    // processed track below (the raw device track must never be the published one).
     this._adopt(fresh);
+    if (rebuildNs) {
+      const raw = (this.stream && this.stream.getAudioTracks()[0]) || null;
+      if (raw) {
+        try {
+          // The NS graph was fed by the OLD (now stopped) raw mic; rebuild it on the
+          // new device and publish the new processed track.
+          const processed = await this._buildNoiseGraph(raw);
+          processed.enabled = !wasMuted; // carry the mute state onto the new processed track
+          raw.enabled = true; // raw must always feed the graph
+          this._processedTrack = processed;
+          this.dispatchEvent(new CustomEvent("mic-track", { detail: { track: processed } }));
+        } catch (error) {
+          // Rebuild failed: fall back to the raw mic so the user is never left with a
+          // dead mic, and drop NS state to match reality.
+          this._teardownNoiseGraph();
+          this._nsOn = false;
+          this._processedTrack = null;
+          raw.enabled = !wasMuted;
+          this.dispatchEvent(new CustomEvent("mic-track", { detail: { track: raw } }));
+          this._emitError(error, "noise-suppression");
+        }
+      }
+    }
     return this.stream;
   }
 
@@ -401,6 +437,11 @@ export class Media extends EventTarget {
       this.cameraAvailable = true;
       this._cameraId = next.getSettings().deviceId || this._cameraId; // remember for re-enable
     }
+    // While NS is on the published audio is the PROCESSED track; a raw-device swap
+    // (mic change) must not publish the raw track. useDevices rebuilds the graph and
+    // emits the processed mic-track instead. (NS is off at start()/enableCamera time,
+    // so this only suppresses the emit during an in-call mic switch.)
+    if (!isVideo && this._nsOn) return;
     const event = isVideo ? "camera-track" : "mic-track";
     this.dispatchEvent(new CustomEvent(event, { detail: { track: next } }));
   }

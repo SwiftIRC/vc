@@ -267,18 +267,21 @@ export class Prejoin {
   }
 
   async _switchCamera() {
-    // If the camera is currently OFF (device released), don't re-acquire it just to
-    // change the device — the chosen camera is honored next time it is enabled.
-    if (!this.media.cameraTrack) return;
+    if (!this.cameraSelect.value) return; // no real device id (no permission) — nothing to switch to
+    // useDevices acquires the chosen camera even when the camera is currently OFF, so
+    // picking a device from the list turns it on with that camera. This is how you
+    // recover when the default camera can't be opened (busy/in use): select a working
+    // one. Selecting a device is a deliberate "use this camera" action.
     try {
       await this.media.useDevices({ cameraId: this.cameraSelect.value });
       this._syncMediaState(); // reflect the switch on the button + overlay
     } catch {
-      /* keep the previous device; media.js emits its own error event */
+      this._syncMediaState(); // media.js emits its own error; reflect whatever state we ended in
     }
   }
 
   async _switchMic() {
+    if (!this.micSelect.value) return; // no real device id (no permission) — nothing to switch to
     try {
       await this.media.useDevices({ micId: this.micSelect.value });
       this._syncMediaState(); // the new mic inherits the old mute state; reflect it
