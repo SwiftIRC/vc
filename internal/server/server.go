@@ -187,10 +187,13 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 	switch {
 	case join.Invite != "":
 		// Short invite link (#i=<id>): the identity was registered server-side, so
-		// look it up rather than verify a token. Missing or expired reads the same.
-		cl, ok := h.invites.get(join.Invite)
+		// look it up rather than verify a token. claim binds the id to this browser
+		// session on first use (single-use) — a reconnect/refresh from the same session
+		// still resolves, but a second party presenting the same link is refused, and
+		// reads the same as missing/expired.
+		cl, ok := h.invites.claim(join.Invite, join.Session)
 		if !ok {
-			reject(c, signal.Error{Code: "token-invalid", Message: "invite link invalid or expired; run !vc again"})
+			reject(c, signal.Error{Code: "token-invalid", Message: "invite link already used, invalid, or expired; run !vc again"})
 			return
 		}
 		claims = &cl

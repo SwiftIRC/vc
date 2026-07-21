@@ -15,6 +15,7 @@ type Join struct {
 	Password string `json:"password,omitempty"` // for locked rooms
 	Token    string `json:"token,omitempty"`    // identity token from !vc (long link, #t=)
 	Invite   string `json:"invite,omitempty"`   // short invite id resolved server-side (#i=)
+	Session  string `json:"session,omitempty"`  // opaque per-tab nonce; binds a #i= invite to one session (single-use)
 	// Mic/Camera is the joiner's initial self-reported media state, so existing
 	// peers render the correct mute indicators the instant this peer appears —
 	// with no "briefly un-muted" flash while a separate media-state frame

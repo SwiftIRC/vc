@@ -38,7 +38,7 @@ let slug = "";
 let token = ""; // long-link identity token (#t=); still accepted for old links
 let invite = ""; // short invite id (#i=), resolved server-side — the current link form
 let selfName = ""; // display name chosen in the lobby; labels the self tile
-let pendingJoin = null; // {name, password, token, invite} re-sent on every socket (re)open
+let pendingJoin = null; // {name, password, token, invite, session} re-sent on every socket (re)open
 let media = null;
 let signaling = null;
 let peer = null;
@@ -133,8 +133,9 @@ function renderPrejoin() {
 // rejected attempt) is stopped first so its close can't trigger a reconnect.
 function onJoin({ name, password }) {
   selfName = name || "";
-  // token and invite are page-fixed; whichever is present is the identity.
-  pendingJoin = { name, password, token, invite };
+  // token and invite are page-fixed; whichever is present is the identity. session
+  // binds a #i= invite to this tab so it's single-use (see sessionNonce).
+  pendingJoin = { name, password, token, invite, session: sessionNonce() };
   if (signaling) signaling.stop();
   signaling = new Signaling(`/ws/${slug}`);
   signaling.on("joined", onJoined);
@@ -147,6 +148,25 @@ function onJoin({ name, password }) {
   signaling.on("server-restarting", () => showReconnecting(true));
   rejoinOnReopen(signaling);
   signaling.connect(); // rejoinOnReopen's open hook sends the first join
+}
+
+// A per-tab opaque nonce that binds a used #i= invite to THIS browser session, so the
+// link is single-use for everyone else while our own reconnects keep working. Stored in
+// sessionStorage: it survives a page refresh in this tab, but a different tab gets a
+// different nonce and is correctly locked out of an already-used invite. Falls back to
+// "" (no binding — the server then leaves the invite reusable) if storage/crypto is
+// unavailable; WebRTC's secure-context requirement makes that vanishingly rare.
+function sessionNonce() {
+  try {
+    let n = sessionStorage.getItem("vc-session");
+    if (!n) {
+      n = crypto.randomUUID();
+      sessionStorage.setItem("vc-session", n);
+    }
+    return n;
+  } catch {
+    return "";
+  }
 }
 
 // Re-send the join frame on every socket (re)open. signaling.js intentionally

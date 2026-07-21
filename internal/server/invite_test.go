@@ -72,6 +72,61 @@ func TestInviteRegisterAndPeek(t *testing.T) {
 	}
 }
 
+func TestInviteClaimSingleUse(t *testing.T) {
+	s := newInviteStore(func() time.Time { return time.Unix(1000, 0) })
+	s.put("id", token.Claims{Nick: "alice", Role: "op", ExpiresAt: 2000})
+
+	// Peek (get) must not bind — the lobby reads the name before anyone joins.
+	if _, ok := s.get("id"); !ok {
+		t.Fatal("peek before claim failed")
+	}
+
+	// First join binds the invite to session A.
+	if cl, ok := s.claim("id", "sessionA"); !ok || cl.Nick != "alice" {
+		t.Fatalf("first claim = %+v ok=%v, want alice/true", cl, ok)
+	}
+	// Same session reconnecting/refreshing keeps working.
+	if _, ok := s.claim("id", "sessionA"); !ok {
+		t.Error("same-session reclaim rejected — reconnect would break")
+	}
+	// A different session (someone else with the link) is refused: single-use.
+	if _, ok := s.claim("id", "sessionB"); ok {
+		t.Error("different session claimed an already-used invite")
+	}
+	// An empty session after binding is also refused (can't bypass the binding).
+	if _, ok := s.claim("id", ""); ok {
+		t.Error("empty session claimed a bound invite")
+	}
+}
+
+func TestInviteClaimNoSessionStaysReusable(t *testing.T) {
+	s := newInviteStore(func() time.Time { return time.Unix(1000, 0) })
+	s.put("id", token.Claims{Nick: "bob", ExpiresAt: 2000})
+
+	// A client that sends no session can't bind; the invite stays usable (no worse
+	// than pre-single-use), and a later real session can still bind it.
+	if _, ok := s.claim("id", ""); !ok {
+		t.Fatal("no-session join rejected")
+	}
+	if _, ok := s.claim("id", ""); !ok {
+		t.Error("second no-session join rejected — should stay reusable when unbound")
+	}
+	if _, ok := s.claim("id", "sessionA"); !ok {
+		t.Error("real session could not bind an unbound invite")
+	}
+	if _, ok := s.claim("id", "sessionB"); ok {
+		t.Error("invite reusable after a real session bound it")
+	}
+}
+
+func TestInviteClaimExpired(t *testing.T) {
+	s := newInviteStore(func() time.Time { return time.Unix(3000, 0) })
+	s.put("id", token.Claims{Nick: "c", ExpiresAt: 2000}) // already expired at now=3000
+	if _, ok := s.claim("id", "sessionA"); ok {
+		t.Error("expired invite claimed")
+	}
+}
+
 func TestInviteStoreExpiry(t *testing.T) {
 	s := newInviteStore(func() time.Time { return time.Unix(1000, 0) })
 	s.put("id", token.Claims{Nick: "a", ExpiresAt: 1500})

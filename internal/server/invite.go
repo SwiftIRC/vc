@@ -25,6 +25,11 @@ type inviteStore struct {
 type inviteEntry struct {
 	claims  token.Claims
 	expires time.Time
+	// claimedBy binds the invite to the first browser session that JOINS with it
+	// (an opaque client nonce), making the link single-use: that session can
+	// reconnect/refresh freely, but anyone else presenting the same id is refused.
+	// Empty until the first bindable join. See claim.
+	claimedBy string
 }
 
 func newInviteStore(now func() time.Time) *inviteStore {
@@ -40,8 +45,9 @@ func (s *inviteStore) put(id string, claims token.Claims) {
 	s.m[id] = inviteEntry{claims: claims, expires: time.Unix(claims.ExpiresAt, 0)}
 }
 
-// get returns the claims for a live id. An absent OR expired id returns ok=false; an
-// expired one is dropped in passing.
+// get returns the claims for a live id WITHOUT binding it — used by the read-only
+// lobby peek, which must not consume the invite. An absent OR expired id returns
+// ok=false; an expired one is dropped in passing.
 func (s *inviteStore) get(id string) (token.Claims, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,6 +60,37 @@ func (s *inviteStore) get(id string) (token.Claims, bool) {
 		return token.Claims{}, false
 	}
 	return e.claims, true
+}
+
+// claim resolves an id for a JOIN and binds it to session, making the link single-use.
+// The first bindable join (empty claimedBy, non-empty session) records the session and
+// succeeds; later joins succeed only from that same session — which is how a network
+// drop or page refresh from the original tab keeps working while anyone else who got
+// the link is refused. A join with no session (an older client that can't bind) is
+// allowed but leaves the invite unbound, so it stays reusable for such clients rather
+// than locking the identity behind a nonce they never sent — no worse than the
+// pre-single-use behavior. An absent/expired id returns ok=false (expired dropped).
+func (s *inviteStore) claim(id, session string) (token.Claims, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.m[id]
+	if !ok {
+		return token.Claims{}, false
+	}
+	if !s.now().Before(e.expires) {
+		delete(s.m, id)
+		return token.Claims{}, false
+	}
+	switch {
+	case e.claimedBy == "" && session != "":
+		e.claimedBy = session // first use binds the link to this session
+		s.m[id] = e
+		return e.claims, true
+	case e.claimedBy == session:
+		return e.claims, true // same session reconnecting/refreshing (covers the unbound no-session case)
+	default:
+		return token.Claims{}, false // bound to a different session — already used elsewhere
+	}
 }
 
 func (s *inviteStore) sweep() {
