@@ -22,6 +22,8 @@ func TestDecodeClientMessages(t *testing.T) {
 		{`{"type":"ban","id":"p1"}`, &Ban{ID: "p1"}},
 		{`{"type":"countdown","action":"start"}`, &Countdown{Action: "start"}},
 		{`{"type":"countdown","action":"stop"}`, &Countdown{Action: "stop"}},
+		{`{"type":"media-state","mic":true,"camera":false}`, &MediaState{Mic: true, Camera: false}},
+		{`{"type":"media-state","mic":false,"camera":true}`, &MediaState{Mic: false, Camera: true}},
 		{`{"type":"leave"}`, &Leave{}},
 	}
 	for _, c := range cases {
@@ -67,9 +69,10 @@ func TestEncodeServerMessages(t *testing.T) {
 		wantType string
 		contains []string
 	}{
-		{Joined{SelfID: "p1", Role: "op", Peers: []PeerInfo{{ID: "p2", Name: "bob", Role: "user"}}}, "joined", []string{`"selfId":"p1"`, `"role":"op"`, `"peers"`}},
-		{PeerJoined{ID: "p2", Name: "bob", Role: "voice"}, "peer-joined", []string{`"id":"p2"`}},
+		{Joined{SelfID: "p1", Role: "op", Peers: []PeerInfo{{ID: "p2", Name: "bob", Role: "user", Mic: true, Camera: false}}}, "joined", []string{`"selfId":"p1"`, `"role":"op"`, `"peers"`, `"mic":true`, `"camera":false`}},
+		{PeerJoined{ID: "p2", Name: "bob", Role: "voice", Mic: false, Camera: true}, "peer-joined", []string{`"id":"p2"`, `"mic":false`, `"camera":true`}},
 		{PeerLeft{ID: "p2"}, "peer-left", nil},
+		{PeerMediaState{ID: "p2", Mic: false, Camera: true}, "peer-media-state", []string{`"id":"p2"`, `"mic":false`, `"camera":true`}},
 		{Offer{SDP: "v=0"}, "offer", []string{`"sdp":"v=0"`}},
 		{Tracks{Tracks: []TrackInfo{{Mid: "0", ParticipantID: "p2", Kind: "camera"}}}, "tracks", []string{`"participantId":"p2"`}},
 		{ChatEvent{From: "alice", Text: "hi", TS: 1753000000}, "chat", []string{`"ts":1753000000`}},

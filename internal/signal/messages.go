@@ -49,14 +49,26 @@ type Ban struct {
 type Countdown struct {
 	Action string `json:"action"` // "start" | "stop"
 }
+
+// MediaState is a participant's report of its OWN current mic/camera enabled
+// state (true = live, false = self-muted / camera off). Sent on every local
+// toggle and once right after join, so the server can store it and convey it to
+// others. A self-muted track is still published (silence/black frames), so no
+// track-end fires — this is the only signal others have that a peer is muted.
+type MediaState struct {
+	Mic    bool `json:"mic"`
+	Camera bool `json:"camera"`
+}
 type Leave struct{}
 
 // ---- server → client ----
 
 type PeerInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Role string `json:"role"` // "op" | "voice" | "user" | "guest"
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Role   string `json:"role"` // "op" | "voice" | "user" | "guest"
+	Mic    bool   `json:"mic"`  // sender's mic enabled? (stored server-side)
+	Camera bool   `json:"camera"`
 }
 type Joined struct {
 	SelfID string     `json:"selfId"`
@@ -64,9 +76,20 @@ type Joined struct {
 	Peers  []PeerInfo `json:"peers"`
 }
 type PeerJoined struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Role string `json:"role"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Role   string `json:"role"`
+	Mic    bool   `json:"mic"` // initial mic state (defaults true on join)
+	Camera bool   `json:"camera"`
+}
+
+// PeerMediaState tells every client that a peer's mic/camera enabled state
+// changed. It is authoritative for the remote mute indicators (track presence
+// cannot reflect a self-mute, since a muted track is still published).
+type PeerMediaState struct {
+	ID     string `json:"id"`
+	Mic    bool   `json:"mic"`
+	Camera bool   `json:"camera"`
 }
 type PeerLeft struct {
 	ID string `json:"id"`
@@ -149,6 +172,8 @@ func Decode(data []byte) (any, error) {
 		v = &Ban{}
 	case "countdown":
 		v = &Countdown{}
+	case "media-state":
+		v = &MediaState{}
 	case "leave":
 		v = &Leave{}
 	default:
@@ -186,6 +211,8 @@ func serverTypeName(v any) (string, error) {
 		return "peer-joined", nil
 	case PeerLeft, *PeerLeft:
 		return "peer-left", nil
+	case PeerMediaState, *PeerMediaState:
+		return "peer-media-state", nil
 	case Offer, *Offer:
 		return "offer", nil
 	case Answer, *Answer:

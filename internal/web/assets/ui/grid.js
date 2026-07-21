@@ -8,10 +8,16 @@
 //   - Peer      "remote-track" {participantId, kind, stream} / "peer-gone"
 //               {participantId, kind}  — remote media coming and going. kind is
 //               "mic" | "camera" | "screen".
-//   - Signaling "peer-joined" {id,name,role} / "peer-left" {id} — roster changes,
-//               which name/role a tile shows and when a participant's tiles go away.
+//   - Signaling "peer-joined" {id,name,role,mic,camera} / "peer-left" {id} —
+//               roster changes, which name/role a tile shows and when a
+//               participant's tiles go away.
 //   - Media     mic-track / camera-track / screen-start / screen-stop — the SELF
 //               tile's own media (its preview and its screen-share tile).
+//
+// Remote mic/camera INDICATOR pills are driven by setPeerMedia (fed from the
+// roster and the authoritative peer-media-state broadcast), NOT by track
+// presence: a self-muted track is still published (silence / black frames), so a
+// toggle fires no track-end and track presence cannot tell muted from live.
 //
 // Active-speaker highlight: a single AudioContext feeds one AnalyserNode per
 // REMOTE mic stream; a light polling loop reads each analyser's level and marks
@@ -61,6 +67,10 @@ export class Grid {
     this.tiles = new Map(); // participantId -> base-tile record
     this.screens = new Map(); // participantId -> screen-tile element
     this.audio = new Map(); // participantId -> { audioEl, source, analyser, data }
+    // Authoritative mic/camera state for a peer whose tile does not exist yet
+    // (a peer-media-state that races ahead of the roster / track). Applied when
+    // the tile is built, then cleared. participantId -> { mic, camera }.
+    this.pendingMedia = new Map();
 
     this.activeId = null; // participantId of the currently highlighted tile
     this._audioCtx = null; // shared AudioContext (lazy: created with the first remote mic)
@@ -98,6 +108,7 @@ export class Grid {
   // audio analyser/playback so nothing leaks.
   removePeer(id) {
     if (!id || id === this.selfId) return;
+    this.pendingMedia.delete(id);
     this._detachAudio(id);
     this._removeScreenTile(id);
     const tile = this.tiles.get(id);
@@ -112,7 +123,10 @@ export class Grid {
   // --- remote media ---
 
   // A forwarded remote track arrived. Camera fills the base tile's video, mic wires
-  // playback + the active-speaker analyser, and screen gets its own tile.
+  // playback + the active-speaker analyser, and screen gets its own tile. The
+  // mic/camera indicator PILLS are NOT touched here: a self-muted track is still
+  // published, so track presence cannot tell muted from live — setPeerMedia (the
+  // media-state broadcast) is the authoritative source for those indicators.
   onRemoteTrack({ participantId, kind, stream } = {}) {
     if (!participantId) return;
     if (kind === "screen") {
@@ -124,14 +138,15 @@ export class Grid {
     if (kind === "camera") {
       tile.cameraVideo.srcObject = stream;
       tile.hasCamera = true;
-      this._setIndicator(tile.avPill, true);
     } else if (kind === "mic") {
       this._attachAudio(participantId, stream);
-      this._setIndicator(tile.micPill, true);
     }
   }
 
-  // A forwarded remote track ended (publisher toggled it off or left mid-track).
+  // A forwarded remote track ended (publisher left mid-track, or a device/track
+  // was truly removed). Tear down the video/audio wiring; the indicator pills stay
+  // driven by setPeerMedia (the authoritative media-state broadcast), not by track
+  // presence — a toggle keeps the track published, so no track-end fires for it.
   onPeerGone({ participantId, kind } = {}) {
     if (!participantId) return;
     if (kind === "screen") {
@@ -143,12 +158,31 @@ export class Grid {
       if (tile) {
         tile.cameraVideo.srcObject = null;
         tile.hasCamera = false;
-        this._setIndicator(tile.avPill, false);
       }
     } else if (kind === "mic") {
       this._detachAudio(participantId);
-      if (tile) this._setIndicator(tile.micPill, false);
     }
+  }
+
+  // Authoritative remote mic/camera state from a roster entry or a peer-media-state
+  // broadcast: crossed-out pill when off, live when on. No-op for self (the self
+  // tile is driven locally by refreshSelf). If the peer's tile does not exist yet
+  // (state raced ahead of the roster / track), remember it and apply when the tile
+  // is built (see _ensureTile). Non-boolean fields are ignored, so a partial or
+  // legacy payload leaves the corresponding pill untouched.
+  setPeerMedia(id, { mic, camera } = {}) {
+    if (!id || id === this.selfId) return;
+    const tile = this.tiles.get(id);
+    if (!tile) {
+      this.pendingMedia.set(id, { mic, camera });
+      return;
+    }
+    this._applyPeerMedia(tile, { mic, camera });
+  }
+
+  _applyPeerMedia(tile, { mic, camera } = {}) {
+    if (typeof mic === "boolean") this._setIndicator(tile.micPill, mic);
+    if (typeof camera === "boolean") this._setIndicator(tile.avPill, camera);
   }
 
   // Set a remote participant's local playback volume (0..1). Purely client-side:
@@ -193,6 +227,12 @@ export class Grid {
     tile = this._buildTile(id, name || "guest", role, { self: false });
     this.tiles.set(id, tile);
     this.el.append(tile.el);
+    // Apply any media state that arrived before this tile existed.
+    const pending = this.pendingMedia.get(id);
+    if (pending) {
+      this.pendingMedia.delete(id);
+      this._applyPeerMedia(tile, pending);
+    }
     return tile;
   }
 
@@ -477,6 +517,7 @@ export class Grid {
     for (const rec of this.screens.values()) rec.video.srcObject = null;
     this.tiles.clear();
     this.screens.clear();
+    this.pendingMedia.clear();
     this._selfTile = null;
     this.el.replaceChildren();
   }

@@ -37,6 +37,12 @@ type Participant struct {
 	IP      string
 	Role    Role
 	Conn    Conn
+	// Self-reported media state: is the mic / camera currently enabled? Both
+	// default true on Join and are updated by SetMediaState when the participant
+	// broadcasts a change. Stored here so the roster can convey it to late
+	// joiners. Guarded by Room.mu.
+	Mic    bool
+	Camera bool
 }
 
 type Config struct {
@@ -121,9 +127,13 @@ func (r *Room) Join(p *Participant, password string) error {
 		p.Role = RoleOp
 	}
 	r.hasBeenJoined = true
+	// Media defaults ON; the client re-asserts its true state (which may be muted,
+	// e.g. a pre-join toggle) with a media-state frame right after join.
+	p.Mic = true
+	p.Camera = true
 	roster := make([]signal.PeerInfo, 0, len(r.parts))
 	for _, q := range r.parts {
-		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role)})
+		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera})
 	}
 	replay := append([]signal.ChatEvent(nil), r.chat...)
 	r.parts[p.ID] = p
@@ -134,7 +144,7 @@ func (r *Room) Join(p *Participant, password string) error {
 	for _, ce := range replay {
 		p.Conn.Send(ce)
 	}
-	r.Broadcast(signal.PeerJoined{ID: p.ID, Name: p.Name, Role: string(p.Role)}, p.ID)
+	r.Broadcast(signal.PeerJoined{ID: p.ID, Name: p.Name, Role: string(p.Role), Mic: p.Mic, Camera: p.Camera}, p.ID)
 	return nil
 }
 
@@ -223,6 +233,26 @@ func (r *Room) Chat(fromID, text string) {
 	}
 	r.mu.Unlock()
 	r.Broadcast(ev, "")
+}
+
+// SetMediaState records a participant's self-reported mic/camera enabled state
+// and fans the change out to the OTHER participants so everyone's remote mute
+// indicators stay correct. The sender is excluded (its own tile is driven locally,
+// not by this echo). Unknown ids are a silent no-op. Lock discipline matches
+// Chat/Countdown: the state is mutated under the mutex, then the PeerMediaState is
+// broadcast after the lock is released. Stored on the Participant so a late joiner's
+// roster (built in Join) reflects the current state without a replayed event.
+func (r *Room) SetMediaState(id string, mic, camera bool) {
+	r.mu.Lock()
+	p, ok := r.parts[id]
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	p.Mic = mic
+	p.Camera = camera
+	r.mu.Unlock()
+	r.Broadcast(signal.PeerMediaState{ID: id, Mic: mic, Camera: camera}, id)
 }
 
 // Broadcast sends v to every participant except exceptID ("" = everyone).

@@ -218,6 +218,7 @@ export class Controls {
     const enabled = this.media.toggleMic();
     this._setMicButton(enabled);
     if (this.grid) this.grid.refreshSelf();
+    this.sendMediaState(); // tell the room so remote mute indicators update
   }
 
   _toggleCamera() {
@@ -225,6 +226,18 @@ export class Controls {
     const enabled = this.media.toggleCamera();
     this._setCameraButton(enabled);
     if (this.grid) this.grid.refreshSelf();
+    this.sendMediaState(); // tell the room so remote camera indicators update
+  }
+
+  // Broadcast this client's CURRENT mic + camera enabled state to the room. A
+  // missing track counts as OFF. Called on every local mic/camera toggle and once
+  // by app.js right after join, so a client that joined muted/camera-off (a
+  // pre-join toggle) is seen correctly — the server otherwise stored the default
+  // (on). Idempotent to re-send.
+  sendMediaState() {
+    const mic = !!(this.media && this.media.micTrack && this.media.micTrack.enabled);
+    const camera = !!(this.media && this.media.cameraTrack && this.media.cameraTrack.enabled);
+    this._send("media-state", { mic, camera });
   }
 
   _toggleScreen() {

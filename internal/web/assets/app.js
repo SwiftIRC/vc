@@ -181,7 +181,8 @@ function onJoined(msg) {
   showReconnecting(false);
   if (grid) {
     if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
-    for (const p of msg.peers || []) grid.addPeer(p);
+    for (const p of msg.peers || []) addRosterPeer(p);
+    sendInitialMediaState(); // the server reset our stored state to default on rejoin; re-assert it
     return;
   }
   if (prejoin) {
@@ -189,6 +190,26 @@ function onJoined(msg) {
     prejoin = null;
   }
   renderInCall(msg);
+  sendInitialMediaState();
+}
+
+// Add/refresh a peer's tile from a roster entry (joined.peers[] or peer-joined) and
+// seed its authoritative mic/camera indicators from the same entry, so a tile starts
+// with the correct mute state. This is how a LATE joiner learns that an existing peer
+// is already muted (the server carries each peer's stored state in the roster).
+function addRosterPeer(p) {
+  if (!grid || !p) return;
+  grid.addPeer(p);
+  grid.setPeerMedia(p.id, { mic: p.mic, camera: p.camera });
+}
+
+// Push this client's current mic/camera state to the server, once per successful
+// join (fresh or reconnect-rejoin). A user can JOIN muted/camera-off via a pre-join
+// toggle, and the server stores the default (on) until we assert the real state, so
+// without this others would briefly see us un-muted. controls owns the send (it reads
+// the same media singleton); it exists by the time joined lands.
+function sendInitialMediaState() {
+  if (controls) controls.sendMediaState();
 }
 
 // --- in-call view: tile grid + control bar + chat ---
@@ -238,8 +259,9 @@ function renderInCall(msg) {
     ),
   );
 
-  // Seed the roster the server already knew about at join time.
-  for (const p of msg.peers || []) grid.addPeer(p);
+  // Seed the roster the server already knew about at join time, including each
+  // existing peer's stored mic/camera state (so an already-muted peer shows muted).
+  for (const p of msg.peers || []) addRosterPeer(p);
 
   // Remote media -> tiles.
   peer.addEventListener("remote-track", (e) => grid.onRemoteTrack(e.detail));
@@ -259,8 +281,10 @@ function renderInCall(msg) {
   });
 
   // Roster + moderation + chat from the signaling socket.
-  signaling.on("peer-joined", (m) => grid.addPeer(m));
+  signaling.on("peer-joined", (m) => addRosterPeer(m));
   signaling.on("peer-left", (m) => grid.removePeer(m.id));
+  // Authoritative per-peer mic/camera state: drives the remote mute indicators.
+  signaling.on("peer-media-state", (m) => grid.setPeerMedia(m.id, { mic: m.mic, camera: m.camera }));
   signaling.on("muted", (m) => controls.onMuted(m.kind));
   signaling.on("room-locked", () => controls.onLock(true));
   signaling.on("room-unlocked", () => controls.onLock(false));

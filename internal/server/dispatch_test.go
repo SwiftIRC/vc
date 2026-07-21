@@ -113,6 +113,43 @@ func TestCountdownSyncedOverWS(t *testing.T) {
 	}
 }
 
+func TestMediaStateBroadcastOverWS(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+	a := dialRoom(t, srv, "cafe")
+	send(t, a, map[string]any{"type": "join", "name": "alice"})
+	ja := recv(t, a, "joined")
+	aliceID := ja["selfId"].(string)
+	b := dialRoom(t, srv, "cafe")
+	send(t, b, map[string]any{"type": "join", "name": "bob"})
+	recv(t, b, "joined")
+
+	// alice self-mutes her mic (camera stays on); bob learns via peer-media-state.
+	send(t, a, map[string]any{"type": "media-state", "mic": false, "camera": true})
+	m := recv(t, b, "peer-media-state")
+	if m["id"] != aliceID || m["mic"] != false || m["camera"] != true {
+		t.Errorf("peer-media-state = %v", m)
+	}
+
+	// A late joiner's roster carries alice's stored (muted) state.
+	c := dialRoom(t, srv, "cafe")
+	send(t, c, map[string]any{"type": "join", "name": "carol"})
+	jc := recv(t, c, "joined")
+	peers := jc["peers"].([]any)
+	var alice map[string]any
+	for _, p := range peers {
+		pm := p.(map[string]any)
+		if pm["id"] == aliceID {
+			alice = pm
+		}
+	}
+	if alice == nil {
+		t.Fatalf("alice not in carol's roster: %v", peers)
+	}
+	if alice["mic"] != false || alice["camera"] != true {
+		t.Errorf("late-joiner roster for alice = %v, want mic:false camera:true", alice)
+	}
+}
+
 func TestOversizedChatDropped(t *testing.T) {
 	_, srv := newTestHub(t, "", true)
 	a := dialRoom(t, srv, "cafe")

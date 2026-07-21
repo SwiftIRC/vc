@@ -77,6 +77,77 @@ func TestJoinSendsRosterAndBroadcasts(t *testing.T) {
 	}
 }
 
+func TestJoinDefaultsMediaOn(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser)
+	r.Join(alice, "")
+	bob, bc := member("p2", "bob", RoleUser)
+	r.Join(bob, "")
+	// bob's roster lists alice with media defaulting ON.
+	joined := bc.msgs[0].(signal.Joined)
+	if joined.Peers[0].Mic != true || joined.Peers[0].Camera != true {
+		t.Errorf("roster default media = mic:%v camera:%v, want true true", joined.Peers[0].Mic, joined.Peers[0].Camera)
+	}
+	// alice's PeerJoined for bob also defaults ON.
+	ac := alice.Conn.(*fakeConn)
+	pj := ac.msgs[len(ac.msgs)-1].(signal.PeerJoined)
+	if pj.Mic != true || pj.Camera != true {
+		t.Errorf("PeerJoined default media = mic:%v camera:%v, want true true", pj.Mic, pj.Camera)
+	}
+}
+
+func TestSetMediaStateBroadcastsToRoom(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser)
+	bob, bc := member("p2", "bob", RoleUser)
+	r.Join(alice, "")
+	r.Join(bob, "")
+	r.SetMediaState("p1", false, true)
+	var got *signal.PeerMediaState
+	bc.mu.Lock()
+	for _, m := range bc.msgs {
+		if pm, ok := m.(signal.PeerMediaState); ok {
+			p := pm
+			got = &p
+		}
+	}
+	bc.mu.Unlock()
+	if got == nil {
+		t.Fatal("bob did not receive PeerMediaState")
+	}
+	if got.ID != "p1" || got.Mic != false || got.Camera != true {
+		t.Errorf("PeerMediaState = %+v, want {ID:p1 Mic:false Camera:true}", *got)
+	}
+}
+
+func TestLateJoinerRosterReflectsStoredMuteState(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser)
+	r.Join(alice, "")
+	// alice self-mutes her mic (camera stays on).
+	r.SetMediaState("p1", false, true)
+	// A late joiner's roster must reflect alice's stored (muted) state.
+	late, lc := member("p2", "late", RoleUser)
+	r.Join(late, "")
+	joined, ok := lc.msgs[0].(signal.Joined)
+	if !ok {
+		t.Fatalf("late msg[0] = %T, want signal.Joined", lc.msgs[0])
+	}
+	if len(joined.Peers) != 1 {
+		t.Fatalf("roster len = %d, want 1", len(joined.Peers))
+	}
+	p := joined.Peers[0]
+	if p.ID != "p1" || p.Mic != false || p.Camera != true {
+		t.Errorf("late joiner roster entry = %+v, want alice mic:false camera:true", p)
+	}
+}
+
+func TestSetMediaStateUnknownPeerNoPanic(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	// No such participant: must be a silent no-op (no broadcast, no panic).
+	r.SetMediaState("ghost", false, false)
+}
+
 func TestChannelRoomDoesNotPromoteFirstJoiner(t *testing.T) {
 	r := New(Config{Slug: "swift", Channel: "#swift"})
 	alice, _ := member("p1", "alice", RoleUser)

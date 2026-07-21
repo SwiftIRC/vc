@@ -234,7 +234,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		switch m := v.(type) {
 		case *signal.Leave:
 			return
-		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.Countdown:
+		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.Countdown, *signal.MediaState:
 			h.dispatch(rm, p, m)
 		case *signal.Offer:
 			if err := mp.HandleOffer(m.SDP); err != nil {
@@ -296,6 +296,11 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 		if err := rm.Countdown(p.ID, m.Action); err != nil {
 			h.log.Debug("countdown refused", "from", p.ID, "action", m.Action, "err", err)
 		}
+		return
+	case *signal.MediaState:
+		// A participant's own mic/camera state changed (or its initial post-join
+		// assertion). Store it and fan it out so remote mute indicators are correct.
+		rm.SetMediaState(p.ID, m.Mic, m.Camera)
 		return
 	case *signal.SetLock:
 		err = rm.SetLock(p.ID, m.Password)

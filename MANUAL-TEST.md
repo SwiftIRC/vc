@@ -84,6 +84,17 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Mute / camera controls work** — Mute toggles your mic (label flips
       Mute/Unmute, your tile's mic indicator turns off); Stop video toggles your
       camera (label + av indicator + your preview). Others stop hearing/seeing you.
+- [ ] **Remote mute state propagates to everyone (incl. late joiners)** — with
+      browsers A and B in the call, A clicks Mute. **B** (already in the call) sees
+      A's tile mic indicator go crossed-out within a moment. Now join a **third**
+      browser C: A's tile on C **starts** crossed-out (C learns A's stored muted
+      state from the roster, not from any live event). A clicks Unmute → both B and C
+      show A's mic live again. Repeat for the camera (Stop video / Start video): the
+      remote camera/av indicator tracks it the same way, on both B and C.
+- [ ] **Join muted → others see you muted immediately** — in the lobby toggle the
+      mic (and/or camera) OFF, then Join. On every other browser already in the call,
+      your tile shows the mic (and/or camera) crossed-out right away — you never
+      briefly appear un-muted. Unmute in-call and the indicator clears for everyone.
 - [ ] **Device switch mid-preview** — in the lobby, switch camera or mic; the new
       device is the one that goes live when you join (the preview updates, the other
       track keeps streaming).
