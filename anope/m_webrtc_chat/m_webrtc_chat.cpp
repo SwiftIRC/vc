@@ -257,6 +257,95 @@ public:
 		}
 		return false;
 	}
+
+	// ---- join: link + token + provision (shared helper) -------------------
+
+	// Map the caller's channel access to a token role.
+	// VERIFY(anope-2.1): AccessGroup::founder field and HasPriv priv names — "SET"
+	// and "AUTOOP" are used in modules/chanserv/cs_set.cpp; "AUTOVOICE" is the
+	// standard voice-grant privilege (include/access.h; confirm against the
+	// privileges registered in modules/chanserv/cs_access.cpp / the deployment tree).
+	wvc::Role RoleFor(CommandSource &source, ChannelInfo *ci)
+	{
+		AccessGroup access = source.AccessFor(ci);
+		if (access.founder || access.HasPriv("AUTOOP") || access.HasPriv("SET"))
+			return wvc::Role::Op;
+		if (access.HasPriv("AUTOVOICE"))
+			return wvc::Role::Voice;
+		return wvc::Role::User;
+	}
+
+	// Shared by !vc/!chat (fantasy) and `VC #chan` (no SET). Posts the public link,
+	// hands identified users a tokened personal link, and provisions the room.
+	// The shared secret and full tokens are NEVER logged or replied — the only place
+	// a token appears is the private NOTICE to that token's own recipient.
+	void HandleJoin(CommandSource &source, ChannelInfo *ci)
+	{
+		if (!this->IsEnabled(ci))
+		{
+			source.Reply(_("Video chat isn't enabled here \342\200\224 an op can run \002/msg ChanServ VC %s SET ENABLED ON\002."),
+				ci->name.c_str());
+			return;
+		}
+
+		const Anope::string slug = this->RoomFor(ci);
+		const bool id_only = this->IsIdentifiedOnly(ci);
+		const Anope::string public_url = this->linkorigin + "/" + slug;
+
+		BotInfo *bi = source.service;
+		User *u = source.GetUser();
+
+		// Public link (no token). To the channel via fantasy so everyone sees it,
+		// otherwise privately to the caller.
+		// VERIFY(anope-2.1): CommandSource::c (fantasy channel, Reference<Channel>) and
+		// CommandSource::service (Reference<BotInfo>) — include/commands.h:70,72 and
+		// modules/fantasy.cpp:199-200; IRCD->SendPrivmsg(MessageSource, dest, msg) with a
+		// BotInfo* (is-a User) as the MessageSource — include/protocol.h:48,344.
+		if (source.c && bi)
+			IRCD->SendPrivmsg(bi, source.c->name, Anope::string(_("Video chat: ")) + public_url);
+		else
+			source.Reply(_("Video chat for %s: %s"), ci->name.c_str(), public_url.c_str());
+
+		// Personal tokened link for users identified to NickServ.
+		// VERIFY(anope-2.1): CommandSource::GetAccount()/GetUser()/GetNick() —
+		// include/commands.h:83-85; NickCore::display (account name) — include/account.h:150;
+		// User::SendMessage(BotInfo*, const Anope::string&) private NOTICE —
+		// include/users.h:202; Anope::CurTime (time_t) — include/anope.h:381.
+		NickCore *nc = source.GetAccount();
+		if (nc && u && bi)
+		{
+			wvc::Role role = this->RoleFor(source, ci);
+			wvc::Claims claims = wvc::makeClaims(
+				ci->name.str(), slug.str(), nc->display.str(), source.GetNick().str(),
+				role, id_only,
+				static_cast<long long>(Anope::CurTime), static_cast<long long>(this->ttl));
+			std::string token = wvc::sign(claims, this->secret.str());
+			Anope::string personal_url = this->linkorigin + "/" + slug + "#t=" + token;
+			// Token is core-tested <= 320 chars; origin+slug add a bounded prefix, so
+			// this fits one IRC line. Send the tokened link privately to its owner only.
+			u->SendMessage(bi, Anope::string(_("Your personal video chat link (opens with your channel role): ")) + personal_url);
+		}
+		else if (u && bi)
+		{
+			if (id_only)
+				u->SendMessage(bi, _("This room only admits users identified to NickServ \342\200\224 identify, then try again."));
+			else
+				u->SendMessage(bi, _("Identify to NickServ for a personal (op) link; the public link works for guests."));
+		}
+
+		// Best-effort provision, time-bounded so services never block on a down
+		// webrtc-chat. `err` is a curl/HTTP status string and never carries the secret.
+		// VERIFY(anope-2.1): Log(LOG_DEBUG) << ... streaming logger — include/logger.h and
+		// modules/fantasy.cpp:170.
+		std::string body = wvc::buildProvisionBody(ci->name.str(), slug.str(), id_only);
+		std::string err;
+		if (!wvc::postProvision(this->apiurl.str(), this->secret.str(), body, /*timeoutMs=*/2000, err))
+		{
+			Log(LOG_DEBUG) << "webrtc_chat: provision failed for " << ci->name << ": " << err;
+			if (u && bi)
+				u->SendMessage(bi, _("Room link posted, but the video server is unreachable right now."));
+		}
+	}
 };
 
 // VERIFY(anope-2.1): Command(Module*, sname, min_params, max_params); SetDesc,
@@ -380,14 +469,14 @@ void CommandVC::Execute(CommandSource &source, const std::vector<Anope::string> 
 		return;
 	}
 
-	// ---- VC #chan (no SET) : show current settings -----------------------
-	// (Task 9 repoints this branch to the join/link+token+provision path.)
-	Anope::string slug = module->RoomFor(ci);
-	source.Reply(_("Video chat on %s: %s, %s, room \002%s\002 (%s/%s)."),
-		ci->name.c_str(),
-		module->IsEnabled(ci) ? _("enabled") : _("disabled"),
-		module->IsIdentifiedOnly(ci) ? _("identified users only") : _("guests allowed"),
-		slug.c_str(), module->LinkOrigin().c_str(), slug.c_str());
+	// ---- VC #chan (no SET), and !vc / !chat via fantasy : join ----------
+	// Both the fantasy triggers and the plain command land here (the fantasy
+	// dispatcher routes !vc/!chat to this same command service — see
+	// modules/fantasy.cpp:150-231 and anope.conf.example), so botless channels work
+	// via /msg and the shared HandleJoin runs exactly once per invocation.
+	// VERIFY(anope-2.1): fantasy dispatch routes a registered fantasy command to its
+	// Command service's Execute with source.c set — modules/fantasy.cpp:199-228.
+	module->HandleJoin(source, ci);
 }
 
 bool CommandVC::OnHelp(CommandSource &source, const Anope::string &)
