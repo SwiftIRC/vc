@@ -177,11 +177,11 @@ func senderForTrack(t *testing.T, pc *webrtc.PeerConnection, track webrtc.TrackL
 	return nil
 }
 
-// TestPLISentToVideoPublisher verifies the SFU asks a video publisher for a
-// keyframe: p2 subscribes to p1's camera (new-subscriber trigger) and the
-// per-room 3s ticker also fires, so p1's camera RTPSender must observe an RTCP
-// PictureLossIndication within a few seconds.
-func TestStripSimulcastExtensions(t *testing.T) {
+// TestStripDemuxExtensions verifies the server strips the RID and MID header
+// extensions from its offers (they arm a per-m-line demux Chrome can't satisfy for a
+// second forwarded video) while leaving the essential m-line attributes — the a=mid
+// attribute, direction, and TWCC — untouched.
+func TestStripDemuxExtensions(t *testing.T) {
 	sdp := strings.Join([]string{
 		"v=0",
 		"m=video 9 UDP/TLS/RTP/SAVPF 96",
@@ -194,13 +194,18 @@ func TestStripSimulcastExtensions(t *testing.T) {
 		"",
 	}, "\r\n")
 
-	out := stripSimulcastExtensions(sdp)
+	out := stripDemuxExtensions(sdp)
 
-	if strings.Contains(out, "rtp-stream-id") {
-		t.Errorf("RSID extensions not stripped:\n%s", out)
+	// The RID pair AND the MID header extension must all be gone — each arms a
+	// per-m-line demux Chrome can't satisfy for a second forwarded video.
+	for _, gone := range []string{"rtp-stream-id", "sdes:mid", "a=extmap:9", "a=extmap:10", "a=extmap:11"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("extension not stripped — still contains %q:\n%s", gone, out)
+		}
 	}
-	// Everything else must survive untouched (mid extension, TWCC, direction, mids).
-	for _, must := range []string{"sdes:mid", "transport-wide-cc", "a=recvonly", "a=mid:5", "a=extmap:9"} {
+	// The essential m-line attributes must survive — especially a=mid:5 (the MID
+	// *attribute*, not the header extension) and the TWCC extension the SFU relies on.
+	for _, must := range []string{"transport-wide-cc", "a=recvonly", "a=mid:5", "a=extmap:4"} {
 		if !strings.Contains(out, must) {
 			t.Errorf("stripped too much — missing %q:\n%s", must, out)
 		}
