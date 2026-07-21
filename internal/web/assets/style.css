@@ -96,6 +96,17 @@ input[readonly] {
   gap: 0.75rem;
 }
 
+/* Let the device <select>s shrink inside their grid columns; without min-width:0
+   a long device name forces the column wider and the control runs off the side. */
+.devices .field {
+  min-width: 0;
+}
+.devices select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .row {
   display: flex;
   gap: 0.5rem;
