@@ -69,7 +69,10 @@ Copy the blocks from [`anope.conf.example`](anope.conf.example) into your servic
 configuration:
 
 - a `module { name = "m_webrtc_chat"; … }` block with `secret`, `apiurl`,
-  `linkorigin`, and `ttl`;
+  `linkorigin`, and `ttl`. **`apiurl` carries `secret` (which is also the
+  token-signing key) in a Bearer header, so keep it loopback with plain http, or use
+  `https://` if webrtc-chat runs on another host — never a remote `http://`, or the
+  secret leaks and op tokens can be forged;**
 - a `command { service = "ChanServ"; name = "VC"; command = "chanserv/vc"; }`
   block (exposes `/msg ChanServ VC`);
 - two `fantasy { … command = "chanserv/vc"; prepend_channel = yes; }` blocks for

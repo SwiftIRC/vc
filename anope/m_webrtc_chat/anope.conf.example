@@ -28,8 +28,13 @@ module
 	secret = "change-me-to-a-long-random-value"
 
 	/*
-	 * Where the module POSTs provision snapshots ({base}/api/provision). This is a
-	 * server-local address, so plain HTTP is fine.
+	 * Where the module POSTs provision snapshots ({base}/api/provision). The request
+	 * carries the `secret` above in an Authorization header, and that secret is ALSO
+	 * the token-signing key, so it must never cross a network in cleartext:
+	 *   - localhost (the default): plain http is fine — nothing leaves the host.
+	 *   - webrtc-chat on another host: use https (libcurl verifies the certificate).
+	 * NEVER point this at a remote host over plain http:// — the secret would leak and
+	 * an eavesdropper could then forge op tokens.
 	 */
 	apiurl = "http://127.0.0.1:8080"
 
