@@ -37,12 +37,28 @@ type Participant struct {
 	IP      string
 	Role    Role
 	Conn    Conn
-	// Self-reported media state: is the mic / camera currently enabled? Both
-	// default true on Join and are updated by SetMediaState when the participant
-	// broadcasts a change. Stored here so the roster can convey it to late
-	// joiners. Guarded by Room.mu.
+	// Self-reported media state: is the mic / camera currently enabled? Updated by
+	// SetMediaState when the participant broadcasts a change, and stored here so the
+	// roster can convey it to late joiners. Guarded by Room.mu. The initial value
+	// comes from SetInitialMedia (the join frame) when the client reported it, else
+	// Join defaults both ON.
 	Mic    bool
 	Camera bool
+	// mediaProvided is true once SetInitialMedia has supplied the join-time state,
+	// so Join knows not to overwrite it with the ON default. Lets Join tell "client
+	// said muted" (Mic=false, provided) apart from "client said nothing" (Mic=false,
+	// the bool zero value).
+	mediaProvided bool
+}
+
+// SetInitialMedia records the joiner's self-reported mic/camera state from its
+// join frame, before Join. Because it runs before the participant is in the room,
+// it needs no lock; Join then broadcasts this state (rather than the ON default)
+// so existing peers never briefly see a join-muted peer as un-muted.
+func (p *Participant) SetInitialMedia(mic, camera bool) {
+	p.Mic = mic
+	p.Camera = camera
+	p.mediaProvided = true
 }
 
 type Config struct {
@@ -127,10 +143,12 @@ func (r *Room) Join(p *Participant, password string) error {
 		p.Role = RoleOp
 	}
 	r.hasBeenJoined = true
-	// Media defaults ON; the client re-asserts its true state (which may be muted,
-	// e.g. a pre-join toggle) with a media-state frame right after join.
-	p.Mic = true
-	p.Camera = true
+	// Media defaults ON unless the client reported its true state (which may be
+	// muted, e.g. a pre-join toggle) in the join frame via SetInitialMedia.
+	if !p.mediaProvided {
+		p.Mic = true
+		p.Camera = true
+	}
 	roster := make([]signal.PeerInfo, 0, len(r.parts))
 	for _, q := range r.parts {
 		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera})

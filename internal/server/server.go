@@ -211,6 +211,10 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 	} else {
 		p.Name, p.Role = sanitizeName(join.Name), room.RoleGuest
 	}
+	// Carry the joiner's reported mic/camera into the room before Join, so its
+	// roster + PeerJoined broadcast reflect the real state (a pre-join mute shows
+	// crossed-out immediately). A client that omits the fields defaults to ON.
+	p.SetInitialMedia(join.Mic == nil || *join.Mic, join.Camera == nil || *join.Camera)
 	if err := rm.Join(p, join.Password); err != nil {
 		reject(c, signal.Error{Code: errCode(err), Message: err.Error()})
 		return

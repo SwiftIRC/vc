@@ -96,6 +96,28 @@ func TestJoinDefaultsMediaOn(t *testing.T) {
 	}
 }
 
+func TestJoinCarriesProvidedInitialMedia(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser)
+	r.Join(alice, "") // default ON
+	// bob joins already muted (mic off, camera on) — reported via the join frame.
+	bob, bc := member("p2", "bob", RoleUser)
+	bob.SetInitialMedia(false, true)
+	r.Join(bob, "")
+	// bob's own roster still shows alice ON (alice provided nothing -> default).
+	joined := bc.msgs[0].(signal.Joined)
+	if joined.Peers[0].Mic != true || joined.Peers[0].Camera != true {
+		t.Errorf("alice roster media = mic:%v camera:%v, want true true", joined.Peers[0].Mic, joined.Peers[0].Camera)
+	}
+	// alice's PeerJoined for bob must carry bob's real (muted) state, NOT the ON
+	// default — this is what prevents the "briefly un-muted" flash for existing peers.
+	ac := alice.Conn.(*fakeConn)
+	pj := ac.msgs[len(ac.msgs)-1].(signal.PeerJoined)
+	if pj.ID != "p2" || pj.Mic != false || pj.Camera != true {
+		t.Errorf("bob PeerJoined = %+v, want {ID:p2 Mic:false Camera:true}", pj)
+	}
+}
+
 func TestSetMediaStateBroadcastsToRoom(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser)

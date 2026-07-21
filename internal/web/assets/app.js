@@ -158,7 +158,7 @@ function rejoinOnReopen(sig) {
   const connect = sig.connect.bind(sig);
   sig.connect = () => {
     connect(); // creates sig.ws (or no-ops once stopped)
-    if (sig.ws) sig.ws.addEventListener("open", () => sig.send("join", pendingJoin));
+    if (sig.ws) sig.ws.addEventListener("open", () => sig.send("join", { ...pendingJoin, ...joinMediaState() }));
   };
 }
 
@@ -182,7 +182,6 @@ function onJoined(msg) {
   if (grid) {
     if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
     for (const p of msg.peers || []) addRosterPeer(p);
-    sendInitialMediaState(); // the server reset our stored state to default on rejoin; re-assert it
     return;
   }
   if (prejoin) {
@@ -190,7 +189,6 @@ function onJoined(msg) {
     prejoin = null;
   }
   renderInCall(msg);
-  sendInitialMediaState();
 }
 
 // Add/refresh a peer's tile from a roster entry (joined.peers[] or peer-joined) and
@@ -203,13 +201,18 @@ function addRosterPeer(p) {
   grid.setPeerMedia(p.id, { mic: p.mic, camera: p.camera });
 }
 
-// Push this client's current mic/camera state to the server, once per successful
-// join (fresh or reconnect-rejoin). A user can JOIN muted/camera-off via a pre-join
-// toggle, and the server stores the default (on) until we assert the real state, so
-// without this others would briefly see us un-muted. controls owns the send (it reads
-// the same media singleton); it exists by the time joined lands.
-function sendInitialMediaState() {
-  if (controls) controls.sendMediaState();
+// This client's current mic/camera state, merged into every join frame so the room
+// stores the real state BEFORE it builds the roster and broadcasts peer-joined — a
+// pre-join (or reconnect-time) mute then reaches other peers with no "briefly
+// un-muted" flash. Reads the shared media singleton directly rather than via controls,
+// because the first join frame is sent (on socket open) before renderInCall creates
+// controls; the convention matches controls.sendMediaState — an absent or disabled
+// track counts as OFF.
+function joinMediaState() {
+  return {
+    mic: !!(media && media.micTrack && media.micTrack.enabled),
+    camera: !!(media && media.cameraTrack && media.cameraTrack.enabled),
+  };
 }
 
 // --- in-call view: tile grid + control bar + chat ---

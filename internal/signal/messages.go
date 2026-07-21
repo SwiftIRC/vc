@@ -14,6 +14,13 @@ type Join struct {
 	Name     string `json:"name,omitempty"`     // guest display name
 	Password string `json:"password,omitempty"` // for locked rooms
 	Token    string `json:"token,omitempty"`    // identity token from !vc
+	// Mic/Camera is the joiner's initial self-reported media state, so existing
+	// peers render the correct mute indicators the instant this peer appears —
+	// with no "briefly un-muted" flash while a separate media-state frame
+	// round-trips. Pointers: absent (an older or tokened client that omits them)
+	// means "unknown", which the server defaults to ON.
+	Mic    *bool `json:"mic,omitempty"`
+	Camera *bool `json:"camera,omitempty"`
 }
 type Offer struct {
 	SDP string `json:"sdp"`
