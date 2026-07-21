@@ -1,13 +1,22 @@
-// Top-level routing and state for the browser client. app.js owns the singleton
-// Media / Signaling / Peer instances and hands them to the UI modules; it never
-// draws call chrome itself beyond a deliberate placeholder.
+// Top-level routing, state, and the reliability contract for the browser client.
+// app.js owns the singleton Media / Signaling / Peer instances and hands them to
+// the UI modules (prejoin, grid, controls, chat); it never draws call chrome
+// itself beyond the terminal "you were removed" card.
 //
 // Routes off the URL:
 //   /            -> home: pick a room name, navigate to /<name>
 //   /<slug>      -> pre-join lobby (ui/prejoin.js); #t=<token> supplies identity
 // A successful join swaps the lobby for the in-call view: the tile grid
-// (ui/grid.js) and control bar (ui/controls.js), wired to the media plane (Peer)
-// and the live socket (Signaling). Chat (Task 9) still lands here later.
+// (ui/grid.js), the control bar (ui/controls.js), and the chat panel (ui/chat.js),
+// wired to the media plane (Peer) and the live socket (Signaling).
+//
+// Reliability contract (see onRemoved / onJoined / rejoinOnReopen):
+//   - kicked / banned  -> stop() the socket (NO reconnect), tear the call down,
+//     show why. The suppressed reconnect is exactly what Plan 2's ban enforcement
+//     relies on: a removed client MUST NOT rejoin.
+//   - normal drop / server-restarting -> Signaling reconnects with backoff and we
+//     re-send the join frame on reopen, so the participant returns to the room.
+//   - leave / tab close -> stop() the socket and release the camera/mic.
 import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
@@ -15,6 +24,7 @@ import { parseToken } from "./lib/protocol.js";
 import { Prejoin } from "./ui/prejoin.js";
 import { Grid } from "./ui/grid.js";
 import { Controls } from "./ui/controls.js";
+import { Chat } from "./ui/chat.js";
 
 // Mirror of the server's room-slug rule (internal/server: slugRe). A path that
 // doesn't match can never join, so we route it to home with a hint instead.
@@ -27,12 +37,15 @@ const root = document.getElementById("app");
 let slug = "";
 let token = "";
 let selfName = ""; // display name chosen in the lobby; labels the self tile
+let pendingJoin = null; // {name, password, token} re-sent on every socket (re)open
 let media = null;
 let signaling = null;
 let peer = null;
 let prejoin = null;
 let grid = null;
 let controls = null;
+let chat = null;
+let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-call)
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -109,17 +122,41 @@ function renderPrejoin() {
   prejoin.mount().catch((err) => console.error("prejoin mount failed", err));
 }
 
-// Fired by the lobby's Join button. Opens a fresh socket, sends the join frame,
-// and routes the server's reply. A prior socket (from a rejected attempt) is
-// stopped first so its close can't trigger a reconnect.
+// Fired by the lobby's Join button. Opens a fresh socket and registers the whole
+// inbound contract, then lets rejoinOnReopen send the join frame once the socket
+// opens (and re-send it on every backoff reconnect). A prior socket (from a
+// rejected attempt) is stopped first so its close can't trigger a reconnect.
 function onJoin({ name, password }) {
   selfName = name || "";
+  pendingJoin = { name, password, token };
   if (signaling) signaling.stop();
   signaling = new Signaling(`/ws/${slug}`);
   signaling.on("joined", onJoined);
   signaling.on("error", onServerError);
-  signaling.connect();
-  signaling.send("join", { name, password, token }); // queued until the socket opens
+  // The removal contract: a kicked/banned client must close and never rejoin.
+  signaling.on("kicked", (m) => onRemoved("kicked", m && m.by));
+  signaling.on("banned", (m) => onRemoved("banned", m && m.by));
+  // A planned restart: the socket is about to drop. Show a notice but do NOT
+  // stop() — Signaling's backoff reconnect + rejoinOnReopen bring us back.
+  signaling.on("server-restarting", () => showReconnecting(true));
+  rejoinOnReopen(signaling);
+  signaling.connect(); // rejoinOnReopen's open hook sends the first join
+}
+
+// Re-send the join frame on every socket (re)open. signaling.js intentionally
+// exposes no socket-lifecycle hook (and is outside this task's file set), so we
+// compose one: wrap connect() so each time it (re)creates the socket — the
+// initial connect AND every backoff reconnect — we attach an "open" listener
+// that sends the current join frame. Without this a mid-call reconnect leaves the
+// user connected but roomless (the Task-7 gap). Because kicked/banned/leave all
+// stop() the socket, connect() is never called again after them and this never
+// re-joins — the security-critical property.
+function rejoinOnReopen(sig) {
+  const connect = sig.connect.bind(sig);
+  sig.connect = () => {
+    connect(); // creates sig.ws (or no-ops once stopped)
+    if (sig.ws) sig.ws.addEventListener("open", () => sig.send("join", pendingJoin));
+  };
 }
 
 // Server refused the join (bad-password, banned, identified-only, ...). Stop the
@@ -133,7 +170,17 @@ function onServerError(msg) {
   if (prejoin) prejoin.showError(msg.code, msg.message);
 }
 
+// The server accepted our join. First time: build the in-call view. On a reconnect
+// re-join (we're already in-call) do NOT rebuild — Signaling has no off() so a
+// fresh Peer/Chat would leak handlers on the shared socket — just clear the
+// reconnecting notice, replace the replayed chat history, and reconcile the roster.
 function onJoined(msg) {
+  showReconnecting(false);
+  if (grid) {
+    if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
+    for (const p of msg.peers || []) grid.addPeer(p);
+    return;
+  }
   if (prejoin) {
     prejoin.destroy();
     prejoin = null;
@@ -141,11 +188,11 @@ function onJoined(msg) {
   renderInCall(msg);
 }
 
-// --- in-call view: tile grid + control bar ---
+// --- in-call view: tile grid + control bar + chat ---
 
 // Brings the media plane up on the live socket and renders the real in-call UI:
-// the tile grid (self + remotes, screen-shares, active-speaker) and the control
-// bar (local mute/camera/screenshare/leave, plus op moderation).
+// the tile grid (self + remotes, screen-shares, active-speaker), the control bar
+// (local mute/camera/screenshare/leave, plus op moderation), and the chat panel.
 function renderInCall(msg) {
   // Media plane. Peer registers its own offer/answer/candidate/tracks handlers in
   // its constructor; that must happen before start() sends the first offer, and
@@ -162,14 +209,21 @@ function renderInCall(msg) {
     opActionsFor: (p) => controls.opActionsFor(p),
   });
   controls.attachGrid(grid); // toggles refresh the self tile's indicators
+  chat = new Chat({ signaling });
+
+  statusEl = el("span", { class: "call-status", role: "status", hidden: true });
 
   root.replaceChildren(
     el(
       "div",
       { class: "incall" },
-      el("header", { class: "call-head" }, el("h1", { text: `#${slug}` })),
-      grid.el,
-      controls.el,
+      el("header", { class: "call-head" }, el("h1", { text: `#${slug}` }), statusEl),
+      el(
+        "div",
+        { class: "stage" },
+        el("div", { class: "stage-main" }, grid.el, controls.el),
+        chat.el,
+      ),
     ),
   );
 
@@ -181,12 +235,14 @@ function renderInCall(msg) {
   peer.addEventListener("peer-gone", (e) => grid.onPeerGone(e.detail));
   peer.addEventListener("error", (e) => console.error("peer error", e.detail.phase, e.detail.error));
 
-  // Roster + moderation from the signaling socket.
+  // Roster + moderation + chat from the signaling socket.
   signaling.on("peer-joined", (m) => grid.addPeer(m));
   signaling.on("peer-left", (m) => grid.removePeer(m.id));
   signaling.on("muted", (m) => controls.onMuted(m.kind));
   signaling.on("room-locked", () => controls.onLock(true));
   signaling.on("room-unlocked", () => controls.onLock(false));
+  signaling.on("chat", (m) => chat.onChat(m));
+  signaling.on("moderation", (m) => chat.onModeration(m));
 
   const localTracks = [];
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });
@@ -194,11 +250,18 @@ function renderInCall(msg) {
   peer.start(localTracks).catch((err) => console.error("peer start failed", err));
 }
 
-// Full teardown back to the lobby. Tear down the UI first so its Media listeners
-// (grid's self tile, controls' screen-share) are detached before media.stop()
-// fires screen-stop into a closing peer; then close the peer, stop the socket
-// permanently, release the camera/mic, and re-render pre-join with a fresh Media.
-function leave() {
+// Toggle the in-call "Reconnecting…" notice (server-restarting, or any reconnect
+// in flight). Cleared when the re-join's `joined` lands.
+function showReconnecting(on) {
+  if (!statusEl) return;
+  statusEl.hidden = !on;
+  statusEl.textContent = on ? "Reconnecting…" : "";
+}
+
+// Tear down the in-call UI + media plane, leaving Media and Signaling for the
+// caller to handle (leave releases them; a reconnect keeps them). UI is torn down
+// before any media.stop() so grid/controls Media listeners are already detached.
+function teardownInCall() {
   if (controls) {
     controls.destroy();
     controls = null;
@@ -207,10 +270,58 @@ function leave() {
     grid.destroy();
     grid = null;
   }
+  if (chat) {
+    chat.destroy();
+    chat = null;
+  }
   if (peer) {
     peer.close();
     peer = null;
   }
+  statusEl = null;
+}
+
+// The op kicked or banned this client. Stop the socket FIRST so the reconnect is
+// suppressed before anything else can race it (this is what makes a ban stick),
+// then tear the call down, release the camera/mic, and show a terminal card. The
+// client stays on this page and never rejoins.
+function onRemoved(kind, by) {
+  if (signaling) {
+    signaling.stop();
+    signaling = null;
+  }
+  teardownInCall();
+  if (prejoin) {
+    prejoin.destroy();
+    prejoin = null;
+  }
+  if (media) {
+    media.stop();
+    media = null;
+  }
+  renderRemoved(kind, by);
+}
+
+function renderRemoved(kind, by) {
+  const verb = kind === "banned" ? "banned" : "kicked";
+  root.replaceChildren(
+    el(
+      "div",
+      { class: "home removed" },
+      el("h1", { text: `You were ${verb}` }),
+      // `by` is a remote-controlled display name: textContent (the "text" key)
+      // keeps it inert, never markup.
+      el("p", { class: "lede", text: `You were ${verb}${by ? ` by ${by}` : ""}.` }),
+      el("p", { class: "lede muted", text: kind === "banned" ? "You can't rejoin this room." : "You've been removed from this call." }),
+    ),
+  );
+}
+
+// Full teardown back to the lobby. Tear down the UI + peer first (detaches Media
+// listeners), stop the socket permanently, release the camera/mic, and re-render
+// pre-join with a fresh Media.
+function leave() {
+  teardownInCall();
   if (signaling) {
     signaling.stop();
     signaling = null;
@@ -221,6 +332,14 @@ function leave() {
   }
   renderPrejoin();
 }
+
+// Tab close / navigation away: release the socket and the camera/mic so no device
+// stays lit and the server reaps us promptly. pagehide fires on desktop and mobile
+// (including bfcache), unlike beforeunload.
+window.addEventListener("pagehide", () => {
+  if (signaling) signaling.stop();
+  if (media) media.stop();
+});
 
 console.log("webrtc-chat loaded");
 boot();
