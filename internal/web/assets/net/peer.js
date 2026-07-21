@@ -274,15 +274,23 @@ export class Peer extends EventTarget {
 
   _onTrack(event) {
     const mid = event.transceiver.mid;
-    const stream = event.streams[0] || null;
+    // The SFU forwards ALL of a publisher's tracks (mic, camera, screen) under one
+    // MSID stream id, so event.streams[0] bundles them into a single MediaStream —
+    // and a <video> bound to a stream with two video tracks (camera + screen) shows
+    // an arbitrary one, which made the screen tile display the camera. Wrap just
+    // THIS track so each element renders exactly its own track. Gone-detection still
+    // watches the shared stream's removetrack (filtered to this track) plus "ended".
+    const stream = new MediaStream([event.track]);
+    const shared = event.streams[0] || null;
     this._incoming.set(mid, { stream, track: event.track, emitted: false, info: null });
     this._emitRemoteTrack(mid);
 
-    // A forwarded stream ends when the publisher leaves and the SFU renegotiates
-    // the sender away: the receiver track fires "ended", or the stream drops it.
+    // A forwarded track ends when the publisher leaves/unpublishes and the SFU
+    // renegotiates the sender away: the receiver track fires "ended", or the shared
+    // stream drops it (removetrack fires for whichever track was removed).
     const gone = () => this._onStreamGone(mid);
     event.track.addEventListener("ended", gone);
-    if (stream) stream.addEventListener("removetrack", gone);
+    if (shared) shared.addEventListener("removetrack", (e) => { if (e.track === event.track) gone(); });
   }
 
   // Emit "remote-track" once BOTH the media (ontrack) and its label (tracks
