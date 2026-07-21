@@ -110,11 +110,14 @@ export class Prejoin {
   // caller) then reflects it on the toggles + overlay.
   async _applyMediaPrefs() {
     const prefs = loadMediaPrefs();
-    if (prefs.mic === false && this.media.micTrack && this.media.micTrack.enabled) {
-      this.media.toggleMic(); // mute to match last time (device stays open)
+    // Default OFF on a first-ever join (no saved preference); a returning user's saved
+    // choice (mic:true / camera:true) re-enables. start() brings both up ON, so we only
+    // ever turn things OFF here.
+    if (prefs.mic !== true && this.media.micTrack && this.media.micTrack.enabled) {
+      this.media.toggleMic(); // mute (device stays open)
     }
-    if (prefs.camera === false && this.media.cameraTrack) {
-      this.media.disableCamera(); // release the camera to match last time
+    if (prefs.camera !== true && this.media.cameraTrack) {
+      this.media.disableCamera(); // release the camera
     }
   }
 
