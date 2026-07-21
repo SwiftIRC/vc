@@ -376,6 +376,17 @@ video.mirror {
   position: relative; /* anchor for the unread badge */
 }
 
+/* Compact icon buttons (e.g. chat toggle): square-ish, glyph-sized, not a wide
+   text button. */
+.controls .ctl.icon {
+  padding: 0.45rem 0.55rem;
+  line-height: 1;
+}
+.controls .ctl.icon .glyph {
+  font-size: 1.1rem;
+  display: block;
+}
+
 /* Noise-suppression toggle: the vendored worklet is ~2MB, so the first enable
    shows a wait cursor while it loads (the button is disabled during that time). */
 .controls .ctl.ns.loading {

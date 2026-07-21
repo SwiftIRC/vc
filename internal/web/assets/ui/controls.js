@@ -155,10 +155,12 @@ export class Controls {
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
     this.chatBadge = el("span", { class: "chat-badge", hidden: true });
+    // Compact icon toggle (title/aria give it an accessible name) so it doesn't
+    // dominate the control bar; the badge counts unread while the panel is closed.
     this.chatBtn = el(
       "button",
-      { type: "button", class: "ctl chat", title: "Toggle chat", onClick: () => this._toggleChat() },
-      el("span", { text: "Chat" }),
+      { type: "button", class: "ctl chat icon", title: "Toggle chat", "aria-label": "Toggle chat", onClick: () => this._toggleChat() },
+      el("span", { class: "glyph", text: "💬" }),
       this.chatBadge,
     );
 
