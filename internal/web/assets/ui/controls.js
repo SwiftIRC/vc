@@ -560,10 +560,17 @@ export class Controls {
   opActionsFor(participant) {
     if (!this.isOp || !participant || !participant.id) return null;
     const id = participant.id;
+    // No "+op" for someone who is already an op — it would be a no-op grant. The
+    // button carries the "makeop" class so grid.js can show/hide it if the target's
+    // role changes (a promotion) without rebuilding the whole action group.
+    const makeop =
+      participant.role === "op"
+        ? null
+        : el("button", { type: "button", class: "op makeop", title: "Make op", onClick: () => this._send("grant-op", { id }) }, "+op");
     return el(
       "div",
       { class: "op-actions" },
-      el("button", { type: "button", class: "op makeop", title: "Make op", onClick: () => this._send("grant-op", { id }) }, "+op"),
+      makeop,
       el("button", { type: "button", class: "op kick", title: "Kick", onClick: () => this._send("kick", { id }) }, "kick"),
       el("button", { type: "button", class: "op mute", title: "Mute mic", onClick: () => this._send("mute-peer", { id, kind: "mic" }) }, "mute"),
       el("button", { type: "button", class: "op ban", title: "Ban", onClick: () => this._send("ban", { id }) }, "ban"),

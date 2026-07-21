@@ -366,7 +366,7 @@ export class Grid {
   addOpControls() {
     for (const [id, tile] of this.tiles) {
       if (id === this.selfId || tile.el.querySelector(".op-actions")) continue;
-      const ops = this.opActionsFor({ id, name: tile.name });
+      const ops = this.opActionsFor({ id, name: tile.name, role: tile.role });
       if (ops) tile.el.append(ops);
     }
     for (const [id, rec] of this.screens) {
@@ -474,7 +474,7 @@ export class Grid {
     this._setIndicator(avPill, false);
 
     if (!self) {
-      const ops = this.opActionsFor({ id, name });
+      const ops = this.opActionsFor({ id, name, role });
       if (ops) tileEl.append(ops);
     }
     return tile;
@@ -489,6 +489,7 @@ export class Grid {
 
   // op -> "op" badge; voice -> "+" badge; everything else -> no badge.
   _setRole(tile, role) {
+    tile.role = role;
     const badge = tile.badgeEl;
     if (role === "op") {
       badge.textContent = "op";
@@ -501,6 +502,16 @@ export class Grid {
     } else {
       badge.textContent = "";
       badge.hidden = true;
+    }
+    // If op-action buttons are already on this tile (local user is op), refresh them so
+    // "+op" is dropped once the target becomes an op (and would return on a demotion).
+    // Skipped during _buildTile: the actions aren't appended yet, so there's nothing to
+    // rebuild until the initial opActionsFor call runs with the correct role.
+    const existing = tile.el.querySelector(".op-actions");
+    if (existing && !tile.self) {
+      const id = tile.el.getAttribute("data-id");
+      const fresh = this.opActionsFor({ id, name: tile.name, role });
+      if (fresh) existing.replaceWith(fresh);
     }
   }
 
