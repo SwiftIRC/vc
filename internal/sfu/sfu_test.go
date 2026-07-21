@@ -181,6 +181,36 @@ func senderForTrack(t *testing.T, pc *webrtc.PeerConnection, track webrtc.TrackL
 // keyframe: p2 subscribes to p1's camera (new-subscriber trigger) and the
 // per-room 3s ticker also fires, so p1's camera RTPSender must observe an RTCP
 // PictureLossIndication within a few seconds.
+func TestStripSimulcastExtensions(t *testing.T) {
+	sdp := strings.Join([]string{
+		"v=0",
+		"m=video 9 UDP/TLS/RTP/SAVPF 96",
+		"a=mid:5",
+		"a=extmap:4 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+		"a=extmap:9 urn:ietf:params:rtp-hdrext:sdes:mid",
+		"a=extmap:10 urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+		"a=extmap:11 urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+		"a=recvonly",
+		"",
+	}, "\r\n")
+
+	out := stripSimulcastExtensions(sdp)
+
+	if strings.Contains(out, "rtp-stream-id") {
+		t.Errorf("RSID extensions not stripped:\n%s", out)
+	}
+	// Everything else must survive untouched (mid extension, TWCC, direction, mids).
+	for _, must := range []string{"sdes:mid", "transport-wide-cc", "a=recvonly", "a=mid:5", "a=extmap:9"} {
+		if !strings.Contains(out, must) {
+			t.Errorf("stripped too much — missing %q:\n%s", must, out)
+		}
+	}
+	// CRLF line endings preserved (SDP requires them).
+	if !strings.Contains(out, "a=recvonly\r\n") {
+		t.Errorf("line endings mangled:\n%q", out)
+	}
+}
+
 func TestPLISentToVideoPublisher(t *testing.T) {
 	s := testSFU(t)
 

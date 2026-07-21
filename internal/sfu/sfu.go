@@ -3,6 +3,7 @@ package sfu
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -236,7 +237,7 @@ func (s *SFU) signalPeerConnections(slug string) {
 			}
 			p.makingOffer = false
 			p.mu.Unlock()
-			if !p.sig.Send(signal.Offer{SDP: offer.SDP}) {
+			if !p.sig.Send(signal.Offer{SDP: stripSimulcastExtensions(offer.SDP)}) {
 				s.log.Debug("media offer dropped (send overflow/closing)", "peer", p.id)
 			}
 			// After SetLocalDescription the transceiver mids are assigned, so p can
@@ -346,6 +347,28 @@ func senderKey(snd *webrtc.RTPSender) (string, bool) {
 		return "", false
 	}
 	return t.StreamID() + ":" + t.ID(), true
+}
+
+// stripSimulcastExtensions removes the RTP-stream-id header extensions
+// (sdes:rtp-stream-id and sdes:repaired-rtp-stream-id) from an SDP. This SFU never
+// sends simulcast, but Pion advertises those extensions on every VIDEO m-line. With
+// two forwarded videos in one PeerConnection, Chrome registers RID-based demux
+// criteria per video m-line and the second one collides with the first — its
+// setLocalDescription(answer) fails with "Failed to apply demuxer criteria". Dropping
+// the extensions makes Chrome demux those m-lines by MID/SSRC instead, exactly as it
+// already does for the audio m-lines (which never carry these), so audio-only calls
+// were unaffected. Applied only to the server's offers — the one place the SFU emits
+// them — so a client answers without the extensions and never sets up the bad demux.
+func stripSimulcastExtensions(sdp string) string {
+	lines := strings.Split(sdp, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "sdes:rtp-stream-id") || strings.Contains(line, "sdes:repaired-rtp-stream-id") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // pli asks a video track's publisher for a keyframe by writing an RTCP Picture
