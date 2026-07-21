@@ -186,10 +186,9 @@ public:
 		// channel's raw effective slug (explicit room, else its DefaultSlug) — never
 		// recursing through RoomFor, which would recurse straight back into this scan.
 		// Ties on the registration second break by channel name so exactly one channel
-		// owns the clean slug.
-		// VERIFY(anope-2.1): ChannelInfo::time_registered (time_t) and ChannelInfo::name
-		// (Anope::string) — include/regchannel.h (time_registered near :113; name is the
-		// registered_channel_map key / ChannelInfo::name field).
+		// owns the clean slug. ChannelInfo::registered is the time_t registration time
+		// (Anope 2.1; it was named time_registered in 2.0). ChannelInfo::name is the
+		// registered_channel_map key.
 		for (const auto &pair : *RegisteredChannelList)
 		{
 			const ChannelInfo *other = pair.second;
@@ -200,8 +199,8 @@ public:
 			if (!other_wants.equals_ci(d))
 				continue;
 			const bool other_is_earlier =
-				other->time_registered < ci->time_registered
-				|| (other->time_registered == ci->time_registered
+				other->registered < ci->registered
+				|| (other->registered == ci->registered
 					&& other->name.str() < ci->name.str());
 			if (other_is_earlier)
 				return d + "-" + WebRTCChat::NameHash(ci->name);
