@@ -23,3 +23,24 @@ export function saveMediaPrefs(update) {
     /* storage unavailable — ignore */
   }
 }
+
+// View/layout preferences (e.g. { columns: 2|3|4|null }), stored separately from the
+// media prefs so the two never clobber each other. Same guarded-JSON contract.
+const LAYOUT_KEY = "swiftirc-vc-layout";
+
+export function loadLayoutPrefs() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveLayoutPrefs(update) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...loadLayoutPrefs(), ...update }));
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}

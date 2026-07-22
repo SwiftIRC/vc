@@ -73,6 +73,7 @@ export class Grid {
 
     this.el = el("div", { class: "grid" });
     this._focusedEl = null; // the tile element shown large in focus mode, or null for the normal grid
+    this._forcedCols = null; // user-pinned camera-grid column count (2/3/4), or null for auto
     // A handle — visible only in focus mode — that hides/shows the right-hand strip
     // of the other cameras. Absolute-positioned, so it is never a grid cell.
     this._stripGlyph = el("span", { class: "glyph", text: "›" });
@@ -145,6 +146,14 @@ export class Grid {
     }
     const n = tiles.length;
     if (!n) return;
+    // User-pinned column count wins over auto sizing and the 3-up special case. Clamp
+    // to the participant count so 2 people never sit in a sparse 4-wide row.
+    if (this._forcedCols) {
+      const cols = Math.min(this._forcedCols, n);
+      this.el.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      this.el.style.gridTemplateRows = `repeat(${Math.ceil(n / cols)}, 1fr)`;
+      return;
+    }
     const w = this.el.clientWidth;
     const h = this.el.clientHeight;
     if (!w || !h) return; // not mounted/sized yet; the ResizeObserver will call again
@@ -177,6 +186,14 @@ export class Grid {
     const rows = Math.ceil(n / bestCols);
     this.el.style.gridTemplateColumns = `repeat(${bestCols}, 1fr)`;
     this.el.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  }
+
+  // Pin the camera grid to a fixed column count (2, 3, or 4), or pass null/anything else
+  // for auto. Re-lays out immediately; ignored while a tile is focused (that layout is
+  // its own thing).
+  setColumns(cols) {
+    this._forcedCols = cols === 2 || cols === 3 || cols === 4 ? cols : null;
+    this._relayout();
   }
 
   // Focus layout: the focused tile fills the main area (grid column 1, all rows) and

@@ -23,7 +23,7 @@
 // Inbound "muted" {kind} (an op muted THIS client) disables the named local
 // track as a re-enableable nudge and reflects it on the buttons + self tile.
 
-import { loadMediaPrefs, saveMediaPrefs } from "../lib/prefs.js";
+import { loadMediaPrefs, saveMediaPrefs, loadLayoutPrefs, saveLayoutPrefs } from "../lib/prefs.js";
 
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
 // sets textContent, so any caller string is inert markup-wise.
@@ -74,6 +74,14 @@ const CAM_OFF_PATHS = [
   "M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z",
 ];
 
+// Camera-grid column choices: Auto (value null) or a fixed 2/3/4.
+const COLS_OPTIONS = [
+  { label: "Auto", value: null },
+  { label: "2", value: 2 },
+  { label: "3", value: 3 },
+  { label: "4", value: 4 },
+];
+
 export class Controls {
   // { media, peer, signaling, role, onLeave }. role is the joined role; only "op"
   // renders moderation. Call attachGrid(grid) after construction so toggles can
@@ -85,6 +93,10 @@ export class Controls {
     this.isOp = role === "op";
     this.onLeave = typeof onLeave === "function" ? onLeave : () => {};
     this.grid = null;
+
+    // Pinned camera-grid column count (2/3/4) or null for auto, restored from last time.
+    const savedCols = loadLayoutPrefs().columns;
+    this._cols = savedCols === 2 || savedCols === 3 || savedCols === 4 ? savedCols : null;
 
     this.sharing = false; // local screen-share active?
     this.locked = false; // authoritative room lock state (from broadcasts)
@@ -142,6 +154,10 @@ export class Controls {
         this.cameraMenu.hidden = true;
         this.cameraArrow.setAttribute("aria-expanded", "false");
       }
+      if (this.colsMenu && !this.colsMenu.hidden && this.colsWrap && !this.colsWrap.contains(e.target)) {
+        this.colsMenu.hidden = true;
+        this.colsBtn.setAttribute("aria-expanded", "false");
+      }
     };
     document.addEventListener("pointerdown", this._onDocPointer);
     this._revealControls(); // start visible, then arm the idle timer
@@ -149,6 +165,7 @@ export class Controls {
 
   attachGrid(grid) {
     this.grid = grid || null;
+    if (this.grid && this._cols) this.grid.setColumns(this._cols); // apply the restored choice
   }
 
   // --- chat panel toggle ---
@@ -239,6 +256,22 @@ export class Controls {
     // enables it), and disabled while the large worklet loads on first enable.
     this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._onNsToggle() });
 
+    // Camera-grid columns: Auto or a fixed 2/3/4, chosen from a small menu.
+    this.colsBtn = el(
+      "button",
+      { type: "button", class: "ctl cols icon", title: "Camera columns", "aria-label": "Camera columns", "aria-haspopup": "menu", "aria-expanded": "false", onClick: () => this._toggleColsMenu() },
+      el("span", { class: "glyph", text: "▦" }), // ▦
+    );
+    this.colsMenu = el(
+      "div",
+      { class: "share-menu cols-menu", hidden: true },
+      ...COLS_OPTIONS.map((opt) =>
+        el("button", { type: "button", class: "share-item cols-item", "data-cols": String(opt.value ?? "auto"), onClick: () => this._pickCols(opt.value) }, opt.label),
+      ),
+    );
+    this.colsWrap = el("div", { class: "share-wrap" }, this.colsBtn, this.colsMenu);
+    this._markColsActive();
+
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
     this.chatBadge = el("span", { class: "chat-badge", hidden: true });
@@ -277,7 +310,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.countdownBtn, this.chatBtn];
+    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.colsWrap, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -367,8 +400,34 @@ export class Controls {
     if (this.shareMenu) this.shareMenu.hidden = true;
     if (this.micMenu) this.micMenu.hidden = true;
     if (this.cameraMenu) this.cameraMenu.hidden = true;
+    if (this.colsMenu) this.colsMenu.hidden = true;
     if (this.micArrow) this.micArrow.setAttribute("aria-expanded", "false");
     if (this.cameraArrow) this.cameraArrow.setAttribute("aria-expanded", "false");
+    if (this.colsBtn) this.colsBtn.setAttribute("aria-expanded", "false");
+  }
+
+  // Camera-grid column picker.
+  _toggleColsMenu() {
+    const open = this.colsMenu.hidden;
+    this._closeMenus();
+    if (open) {
+      this.colsMenu.hidden = false;
+      this.colsBtn.setAttribute("aria-expanded", "true");
+    }
+  }
+  _pickCols(value) {
+    this._closeMenus();
+    this._cols = value === 2 || value === 3 || value === 4 ? value : null;
+    if (this.grid) this.grid.setColumns(this._cols);
+    saveLayoutPrefs({ columns: this._cols });
+    this._markColsActive();
+  }
+  _markColsActive() {
+    if (!this.colsMenu) return;
+    const key = this._cols == null ? "auto" : String(this._cols);
+    for (const item of this.colsMenu.querySelectorAll(".cols-item")) {
+      item.classList.toggle("active", item.getAttribute("data-cols") === key);
+    }
   }
 
   // Toggle a device menu; populate it from a fresh enumerate each open so late-granted

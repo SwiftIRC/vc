@@ -710,6 +710,15 @@ video.mirror {
 .share-item:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+/* Selected option (e.g. the current camera-columns choice). */
+.share-item.active {
+  background: rgba(255, 255, 255, 0.16);
+  font-weight: 600;
+}
+/* The columns menu is a short list of numbers — center them for a tidier look. */
+.cols-menu .cols-item {
+  text-align: center;
+}
 
 /* Split control: a main icon button (mic/camera) fused with a caret button that opens
    a device popover. The two share an edge so they read as one pill. */
