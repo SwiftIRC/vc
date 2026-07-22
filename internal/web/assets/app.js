@@ -22,6 +22,7 @@ import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
 import { parseToken, parseInvite } from "./lib/protocol.js";
 import { playSound } from "./lib/sounds.js";
+import { ScreenWakeLock } from "./lib/wakelock.js";
 import { Prejoin } from "./ui/prejoin.js";
 import { Grid } from "./ui/grid.js";
 import { Controls } from "./ui/controls.js";
@@ -49,6 +50,7 @@ let controls = null;
 let chat = null;
 let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-call)
 let mediaAlertEl = null; // in-call "media connection lost" prompt (null when not in-call)
+const screenWakeLock = new ScreenWakeLock(); // keeps the screen awake while in a call
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -270,6 +272,9 @@ function renderInCall(msg) {
   // is announced; it is not cleared by a socket reconnect (that's a different path).
   mediaAlertEl = el("span", { class: "call-status", role: "alert", hidden: true });
 
+  // Keep the screen awake for the duration of the call (released in teardownInCall).
+  screenWakeLock.enable();
+
   // Full-bleed layout for the call route (see body.in-call in style.css); cleared
   // by renderHome / renderPrejoin / renderRemoved when we leave the call.
   document.body.classList.add("in-call");
@@ -385,6 +390,7 @@ function showMediaFailed() {
 // caller to handle (leave releases them; a reconnect keeps them). UI is torn down
 // before any media.stop() so grid/controls Media listeners are already detached.
 function teardownInCall() {
+  screenWakeLock.disable(); // let the screen sleep again once the call is over
   if (controls) {
     controls.destroy();
     controls = null;
