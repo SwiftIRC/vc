@@ -1,4 +1,4 @@
-// Short UI sound effects for room events: someone joins ("sing"), disconnects
+// Short UI sound effects for room events: someone joins ("join"), disconnects
 // ("drop"), or starts a share ("bloop"). Each file is loaded into a single reused
 // <audio> the first time it plays, so repeat plays don't refetch it.
 //
@@ -7,7 +7,7 @@
 // clicked "Join" and live WebRTC audio is already playing, so the page is unlocked —
 // but we still swallow the rejection, because a missed blip is harmless.
 const FILES = {
-  sing: "/sounds_sing.ogg", // a peer joined
+  join: "/door_open.ogg", // a peer joined
   drop: "/sounds_drop.ogg", // a peer disconnected
   bloop: "/sounds_bloop.ogg", // a peer started a share
 };

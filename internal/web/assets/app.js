@@ -329,7 +329,7 @@ function renderInCall(msg) {
   // roster, and we don't want a burst of chimes when WE join a populated room.
   signaling.on("peer-joined", (m) => {
     addRosterPeer(m);
-    playSound("sing");
+    playSound("join");
   });
   signaling.on("peer-left", (m) => {
     grid.removePeer(m.id);
