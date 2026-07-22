@@ -51,6 +51,7 @@ let chat = null;
 let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-call)
 let mediaAlertEl = null; // in-call "media connection lost" prompt (null when not in-call)
 const screenWakeLock = new ScreenWakeLock(); // keeps the screen awake while in a call
+let sessionQuality = { camera: "auto", screen: "auto" }; // op-set video caps for this call
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -205,6 +206,7 @@ function onServerError(msg) {
 // reconnecting notice, replace the replayed chat history, and reconcile the roster.
 function onJoined(msg) {
   showReconnecting(false);
+  if (msg.quality) sessionQuality = { camera: msg.quality.camera || "auto", screen: msg.quality.screen || "auto" };
   if (grid) {
     // Already in-call: this is a reconnect re-join. The server made a fresh SFU peer,
     // so rebuild ours to match (see rebuildPeer) before reconciling the roster — the
@@ -353,7 +355,14 @@ function renderInCall(msg) {
     grid.setPeerRole(m.id, m.role);
     if (m.id === grid.selfId && m.role === "op") controls.becomeOp();
   });
+  // Op changed the session video caps: apply to our senders, reflect in the op menu.
+  signaling.on("quality", (m) => {
+    sessionQuality = { camera: (m && m.camera) || "auto", screen: (m && m.screen) || "auto" };
+    if (peer) peer.setQuality(sessionQuality.camera, sessionQuality.screen);
+    controls.setQualityState(sessionQuality.camera, sessionQuality.screen);
+  });
 
+  controls.setQualityState(sessionQuality.camera, sessionQuality.screen); // reflect the join-time caps
   wirePeerAndStart();
   controls.enableDefaultNoiseSuppression(); // denoise on by default; opt out via the control
 }
@@ -370,6 +379,8 @@ function wirePeerAndStart() {
   // non-blocking prompt; unlike kicked/banned we do NOT stop() the socket — the WS
   // may still be fine (chat/roster keep working), and a reload rebuilds the call.
   peer.addEventListener("media-failed", showMediaFailed);
+
+  peer.setQuality(sessionQuality.camera, sessionQuality.screen); // cap the initial publishes
 
   const localTracks = [];
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });

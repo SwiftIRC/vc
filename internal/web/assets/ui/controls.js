@@ -24,6 +24,7 @@
 // track as a re-enableable nudge and reflects it on the buttons + self tile.
 
 import { loadMediaPrefs, saveMediaPrefs, loadLayoutPrefs, saveLayoutPrefs } from "../lib/prefs.js";
+import { QUALITY_TIERS } from "../lib/quality.js";
 
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
 // sets textContent, so any caller string is inert markup-wise.
@@ -117,6 +118,11 @@ export class Controls {
     const savedCols = loadLayoutPrefs().columns;
     this._cols = savedCols === 2 || savedCols === 3 || savedCols === 4 ? savedCols : null;
 
+    // Current session video caps (tier ids), kept in sync via setQualityState so the op
+    // menu — built now or on a mid-call promotion — always reflects the live values.
+    this._qCam = "auto";
+    this._qScr = "auto";
+
     this.sharing = false; // local screen-share active?
     this.locked = false; // authoritative room lock state (from broadcasts)
 
@@ -187,6 +193,10 @@ export class Controls {
       if (this.colsMenu && !this.colsMenu.hidden && this.colsWrap && !this.colsWrap.contains(e.target)) {
         this.colsMenu.hidden = true;
         this.colsBtn.setAttribute("aria-expanded", "false");
+      }
+      if (this.qualityMenu && !this.qualityMenu.hidden && this.qualityWrap && !this.qualityWrap.contains(e.target)) {
+        this.qualityMenu.hidden = true;
+        this.qualityBtn.setAttribute("aria-expanded", "false");
       }
     };
     document.addEventListener("pointerdown", this._onDocPointer);
@@ -344,7 +354,7 @@ export class Controls {
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
-      children.push(this.lockBtn);
+      children.push(this.lockBtn, this._buildQualityControl());
     }
     children.push(this.lockStatus, leaveBtn);
 
@@ -468,9 +478,11 @@ export class Controls {
     if (this.micMenu) this.micMenu.hidden = true;
     if (this.cameraMenu) this.cameraMenu.hidden = true;
     if (this.colsMenu) this.colsMenu.hidden = true;
+    if (this.qualityMenu) this.qualityMenu.hidden = true;
     if (this.micArrow) this.micArrow.setAttribute("aria-expanded", "false");
     if (this.cameraArrow) this.cameraArrow.setAttribute("aria-expanded", "false");
     if (this.colsBtn) this.colsBtn.setAttribute("aria-expanded", "false");
+    if (this.qualityBtn) this.qualityBtn.setAttribute("aria-expanded", "false");
   }
 
   // Camera-grid column picker.
@@ -787,7 +799,51 @@ export class Controls {
       this._setLockButton(this.locked);
       this.el.insertBefore(this.lockBtn, this.lockStatus); // lock sits just before the lock indicator + Leave
     }
+    if (!this.qualityWrap) this.el.insertBefore(this._buildQualityControl(), this.lockStatus);
     if (this.grid) this.grid.addOpControls();
+  }
+
+  // Op-only session video-quality control: a button opening a menu with independent
+  // Camera and Screen tier dropdowns. Changing one sends set-quality; the server relays
+  // it to everyone (setQualityState reflects the authoritative value back).
+  _buildQualityControl() {
+    this.qCameraSelect = el("select", { class: "device", "aria-label": "Camera quality", onChange: () => this._send("set-quality", { target: "camera", tier: this.qCameraSelect.value }) });
+    this.qScreenSelect = el("select", { class: "device", "aria-label": "Screenshare quality", onChange: () => this._send("set-quality", { target: "screen", tier: this.qScreenSelect.value }) });
+    for (const sel of [this.qCameraSelect, this.qScreenSelect]) {
+      for (const t of QUALITY_TIERS) sel.append(el("option", { value: t.id, text: t.label }));
+    }
+    this.qualityBtn = el(
+      "button",
+      { type: "button", class: "ctl quality icon", title: "Session video quality (op)", "aria-label": "Session video quality", "aria-haspopup": "menu", "aria-expanded": "false", onClick: () => this._toggleQualityMenu() },
+      el("span", { class: "glyph", text: "🎚️" }),
+    );
+    this.qualityMenu = el(
+      "div",
+      { class: "device-menu quality-menu", hidden: true },
+      el("label", { class: "field" }, el("span", { text: "Camera quality" }), this.qCameraSelect),
+      el("label", { class: "field" }, el("span", { text: "Screen quality" }), this.qScreenSelect),
+    );
+    this.qualityWrap = el("div", { class: "share-wrap" }, this.qualityBtn, this.qualityMenu);
+    this.setQualityState(this._qCam, this._qScr); // reflect whatever we already know
+    return this.qualityWrap;
+  }
+
+  _toggleQualityMenu() {
+    const open = this.qualityMenu.hidden;
+    this._closeMenus();
+    if (open) {
+      this.qualityMenu.hidden = false;
+      this.qualityBtn.setAttribute("aria-expanded", "true");
+    }
+  }
+
+  // Reflect the authoritative session caps in the op dropdowns. Called for everyone (a
+  // no-op for non-ops, who have no menu) so the op UI always shows the live values.
+  setQualityState(camera, screen) {
+    this._qCam = camera || "auto";
+    this._qScr = screen || "auto";
+    if (this.qCameraSelect) this.qCameraSelect.value = this._qCam;
+    if (this.qScreenSelect) this.qScreenSelect.value = this._qScr;
   }
 
   // Build a remote SCREEN tile's op-action group (a single "Stop screenshare"

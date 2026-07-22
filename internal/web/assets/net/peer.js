@@ -27,6 +27,7 @@
 //   "media-failed" (no detail)                     the media transport failed and one
 //                                                  ICE restart did not recover it
 import { handleRemoteOffer } from "../lib/negotiation.js";
+import { qualityTier } from "../lib/quality.js";
 
 // How long to let a single ICE restart try to reconnect before we give up and tell
 // the user. The transport goes failed -> (restart) -> checking -> connected on a
@@ -65,6 +66,8 @@ export class Peer extends EventTarget {
     this._incoming = new Map();
     // kind -> RTCRtpSender for locally published tracks, so unpublish can find it.
     this._senders = new Map();
+    // Op-set session video caps ({camera, screen} tier ids); applied to our senders.
+    this._quality = { camera: "auto", screen: "auto" };
     // Each published track's KIND is conveyed to the SFU out-of-band, keyed by the
     // MSID stream id of the MediaStream we publish it under (a browser cannot set an
     // arbitrary stream id, but it CAN read the random one it was assigned). Both
@@ -140,6 +143,7 @@ export class Peer extends EventTarget {
       // re-publish or a rapid camera-track race) gives two m-lines overlapping demux
       // criteria, which the far side can fail to apply ("demuxer criteria").
       await existing.replaceTrack(track);
+      this._applyQuality(kind); // the swapped-in track may have a different resolution
       return;
     }
     this._addLocal(track, kind);
@@ -155,6 +159,7 @@ export class Peer extends EventTarget {
     const sender = this._senders.get(kind);
     if (!sender) return false;
     await sender.replaceTrack(newTrack);
+    this._applyQuality(kind); // re-cap: a device switch can change the source resolution
     return true;
   }
 
@@ -199,25 +204,43 @@ export class Peer extends EventTarget {
     this._streamIdByKind.set(kind, stream.id);
     this._kindByStreamId.set(stream.id, kind);
     this._senders.set(kind, transceiver.sender);
-    if (kind === "screen") this._capBitrate(transceiver.sender, SCREEN_MAX_BITRATE);
+    this._applyQuality(kind); // resolution/framerate cap (+ screenshare bitrate cap)
     return transceiver;
   }
 
-  // Cap a sender's send bitrate. The SFU forwards a publisher's stream to every
-  // subscriber unchanged (no per-receiver bandwidth adaptation), so an uncapped
-  // screenshare can flood the sharer's uplink AND a receiver's downlink — starving the
-  // signaling WebSocket that shares the link until the server evicts a live peer (a
-  // spurious reconnect). A modest cap keeps the control channel breathing; congestion
-  // control still scales below it as needed.
-  _capBitrate(sender, maxBitrate) {
+  // Apply the op-set session video caps to our outgoing senders. Stored so a track that
+  // is later (re)published or device-switched picks up the current cap automatically.
+  setQuality(camera, screen) {
+    this._quality = { camera: camera || "auto", screen: screen || "auto" };
+    this._applyQuality("camera");
+    this._applyQuality("screen");
+  }
+
+  // Constrain one video sender to its tier: scale the encode down to the tier's height
+  // (never up; capture is untouched) and cap the framerate. Screenshares also keep a
+  // bitrate ceiling — the SFU forwards a publisher's stream to every subscriber
+  // unchanged, so an uncapped share can flood the sharer's uplink and a receiver's
+  // downlink, starving the signaling WebSocket that shares the link (a spurious
+  // reconnect). All in ONE setParameters so the caps don't race each other's transaction.
+  _applyQuality(kind) {
+    if (kind !== "camera" && kind !== "screen") return;
+    const sender = this._senders.get(kind);
+    if (!sender || !sender.track) return;
+    const tier = qualityTier(this._quality && this._quality[kind]);
+    let params;
     try {
-      const params = sender.getParameters();
-      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-      params.encodings[0].maxBitrate = maxBitrate;
-      sender.setParameters(params).catch(() => {});
+      params = sender.getParameters();
     } catch {
-      /* setParameters/getParameters unsupported — best effort */
+      return; // getParameters unsupported — best effort
     }
+    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+    const enc = params.encodings[0];
+    const h = (sender.track.getSettings && sender.track.getSettings().height) || 0;
+    enc.scaleResolutionDownBy = tier.height && h ? Math.max(1, h / tier.height) : 1;
+    if (tier.fps) enc.maxFramerate = tier.fps;
+    else delete enc.maxFramerate;
+    if (kind === "screen") enc.maxBitrate = SCREEN_MAX_BITRATE;
+    sender.setParameters(params).catch(() => {});
   }
 
   // Create and send one offer, guarded so overlapping triggers (start + the queued

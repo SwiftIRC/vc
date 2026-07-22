@@ -257,7 +257,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		switch m := v.(type) {
 		case *signal.Leave:
 			return
-		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.Countdown, *signal.MediaState:
+		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.SetQuality, *signal.Countdown, *signal.MediaState:
 			h.dispatch(rm, p, m)
 		case *signal.Offer:
 			if err := mp.HandleOffer(m.SDP, m.Kinds); err != nil {
@@ -335,6 +335,8 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 		err = rm.Ban(p.ID, m.ID)
 	case *signal.GrantOp:
 		err = rm.GrantOp(p.ID, m.ID)
+	case *signal.SetQuality:
+		err = rm.SetQuality(p.ID, m.Target, m.Tier)
 	default:
 		return
 	}

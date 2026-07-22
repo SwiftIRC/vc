@@ -104,6 +104,11 @@ type Room struct {
 	// (re)join — otherwise a network blip or a screenshare-induced reconnect silently
 	// demotes them. Identified users only; a guest has no stable identity to key on.
 	opAccounts map[string]struct{}
+
+	// Op-set session video caps: tier ids the clients map to a resolution/framerate
+	// cap for their camera / screenshare senders. "" means uncapped (auto).
+	qualityCamera string
+	qualityScreen string
 	emptySince     time.Time
 	hasBeenJoined  bool
 	// Synced countdown sound. countdownActive gates the control for everyone;
@@ -166,11 +171,12 @@ func (r *Room) Join(p *Participant, password string) error {
 		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera})
 	}
 	replay := append([]signal.ChatEvent(nil), r.chat...)
+	quality := signal.Quality{Camera: r.qualityCamera, Screen: r.qualityScreen}
 	r.parts[p.ID] = p
 	r.emptySince = time.Time{}
 	r.mu.Unlock()
 
-	p.Conn.Send(signal.Joined{SelfID: p.ID, Role: string(p.Role), Peers: roster})
+	p.Conn.Send(signal.Joined{SelfID: p.ID, Role: string(p.Role), Peers: roster, Quality: quality})
 	for _, ce := range replay {
 		p.Conn.Send(ce)
 	}
@@ -403,6 +409,40 @@ func (r *Room) GrantOp(actorID, targetID string) error {
 	r.mu.Unlock()
 	r.Broadcast(signal.RoleChange{ID: tgt.ID, Role: string(RoleOp)}, "")
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "op", Target: tgt.Name}, "")
+	return nil
+}
+
+// validQualityTiers are the tier ids clients understand; the server only relays a tier,
+// but rejects anything else so a buggy/malicious client can't inject garbage.
+var validQualityTiers = map[string]bool{
+	"auto": true, "ultra": true, "fast": true, "high": true, "medium": true, "low": true,
+}
+
+// SetQuality caps the session's outbound video for one target ("camera" or "screen") to
+// a tier (op-only), stores it, and broadcasts the full Quality so every client — present
+// and, via Joined, future — applies it to its own senders. Invalid input from an op is
+// ignored (not an error) so a UI glitch can't disrupt the session; a non-op is rejected.
+func (r *Room) SetQuality(actorID, target, tier string) error {
+	actor, err := r.requireOp(actorID)
+	if err != nil {
+		return err
+	}
+	if tier == "" {
+		tier = "auto"
+	}
+	if !validQualityTiers[tier] || (target != "camera" && target != "screen") {
+		return nil
+	}
+	r.mu.Lock()
+	if target == "camera" {
+		r.qualityCamera = tier
+	} else {
+		r.qualityScreen = tier
+	}
+	q := signal.Quality{Camera: r.qualityCamera, Screen: r.qualityScreen}
+	r.mu.Unlock()
+	r.Broadcast(q, "")
+	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "quality", Target: target, Kind: tier}, "")
 	return nil
 }
 

@@ -62,6 +62,14 @@ type GrantOp struct {
 	ID string `json:"id"`
 }
 
+// SetQuality is an op capping the session's outbound video quality (op-only). Target is
+// "camera" or "screen"; Tier is a tier id the CLIENT maps to a resolution/framerate cap
+// (the server only stores and relays the id).
+type SetQuality struct {
+	Target string `json:"target"` // "camera" | "screen"
+	Tier   string `json:"tier"`   // auto|ultra|fast|high|medium|low
+}
+
 // Countdown is a client's request to start or stop the synced countdown sound.
 // Action ∈ start|stop. The server is authoritative: only the participant who
 // started it may stop it, and while it runs others are locked out.
@@ -90,9 +98,17 @@ type PeerInfo struct {
 	Camera bool   `json:"camera"`
 }
 type Joined struct {
-	SelfID string     `json:"selfId"`
-	Role   string     `json:"role"`
-	Peers  []PeerInfo `json:"peers"`
+	SelfID  string     `json:"selfId"`
+	Role    string     `json:"role"`
+	Peers   []PeerInfo `json:"peers"`
+	Quality Quality    `json:"quality"` // current session video caps, so a late joiner applies them
+}
+
+// Quality is the session's outbound-video caps: each field is a tier id the client
+// applies to its camera / screenshare senders. Broadcast on change and carried in Joined.
+type Quality struct {
+	Camera string `json:"camera"` // tier id; "" / "auto" = uncapped
+	Screen string `json:"screen"`
 }
 type PeerJoined struct {
 	ID     string `json:"id"`
@@ -198,6 +214,8 @@ func Decode(data []byte) (any, error) {
 		v = &Ban{}
 	case "grant-op":
 		v = &GrantOp{}
+	case "set-quality":
+		v = &SetQuality{}
 	case "countdown":
 		v = &Countdown{}
 	case "media-state":
@@ -263,6 +281,8 @@ func serverTypeName(v any) (string, error) {
 		return "banned", nil
 	case Muted, *Muted:
 		return "muted", nil
+	case Quality, *Quality:
+		return "quality", nil
 	case RoomLocked, *RoomLocked:
 		return "room-locked", nil
 	case RoomUnlocked, *RoomUnlocked:

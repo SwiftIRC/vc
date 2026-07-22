@@ -211,6 +211,72 @@ func TestOpGrantSurvivesReconnect(t *testing.T) {
 	}
 }
 
+func TestSetQuality(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser) // first ad-hoc joiner -> op
+	r.Join(alice, "")
+	bob, bc := member("p2", "bob", RoleUser)
+	r.Join(bob, "")
+
+	// Only an op may set it.
+	if err := r.SetQuality("p2", "camera", "high"); err != ErrNotOp {
+		t.Fatalf("non-op SetQuality = %v, want ErrNotOp", err)
+	}
+
+	// Op caps the camera; bob gets the Quality broadcast and a moderation feed entry.
+	if err := r.SetQuality("p1", "camera", "high"); err != nil {
+		t.Fatalf("SetQuality: %v", err)
+	}
+	var gotQ *signal.Quality
+	var gotMod *signal.Moderation
+	bc.mu.Lock()
+	for _, m := range bc.msgs {
+		switch v := m.(type) {
+		case signal.Quality:
+			q := v
+			gotQ = &q
+		case signal.Moderation:
+			if v.Action == "quality" {
+				md := v
+				gotMod = &md
+			}
+		}
+	}
+	bc.mu.Unlock()
+	if gotQ == nil || gotQ.Camera != "high" || gotQ.Screen != "" {
+		t.Errorf("Quality broadcast = %+v, want camera=high screen=empty", gotQ)
+	}
+	if gotMod == nil || gotMod.Target != "camera" || gotMod.Kind != "high" {
+		t.Errorf("quality moderation = %+v, want target=camera kind=high", gotMod)
+	}
+
+	r.SetQuality("p1", "screen", "medium")
+
+	// Garbage is ignored (not an error, no state change).
+	if err := r.SetQuality("p1", "camera", "bogus"); err != nil {
+		t.Fatalf("bad tier should be ignored, got %v", err)
+	}
+	if err := r.SetQuality("p1", "elsewhere", "high"); err != nil {
+		t.Fatalf("bad target should be ignored, got %v", err)
+	}
+
+	// A late joiner's Joined carries the current caps so it can apply them.
+	carol, cc := member("p3", "carol", RoleUser)
+	r.Join(carol, "")
+	var joined *signal.Joined
+	cc.mu.Lock()
+	for _, m := range cc.msgs {
+		if j, ok := m.(signal.Joined); ok {
+			jj := j
+			joined = &jj
+		}
+	}
+	cc.mu.Unlock()
+	if joined == nil || joined.Quality.Camera != "high" || joined.Quality.Screen != "medium" {
+		t.Errorf("late-joiner Joined.Quality = %+v, want camera=high screen=medium", joined)
+	}
+}
+
 func TestSetMediaStateBroadcastsToRoom(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser)

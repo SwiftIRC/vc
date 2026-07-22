@@ -67,6 +67,10 @@ function moderationText({ actor, action, target, kind } = {}) {
       return `${who} unlocked the room`;
     case "op":
       return `${who} made ${target || "a participant"} an op`;
+    case "quality": {
+      const tier = !kind || kind === "auto" ? "Auto" : kind.charAt(0).toUpperCase() + kind.slice(1);
+      return `${who} set ${target || "video"} quality to ${tier}`;
+    }
     default:
       // Unknown action: still narrate it, safely, rather than drop it silently.
       return target ? `${who} ${action || "acted on"} ${target}` : `${who} ${action || "acted"}`;
