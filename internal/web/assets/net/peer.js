@@ -245,7 +245,24 @@ export class Peer extends EventTarget {
     });
     const rolledBack = action === "rollback-then-answer";
     // Implicit rollback: no manual rollback step — SRD(offer) does it when we're not stable.
-    await this.pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+    try {
+      await this.pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+    } catch (err) {
+      // "The order of m-lines ... doesn't match ..." lands here. The failed SRD did not
+      // apply, so localDescription is still our last negotiated answer — dump the m-line
+      // order of BOTH (compact, then full SDPs) so the reordered line is obvious.
+      const order = (sdp) => (sdp || "").split(/\r?\n/).filter((l) => l.startsWith("m=") || l.startsWith("a=mid:")).join("  ");
+      const layout = this.pc.getTransceivers().map((t) => `${t.mid}:${t.direction}>${t.currentDirection || "-"}`).join(" ");
+      console.error(
+        "[peer] offer setRemoteDescription failed:", String(err),
+        "\ntransceivers:", layout,
+        "\nLAST-NEGOTIATED m-lines:", order(this.pc.localDescription && this.pc.localDescription.sdp),
+        "\nFAILED-OFFER   m-lines:", order(msg.sdp),
+        "\n--- LAST LOCAL DESCRIPTION (our answer) ---\n" + (this.pc.localDescription ? this.pc.localDescription.sdp : "(none)"),
+        "\n--- FAILED SERVER OFFER ---\n" + msg.sdp,
+      );
+      throw err;
+    }
     await this._drainCandidates();
     const answer = await this.pc.createAnswer();
     try {
