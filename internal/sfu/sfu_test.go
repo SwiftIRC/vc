@@ -237,6 +237,43 @@ func TestPLISentToVideoPublisher(t *testing.T) {
 	waitFor(t, func() bool { return pliCount() >= 1 })
 }
 
+// TestSubscriberPLIForwardedToPublisher verifies keyframes flow ON DEMAND: a subscriber
+// asking for a keyframe (PLI) makes the SFU ask the PUBLISHER for one, so the publisher
+// no longer has to emit keyframes on the periodic timer whether needed or not.
+func TestSubscriberPLIForwardedToPublisher(t *testing.T) {
+	s := testSFU(t)
+
+	p2 := newTestClient(t, s, "room", "p2")
+	p2.publish("mic")
+	p2.waitConnected()
+
+	p1 := newTestClient(t, s, "room", "p1")
+	track := p1.publish("camera")
+	p1.waitConnected()
+
+	pliCount := countSenderPLI(t, senderForTrack(t, p1.pc, track))
+	writeTestRTPLoop(t, track) // RTP so the SFU captures + forwards p1's camera to p2
+
+	var recv *webrtc.TrackRemote
+	select {
+	case recv = <-p2.gotTrack:
+	case <-time.After(3 * time.Second):
+		t.Fatal("p2 never received p1's camera")
+	}
+
+	// Let the subscribe-time PLI burst finish and the debounce window pass, so the next
+	// increase is attributable to the forwarded subscriber request (the 10s ticker won't
+	// fire this soon).
+	waitFor(t, func() bool { return pliCount() >= 1 })
+	time.Sleep(pliDebounceWindow + 300*time.Millisecond)
+	base := pliCount()
+
+	if err := p2.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(recv.SSRC())}}); err != nil {
+		t.Fatalf("subscriber PLI: %v", err)
+	}
+	waitFor(t, func() bool { return pliCount() > base })
+}
+
 // TestAudioPublisherGetsNoPLI verifies mic publishers are never asked for a
 // keyframe: p2's mic sender must observe zero PLI while p1's camera does get one.
 func TestAudioPublisherGetsNoPLI(t *testing.T) {

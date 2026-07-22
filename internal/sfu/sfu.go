@@ -13,9 +13,13 @@ import (
 	"github.com/ryanwohara/webrtc-chat/internal/signal"
 )
 
-// keyFrameInterval is how often each room asks its video publishers for a
-// keyframe (PLI), so subscribers that joined mid-stream can start decoding.
-const keyFrameInterval = 3 * time.Second
+// keyFrameInterval is the RARE backstop for periodic keyframes. Keyframes are otherwise
+// on-demand: new subscribers get a PLI burst (pliBurst), and mid-stream subscribers'
+// own keyframe requests are forwarded to the publisher (forwardKeyframeRequests), so a
+// publisher's encoder no longer has to emit a full I-frame every few seconds for
+// everyone whether needed or not — a big cut in encode/decode CPU and bandwidth. This
+// only catches the rare case of a subscriber's PLI itself being lost.
+const keyFrameInterval = 10 * time.Second
 
 // renegRetryDelay is how long signalPeerConnections waits before rescheduling
 // itself after a renegotiation pass exhausts its in-pass retries without
@@ -30,6 +34,12 @@ type localTrack struct {
 	track       *webrtc.TrackLocalStaticRTP
 	ssrc        webrtc.SSRC // the publisher's remote SSRC, PLI's MediaSSRC
 	publisher   *Peer       // the peer that published this track (PLI target)
+
+	// pliMu/lastPLI debounce keyframe requests forwarded from subscribers: many
+	// subscribers losing the same frame ask at once, but the publisher only needs one
+	// keyframe. Coalesce to at most one PLI per pliDebounceWindow.
+	pliMu   sync.Mutex
+	lastPLI time.Time
 }
 
 type mroom struct {
@@ -312,12 +322,16 @@ func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) (changed bool
 		if lt.publisherID == p.id || existing[key] {
 			continue
 		}
-		if _, err := p.pc.AddTransceiverFromTrack(lt.track, webrtc.RTPTransceiverInit{
+		if tr, err := p.pc.AddTransceiverFromTrack(lt.track, webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionSendonly,
 		}); err == nil {
 			changed = true
 			if lt.kind != "mic" {
 				addedVideo = append(addedVideo, lt)
+			}
+			// Forward this subscriber's keyframe requests to the publisher (video only).
+			if lt.kind == "camera" || lt.kind == "screen" {
+				go p.sfu.forwardKeyframeRequests(tr.Sender(), lt)
 			}
 		}
 	}
@@ -403,6 +417,53 @@ func (s *SFU) pli(lt *localTrack) {
 		return
 	}
 	_ = lt.publisher.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(lt.ssrc)}})
+}
+
+// pliDebounceWindow coalesces a burst of subscriber keyframe requests into one PLI.
+const pliDebounceWindow = 500 * time.Millisecond
+
+// pliDebounced forwards a subscriber's keyframe request to the publisher, but at most
+// once per pliDebounceWindow across all subscribers of that track.
+func (s *SFU) pliDebounced(lt *localTrack) {
+	if lt == nil {
+		return
+	}
+	lt.pliMu.Lock()
+	now := time.Now()
+	if !lt.lastPLI.IsZero() && now.Sub(lt.lastPLI) < pliDebounceWindow {
+		lt.pliMu.Unlock()
+		return
+	}
+	lt.lastPLI = now
+	lt.pliMu.Unlock()
+	s.pli(lt)
+}
+
+// forwardKeyframeRequests drains RTCP a subscriber sends back on a forwarded VIDEO
+// track and, on a keyframe request (PLI/FIR), asks the publisher for one — so keyframes
+// flow on demand instead of on a fixed timer. Returns when the sender is closed/removed
+// (sender.Read errors), which happens when the subscriber leaves or unsubscribes.
+func (s *SFU) forwardKeyframeRequests(sender *webrtc.RTPSender, lt *localTrack) {
+	if sender == nil {
+		return
+	}
+	buf := make([]byte, 1500)
+	for {
+		n, _, err := sender.Read(buf)
+		if err != nil {
+			return
+		}
+		pkts, err := rtcp.Unmarshal(buf[:n])
+		if err != nil {
+			continue
+		}
+		for _, pkt := range pkts {
+			switch pkt.(type) {
+			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				s.pliDebounced(lt)
+			}
+		}
+	}
 }
 
 // pliBurstDelays schedules extra keyframe requests shortly after a new subscription; see pliBurst.
