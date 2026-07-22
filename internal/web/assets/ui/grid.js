@@ -52,9 +52,11 @@ const LEVEL_INTERVAL_MS = 150;
 const ACTIVE_THRESHOLD = 0.03;
 
 // Desired tile aspect ratio (width / height). The grid picks the column count that
-// keeps tiles closest to this — so 4 participants become a 2x2 block of ~16:9
-// tiles rather than a 1x4 row of slivers.
-const TILE_ASPECT = 16 / 9;
+// keeps cells closest to this — so 4 participants become a 2x2 block rather than a
+// 1x4 row of slivers. Square (1:1): wide 16:9 cells made `object-fit: cover` crop a
+// near-square/4:3 webcam hard top-and-bottom (the "odd zoom"); square cells keep far
+// more of the frame for typical cameras.
+const TILE_ASPECT = 1;
 
 export class Grid {
   // { selfId, selfName, selfRole, media, opActionsFor, screenOpActionsFor }.
