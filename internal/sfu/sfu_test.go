@@ -401,6 +401,65 @@ func TestPeerVideoSubscriptions(t *testing.T) {
 	}
 }
 
+// TestForwardTracksAppendOnly pins the fix for the "m-line order doesn't match" wedge:
+// after a forward is removed and a NEW one added (churn — a peer leaving/rejoining, or
+// toggling a screenshare), the new forward must be APPENDED as a fresh transceiver, not
+// dropped into the recycled slot the removal left behind. Reuse (the old AddTrack) is
+// what hands the client an offer whose m-line order no longer matches its last answer.
+func TestForwardTracksAppendOnly(t *testing.T) {
+	s := testSFU(t)
+	sink := SignalerFunc(func(any) bool { return true })
+	pub, err := s.AddPeer("room", "pub", sink) // owns the forwarded tracks
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := s.AddPeer("room", "sub", sink) // the peer whose senders we reconcile
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mkTrack := func(kind string) *localTrack {
+		local, err := webrtc.NewTrackLocalStaticRTP(
+			webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, kind, pub.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &localTrack{publisherID: pub.id, kind: kind, track: local, publisher: pub}
+	}
+	sendingCount := func() int {
+		n := 0
+		for _, tr := range sub.pc.GetTransceivers() {
+			if snd := tr.Sender(); snd != nil && snd.Track() != nil {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Forward one camera.
+	syncPeerSendersLocked(sub, map[string]*localTrack{"pub:camera": mkTrack("camera")})
+	if got := sendingCount(); got != 1 {
+		t.Fatalf("after add: %d sending transceivers, want 1", got)
+	}
+	total := len(sub.pc.GetTransceivers())
+
+	// Publisher's camera goes away — the m-line is left inactive in place.
+	syncPeerSendersLocked(sub, map[string]*localTrack{})
+	if got := sendingCount(); got != 0 {
+		t.Fatalf("after remove: %d sending transceivers, want 0", got)
+	}
+
+	// A new camera is forwarded. Append-only means a FRESH transceiver, so the total
+	// grows; reuse of the recycled slot would keep the total flat (and scramble order).
+	syncPeerSendersLocked(sub, map[string]*localTrack{"pub:camera": mkTrack("camera")})
+	if got := sendingCount(); got != 1 {
+		t.Fatalf("after re-add: %d sending transceivers, want 1", got)
+	}
+	if grew := len(sub.pc.GetTransceivers()); grew <= total {
+		t.Errorf("re-add reused the recycled m-line (transceivers %d -> %d); forwards must append", total, grew)
+	}
+}
+
 // TestRemovePeerDropsTracksAndRenegotiates verifies that when a publisher leaves,
 // RemovePeer deletes the tracks it published and renegotiates the remaining
 // subscribers so they drop the departed sender. p2 subscribes to p1's camera,

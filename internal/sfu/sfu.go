@@ -280,6 +280,18 @@ func (s *SFU) signalPeerConnections(slug string) {
 // track back to it). It reports whether p's sender set changed and returns the
 // video tracks newly added to p (whose publishers should be PLI'd). Caller holds
 // s.mu.
+//
+// New forwards are APPENDED as fresh sendonly transceivers, never AddTrack. AddTrack
+// reuses a recycled (inactive) transceiver left behind by an earlier RemoveTrack, and
+// that reuse can produce an offer whose m-line order no longer matches the client's
+// last answer — Chrome then rejects it with "The order of m-lines ... doesn't match
+// ...", never answers, and the peer's PC wedges in have-local-offer, which is the
+// "renegotiation did not converge" reschedule loop. RemoveTrack still marks a departed
+// forward's m-line inactive IN PLACE, so the m-line list only ever grows or goes
+// inactive at a fixed index — every offer stays a prefix of the client's last answer
+// plus appended m-lines, which Chrome always accepts. (Recycled slots are not reused,
+// so a very churny call accumulates inactive m-lines; that is the accepted cost of
+// guaranteed order-stability, and is bounded by how many distinct tracks p ever saw.)
 func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) (changed bool, addedVideo []*localTrack) {
 	existing := map[string]bool{}
 
@@ -300,7 +312,9 @@ func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) (changed bool
 		if lt.publisherID == p.id || existing[key] {
 			continue
 		}
-		if _, err := p.pc.AddTrack(lt.track); err == nil {
+		if _, err := p.pc.AddTransceiverFromTrack(lt.track, webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendonly,
+		}); err == nil {
 			changed = true
 			if lt.kind != "mic" {
 				addedVideo = append(addedVideo, lt)
