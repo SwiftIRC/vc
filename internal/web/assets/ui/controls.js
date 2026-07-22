@@ -106,12 +106,17 @@ export class Controls {
   // { media, peer, signaling, role, onLeave }. role is the joined role; only "op"
   // renders moderation. Call attachGrid(grid) after construction so toggles can
   // refresh the self tile's indicators.
-  constructor({ media, peer, signaling, role, onLeave } = {}) {
+  constructor({ media, peer, signaling, role, onLeave, lowBandwidth, onLowBandwidth } = {}) {
     this.media = media || null;
     this.peer = peer || null;
     this.signaling = signaling || null;
     this.isOp = role === "op";
     this.onLeave = typeof onLeave === "function" ? onLeave : () => {};
+    // Per-user "data saver": when on, this client downloads no video (audio only).
+    // Local and independent of everyone else; onLowBandwidth lets app.js (un)gate our
+    // downlink and persist the choice. The initial value is the restored preference.
+    this.lowBandwidth = !!lowBandwidth;
+    this.onLowBandwidth = typeof onLowBandwidth === "function" ? onLowBandwidth : () => {};
     this.grid = null;
 
     // Pinned camera-grid column count (2/3/4) or null for auto, restored from last time.
@@ -333,6 +338,13 @@ export class Controls {
       el("span", { class: "glyph", text: "🚀" }),
     );
 
+    // Low-bandwidth (data saver): a per-user switch that asks the SFU to stop
+    // forwarding ALL inbound video to us (audio only). Available to everyone and
+    // affects only our own downlink; the grid collapses to audio-only on its own as
+    // the server renegotiates our video away.
+    this.lowBwBtn = el("button", { type: "button", class: "ctl lowbw", onClick: () => this._toggleLowBandwidth() });
+    this._setLowBwButton();
+
     const leaveBtn = el("button", { type: "button", class: "ctl leave", onClick: () => this.onLeave() }, "Leave");
 
     // A mic/camera button is meaningless with no such track; disable it up front.
@@ -350,7 +362,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.colsWrap, this.countdownBtn, this.chatBtn];
+    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.colsWrap, this.lowBwBtn, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -437,6 +449,28 @@ export class Controls {
     const camera = !!(this.media && this.media.cameraTrack && this.media.cameraTrack.enabled);
     this._send("media-state", { mic, camera });
     saveMediaPrefs({ mic, camera }); // remember for the next call's lobby
+  }
+
+  // Toggle this client's low-bandwidth (data-saver) mode: stop/resume downloading
+  // ALL inbound video. Purely local and per-user — it changes only what WE receive —
+  // so it just flips the button and hands the new state to app.js, which tells the
+  // server and persists the choice.
+  _toggleLowBandwidth() {
+    this.lowBandwidth = !this.lowBandwidth;
+    this._setLowBwButton();
+    this.onLowBandwidth(this.lowBandwidth);
+  }
+
+  _setLowBwButton() {
+    // Active = video downloads are OFF (audio only). Text mirrors the denoise button's
+    // on/off wording; the title spells out the effect for both states.
+    this.lowBwBtn.textContent = this.lowBandwidth ? "Data saver on" : "Data saver off";
+    this.lowBwBtn.classList.toggle("active", this.lowBandwidth);
+    const title = this.lowBandwidth
+      ? "Low bandwidth on — receiving audio only. Click to receive video again."
+      : "Low bandwidth: stop downloading video (receive audio only)";
+    this.lowBwBtn.title = title;
+    this.lowBwBtn.setAttribute("aria-label", title);
   }
 
   _onShareClick() {

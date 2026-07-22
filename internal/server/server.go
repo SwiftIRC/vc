@@ -271,6 +271,11 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 			if err := mp.HandleCandidate(m.Candidate); err != nil {
 				h.log.Debug("candidate", "err", err)
 			}
+		case *signal.SetReceiveVideo:
+			// Per-user downlink gate: purely a media-plane action on this peer's own
+			// SFU peer (like offer/answer), so it goes straight to mp — no room
+			// command, no broadcast.
+			mp.SetReceiveVideo(m.Enabled)
 		}
 	}
 }

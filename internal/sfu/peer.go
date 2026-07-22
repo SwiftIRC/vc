@@ -24,6 +24,16 @@ type Peer struct {
 	mu          sync.Mutex
 	makingOffer bool
 
+	// receiveVideo is this subscriber's inbound-video gate (default true). When a
+	// client enables "low bandwidth" mode it sends set-receive-video{enabled:false};
+	// SetReceiveVideo then drops every sender forwarding another peer's camera or
+	// screen to this peer, and syncPeerSendersLocked stops adding new ones, so no
+	// video RTP is downloaded here while audio (mic, screen-audio) still flows. It
+	// gates only THIS peer's downlink — the peer's own published tracks are
+	// unaffected and other subscribers are untouched. Guarded by sfu.mu (read in
+	// syncPeerSendersLocked, written by SetReceiveVideo).
+	receiveVideo bool
+
 	// kinds maps each published track's MSID stream id -> kind (mic|camera|screen),
 	// as declared by the client alongside its offer (signal.Offer.Kinds). A browser
 	// cannot set an arbitrary MSID stream id — MediaStream.id is read-only and
@@ -121,6 +131,56 @@ func (p *Peer) HandleAnswer(sdp string) error {
 	// reneg sends no offer, so it converges and cannot loop.
 	go p.sfu.signalPeerConnections(p.slug)
 	return nil
+}
+
+// SetReceiveVideo gates this subscriber's INBOUND video — the per-user "low
+// bandwidth" switch. When enabled is false, every sender forwarding another
+// peer's camera or screen to this peer is dropped with RemoveTrack (which marks
+// the m-line inactive IN PLACE — the order-stable path syncPeerSendersLocked
+// depends on, never a reused/reordered m-line), so no video RTP is sent to this
+// peer; audio (mic, screen-audio) keeps flowing and the peer's own published
+// tracks are untouched. When re-enabled, the reconcile re-appends the room's
+// video tracks as fresh sendonly transceivers and bursts a keyframe to each so
+// tiles repaint at once. Idempotent, and it changes only THIS peer's downlink —
+// other subscribers are unaffected.
+func (p *Peer) SetReceiveVideo(enabled bool) {
+	s := p.sfu
+	s.mu.Lock()
+	r := s.rooms[p.slug]
+	if r == nil {
+		s.mu.Unlock()
+		return
+	}
+	if p.receiveVideo == enabled {
+		s.mu.Unlock()
+		return // no change
+	}
+	p.receiveVideo = enabled
+	if !enabled {
+		// Drop the video currently forwarded to this peer. Audio senders (mic,
+		// screen-audio) are left in place. senderKey is read while the track is still
+		// bound, so it resolves before RemoveTrack clears it.
+		for _, snd := range p.pc.GetSenders() {
+			key, ok := senderKey(snd)
+			if !ok {
+				continue
+			}
+			lt := r.tracks[key]
+			if lt == nil || (lt.kind != "camera" && lt.kind != "screen") {
+				continue
+			}
+			_ = p.pc.RemoveTrack(snd)
+		}
+	}
+	// Renegotiate this peer either way: on disable the offer carries the now-inactive
+	// video m-lines; on enable syncPeerSendersLocked re-appends the room's video (and
+	// reports it so signalPeerConnections PLIs each resumed publisher). Marking reneg
+	// here guarantees the offer is sent even on disable, where syncPeerSendersLocked
+	// itself reports no change (the removal happened above, outside it).
+	r.reneg[p.id] = true
+	s.mu.Unlock()
+
+	s.signalPeerConnections(p.slug)
 }
 
 func (p *Peer) HandleCandidate(raw json.RawMessage) error {

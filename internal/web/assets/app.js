@@ -21,6 +21,7 @@ import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
 import { parseToken, parseInvite } from "./lib/protocol.js";
+import { loadLayoutPrefs, saveLayoutPrefs } from "./lib/prefs.js";
 import { playSound } from "./lib/sounds.js";
 import { ScreenWakeLock } from "./lib/wakelock.js";
 import { Prejoin } from "./ui/prejoin.js";
@@ -52,6 +53,7 @@ let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-ca
 let mediaAlertEl = null; // in-call "media connection lost" prompt (null when not in-call)
 const screenWakeLock = new ScreenWakeLock(); // keeps the screen awake while in a call
 let sessionQuality = { camera: "auto", screen: "auto" }; // op-set video caps for this call
+let lowBandwidth = loadLayoutPrefs().lowBandwidth === true; // per-user "data saver": receive audio only
 
 function el(tag, attrs = {}, ...kids) {
   const node = document.createElement(tag);
@@ -247,6 +249,17 @@ function joinMediaState() {
   };
 }
 
+// The user toggled per-user low-bandwidth (data saver). Persist it and tell the
+// server to stop (or resume) forwarding video to US — nobody else is affected.
+// set-receive-video{enabled} is the SERVER'S view of it: enabled=false means "don't
+// send me video", so it's the negation of lowBandwidth. The grid collapses to
+// audio-only (or repaints) on its own as the server renegotiates our video away/back.
+function setLowBandwidth(on) {
+  lowBandwidth = !!on;
+  saveLayoutPrefs({ lowBandwidth });
+  if (signaling) signaling.send("set-receive-video", { enabled: !lowBandwidth });
+}
+
 // --- in-call view: tile grid + control bar + chat ---
 
 // Brings the media plane up on the live socket and renders the real in-call UI:
@@ -259,7 +272,7 @@ function renderInCall(msg) {
   peer = new Peer(signaling);
 
   // Controls first: the grid asks it for each remote tile's op-action group.
-  controls = new Controls({ media, peer, signaling, role: msg.role, onLeave: leave });
+  controls = new Controls({ media, peer, signaling, role: msg.role, onLeave: leave, lowBandwidth, onLowBandwidth: setLowBandwidth });
   grid = new Grid({
     selfId: msg.selfId,
     selfName,
@@ -381,6 +394,12 @@ function wirePeerAndStart() {
   peer.addEventListener("media-failed", showMediaFailed);
 
   peer.setQuality(sessionQuality.camera, sessionQuality.screen); // cap the initial publishes
+
+  // Re-assert this client's low-bandwidth choice on every (re)connect: the server
+  // builds a FRESH SFU peer each join (which defaults to forwarding all video), so if
+  // we're in data-saver mode tell it to send us none — before our subscriptions form,
+  // so no video is ever pulled down.
+  if (lowBandwidth && signaling) signaling.send("set-receive-video", { enabled: false });
 
   const localTracks = [];
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });

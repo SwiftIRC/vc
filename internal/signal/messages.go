@@ -70,6 +70,16 @@ type SetQuality struct {
 	Tier   string `json:"tier"`   // auto|ultra|fast|high|medium|low
 }
 
+// SetReceiveVideo is a participant's own inbound-video gate — a per-user "low
+// bandwidth" switch, NOT op-gated and NOT call-wide. Enabled=false asks the SFU
+// to stop forwarding ALL video (camera + screenshare) to THIS peer, so a
+// mobile/slow client downloads none of it; audio (mic, screen-audio) keeps
+// flowing and the peer's own published tracks are unaffected. Never broadcast —
+// it only changes the requester's own subscription, so no other client cares.
+type SetReceiveVideo struct {
+	Enabled bool `json:"enabled"`
+}
+
 // Countdown is a client's request to start or stop the synced countdown sound.
 // Action ∈ start|stop. The server is authoritative: only the participant who
 // started it may stop it, and while it runs others are locked out.
@@ -216,6 +226,8 @@ func Decode(data []byte) (any, error) {
 		v = &GrantOp{}
 	case "set-quality":
 		v = &SetQuality{}
+	case "set-receive-video":
+		v = &SetReceiveVideo{}
 	case "countdown":
 		v = &Countdown{}
 	case "media-state":

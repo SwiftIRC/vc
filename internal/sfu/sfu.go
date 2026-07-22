@@ -93,7 +93,7 @@ func (s *SFU) AddPeer(slug, peerID string, sig Signaler) (*Peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Peer{id: peerID, slug: slug, sfu: s, sig: sig, pc: pc}
+	p := &Peer{id: peerID, slug: slug, sfu: s, sig: sig, pc: pc, receiveVideo: true}
 
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		if c == nil {
@@ -320,6 +320,11 @@ func syncPeerSendersLocked(p *Peer, tracks map[string]*localTrack) (changed bool
 
 	for key, lt := range tracks {
 		if lt.publisherID == p.id || existing[key] {
+			continue
+		}
+		// Low-bandwidth subscriber: don't forward any video (camera/screen) to it —
+		// it downloads audio only. Mic and screen-audio still forward normally.
+		if !p.receiveVideo && (lt.kind == "camera" || lt.kind == "screen") {
 			continue
 		}
 		if tr, err := p.pc.AddTransceiverFromTrack(lt.track, webrtc.RTPTransceiverInit{

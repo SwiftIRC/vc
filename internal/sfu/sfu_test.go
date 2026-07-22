@@ -882,7 +882,148 @@ func TestRecoversStrandedRenegotiation(t *testing.T) {
 	waitFor(t, offeredScreen)
 }
 
+// TestReceiveVideoOffSkipsVideoForwards verifies the per-user low-bandwidth gate
+// at the reconcile level: a subscriber with receiveVideo=false is forwarded audio
+// (mic, screen-audio) but NO video (camera, screen), and flipping the gate back on
+// appends the video forwards it had been denied. This is the download-side cutoff —
+// no video sender means no video RTP is ever written to that subscriber.
+func TestReceiveVideoOffSkipsVideoForwards(t *testing.T) {
+	s := testSFU(t)
+	sink := SignalerFunc(func(any) bool { return true })
+	pub, err := s.AddPeer("room", "pub", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := s.AddPeer("room", "sub", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mk := func(kind string) *localTrack {
+		mime := webrtc.MimeTypeVP8
+		if kind == "mic" || kind == "screen-audio" {
+			mime = webrtc.MimeTypeOpus
+		}
+		local, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: mime}, kind, pub.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &localTrack{publisherID: pub.id, kind: kind, track: local, publisher: pub}
+	}
+	tracks := map[string]*localTrack{
+		"pub:mic":          mk("mic"),
+		"pub:screen-audio": mk("screen-audio"),
+		"pub:camera":       mk("camera"),
+		"pub:screen":       mk("screen"),
+	}
+
+	// forwardedKeys is the set of {publisherID:kind} sub currently forwards (senders
+	// with a live track).
+	forwardedKeys := func() map[string]bool {
+		got := map[string]bool{}
+		for _, snd := range sub.pc.GetSenders() {
+			if key, ok := senderKey(snd); ok {
+				got[key] = true
+			}
+		}
+		return got
+	}
+
+	// Low bandwidth ON before any forward: sub receives audio only.
+	sub.receiveVideo = false
+	syncPeerSendersLocked(sub, tracks)
+	got := forwardedKeys()
+	for _, want := range []string{"pub:mic", "pub:screen-audio"} {
+		if !got[want] {
+			t.Errorf("audio %s must forward to a low-bandwidth subscriber, but it was skipped", want)
+		}
+	}
+	for _, unwanted := range []string{"pub:camera", "pub:screen"} {
+		if got[unwanted] {
+			t.Errorf("video %s must NOT forward to a low-bandwidth subscriber (it would download video)", unwanted)
+		}
+	}
+
+	// Low bandwidth OFF: the previously-denied video is appended.
+	sub.receiveVideo = true
+	syncPeerSendersLocked(sub, tracks)
+	got = forwardedKeys()
+	for _, want := range []string{"pub:mic", "pub:screen-audio", "pub:camera", "pub:screen"} {
+		if !got[want] {
+			t.Errorf("%s must forward once low bandwidth is off, but it is missing", want)
+		}
+	}
+}
+
+// TestReceiveVideoTogglesInboundVideoEndToEnd drives the per-user low-bandwidth
+// switch through a real polite client: pub forwards mic+camera+screen to sub;
+// SetReceiveVideo(false) must renegotiate sub to drop BOTH video forwards while
+// keeping mic (audio), and SetReceiveVideo(true) must bring the video back.
+func TestReceiveVideoTogglesInboundVideoEndToEnd(t *testing.T) {
+	s := testSFU(t)
+
+	// sub joins first and publishes mic so it has a live PC to receive on.
+	sub := newTestClient(t, s, "room", "sub")
+	writeTestRTPLoop(t, sub.publish("mic"))
+	sub.waitConnected()
+	waitFor(t, func() bool { return s.hasTrack("room", "sub:mic") })
+
+	// pub publishes mic + camera + screen with live RTP so the server captures all.
+	pub := newTestClient(t, s, "room", "pub")
+	for _, k := range []string{"mic", "camera", "screen"} {
+		writeTestRTPLoop(t, pub.publish(k))
+	}
+	pub.waitConnected()
+	waitFor(t, func() bool {
+		return s.hasTrack("room", "pub:mic") && s.hasTrack("room", "pub:camera") && s.hasTrack("room", "pub:screen")
+	})
+
+	// Baseline: sub is forwarded pub's camera and screen (video).
+	waitForTracks(t, sub.gotTracks, func(tks signal.Tracks) bool {
+		return listsTrack(tks, "pub", "camera") && listsTrack(tks, "pub", "screen")
+	}, "baseline advertising pub camera+screen")
+
+	// Low bandwidth ON: drop ALL of sub's inbound video, keep mic.
+	sub.server.SetReceiveVideo(false)
+	waitForTracks(t, sub.gotTracks, func(tks signal.Tracks) bool {
+		return !listsTrack(tks, "pub", "camera") && !listsTrack(tks, "pub", "screen") && listsTrack(tks, "pub", "mic")
+	}, "low-bandwidth dropping pub camera+screen while keeping mic")
+
+	// Low bandwidth OFF: video returns.
+	sub.server.SetReceiveVideo(true)
+	waitForTracks(t, sub.gotTracks, func(tks signal.Tracks) bool {
+		return listsTrack(tks, "pub", "camera") && listsTrack(tks, "pub", "screen")
+	}, "video restored after low bandwidth off")
+}
+
 // --- Shared test helpers (built in Task 3; reused by Tasks 3–9) ---
+
+// waitForTracks drains ch until a Tracks frame satisfies pred, or fails after 5s.
+// Earlier non-matching frames are consumed and discarded.
+func waitForTracks(t *testing.T, ch <-chan signal.Tracks, pred func(signal.Tracks) bool, desc string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case tks := <-ch:
+			if pred(tks) {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no Tracks frame %s", desc)
+		}
+	}
+}
+
+// listsTrack reports whether a Tracks frame advertises participant/kind.
+func listsTrack(tks signal.Tracks, participant, kind string) bool {
+	for _, ti := range tks.Tracks {
+		if ti.ParticipantID == participant && ti.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
 
 // waitForTracksWithout waits until a Tracks signaling frame arrives that no longer
 // advertises the given participant/kind — evidence the peer was renegotiated to
