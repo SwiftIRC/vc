@@ -166,6 +166,15 @@ export class Media extends EventTarget {
     return this._toggle(this.micTrack);
   }
 
+  // Set the mic to a specific muted/live state (used by push-to-talk). Returns the
+  // resulting enabled state, or false when there is no mic.
+  setMic(enabled) {
+    const t = this.micTrack;
+    if (!t) return false;
+    t.enabled = !!enabled;
+    return t.enabled;
+  }
+
   // Turn the camera OFF by releasing the device: track.stop() frees the hardware
   // and turns its indicator light off, unlike merely disabling the track. Removes
   // the video track from `stream` and emits "camera-track" {track:null} so the

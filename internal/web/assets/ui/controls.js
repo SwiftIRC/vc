@@ -82,6 +82,25 @@ const COLS_OPTIONS = [
   { label: "4", value: 4 },
 ];
 
+// True when a key event's target is a control the browser already handles Space for
+// (typing into a field, or activating a focused button/link) — so push-to-talk leaves
+// Space alone there.
+function isInteractive(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  switch (el.tagName) {
+    case "INPUT":
+    case "TEXTAREA":
+    case "SELECT":
+    case "OPTION":
+    case "BUTTON":
+    case "A":
+      return true;
+    default:
+      return false;
+  }
+}
+
 export class Controls {
   // { media, peer, signaling, role, onLeave }. role is the joined role; only "op"
   // renders moderation. Call attachGrid(grid) after construction so toggles can
@@ -141,6 +160,17 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.addEventListener(ev, this._onActivity, { passive: true });
     }
+
+    // Push-to-talk: hold Space to go live while muted, release to re-mute. Separate
+    // (non-passive) key listeners so they can preventDefault the page scroll.
+    this._pttHeld = false; // Space currently held for PTT
+    this._pttUnmuted = false; // we temporarily unmuted for this hold
+    this._onKeyDown = (e) => this._pttKeyDown(e);
+    this._onKeyUp = (e) => this._pttKeyUp(e);
+    this._onWinBlur = () => this._pttRelease(); // releasing focus while held must re-mute
+    window.addEventListener("keydown", this._onKeyDown);
+    window.addEventListener("keyup", this._onKeyUp);
+    window.addEventListener("blur", this._onWinBlur);
     // Close the Share / mic / camera popovers on any pointer-down outside them.
     this._onDocPointer = (e) => {
       if (this.shareMenu && !this.shareMenu.hidden && this.shareWrap && !this.shareWrap.contains(e.target)) {
@@ -329,6 +359,43 @@ export class Controls {
     this._setMicButton(enabled);
     if (this.grid) this.grid.refreshSelf();
     this.sendMediaState(); // tell the room so remote mute indicators update
+    this.muteBtn.blur(); // drop focus so a following Space is push-to-talk, not a re-toggle
+  }
+
+  // --- push-to-talk (hold Space) ---
+
+  _pttKeyDown(e) {
+    if (e.code !== "Space" || e.repeat || this._pttHeld) return;
+    if (isInteractive(e.target)) return; // typing, or Space is activating a focused control
+    const t = this.media && this.media.micTrack;
+    if (!t || t.enabled) return; // no mic, or already live — nothing to push
+    e.preventDefault(); // don't scroll the page
+    this._pttHeld = true;
+    this._pttUnmuted = true;
+    this._setMic(true);
+  }
+  _pttKeyUp(e) {
+    if (e.code !== "Space" || !this._pttHeld) return;
+    e.preventDefault();
+    this._pttRelease();
+  }
+  // Re-mute if we unmuted for this hold. Also the safety valve for lost keyups (window
+  // blur / teardown).
+  _pttRelease() {
+    if (!this._pttHeld && !this._pttUnmuted) return;
+    this._pttHeld = false;
+    if (this._pttUnmuted) {
+      this._pttUnmuted = false;
+      this._setMic(false);
+    }
+  }
+  // Drive the mic to a specific state and mirror it to the button, self tile, and room.
+  _setMic(enabled) {
+    if (!this.media) return;
+    const now = this.media.setMic(enabled);
+    this._setMicButton(now);
+    if (this.grid) this.grid.refreshSelf();
+    this.sendMediaState();
   }
 
   async _toggleCamera() {
@@ -764,7 +831,8 @@ export class Controls {
     // The caret shares the button's active tint so the split control reads as one unit.
     if (this.micArrow) this.micArrow.classList.toggle("active", !enabled);
     const label = enabled ? "Mute microphone" : "Unmute microphone";
-    this.muteBtn.title = label;
+    // Advertise push-to-talk on the muted-state tooltip so it's discoverable.
+    this.muteBtn.title = enabled ? label : `${label} (or hold Space to talk)`;
     this.muteBtn.setAttribute("aria-label", label);
   }
 
@@ -810,6 +878,9 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.removeEventListener(ev, this._onActivity);
     }
+    window.removeEventListener("keydown", this._onKeyDown);
+    window.removeEventListener("keyup", this._onKeyUp);
+    window.removeEventListener("blur", this._onWinBlur);
     document.removeEventListener("pointerdown", this._onDocPointer);
     if (this._hideTimer) {
       clearTimeout(this._hideTimer);
