@@ -129,13 +129,18 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.addEventListener(ev, this._onActivity, { passive: true });
     }
-    // Close the Share / Devices menus on any pointer-down outside them.
+    // Close the Share / mic / camera popovers on any pointer-down outside them.
     this._onDocPointer = (e) => {
       if (this.shareMenu && !this.shareMenu.hidden && this.shareWrap && !this.shareWrap.contains(e.target)) {
         this.shareMenu.hidden = true;
       }
-      if (this.settingsMenu && !this.settingsMenu.hidden && this.settingsWrap && !this.settingsWrap.contains(e.target)) {
-        this.settingsMenu.hidden = true;
+      if (this.micMenu && !this.micMenu.hidden && this.micWrap && !this.micWrap.contains(e.target)) {
+        this.micMenu.hidden = true;
+        this.micArrow.setAttribute("aria-expanded", "false");
+      }
+      if (this.cameraMenu && !this.cameraMenu.hidden && this.cameraWrap && !this.cameraWrap.contains(e.target)) {
+        this.cameraMenu.hidden = true;
+        this.cameraArrow.setAttribute("aria-expanded", "false");
       }
     };
     document.addEventListener("pointerdown", this._onDocPointer);
@@ -204,8 +209,22 @@ export class Controls {
   }
 
   _build() {
+    // Mic + camera are SPLIT buttons: the main button toggles mute/video, and a caret
+    // on its right opens a small menu to switch that input's device on the fly. Each
+    // menu is populated fresh on open (labels/ids appear once permission is granted;
+    // hot-plugged devices show up), and a change hot-swaps via replaceTrack — no
+    // renegotiation, and for the mic the NS graph is rebuilt.
     this.muteBtn = el("button", { type: "button", class: "ctl mic icon", onClick: () => this._toggleMic() });
+    this.micSelect = el("select", { class: "device", onChange: () => this._switchMicDevice() });
+    this.micArrow = this._deviceArrow("Choose microphone", () => this._toggleMicMenu());
+    this.micMenu = this._deviceMenu("Microphone", this.micSelect);
+    this.micWrap = el("div", { class: "split-ctl" }, this.muteBtn, this.micArrow, this.micMenu);
+
     this.cameraBtn = el("button", { type: "button", class: "ctl cam icon", onClick: () => this._toggleCamera() });
+    this.cameraSelect = el("select", { class: "device", onChange: () => this._switchCameraDevice() });
+    this.cameraArrow = this._deviceArrow("Choose camera", () => this._toggleCameraMenu());
+    this.cameraMenu = this._deviceMenu("Camera", this.cameraSelect);
+    this.cameraWrap = el("div", { class: "split-ctl" }, this.cameraBtn, this.cameraArrow, this.cameraMenu);
     // "Share" opens a small menu (Screen / Audio) when idle; while sharing it becomes
     // "Stop share" and a click stops it. One share at a time (one screenStream).
     this.shareBtn = el("button", { type: "button", class: "ctl share", onClick: () => this._onShareClick() });
@@ -219,25 +238,6 @@ export class Controls {
     // Noise suppression: opt-in (default OFF — it adds CPU/latency, so the user
     // enables it), and disabled while the large worklet loads on first enable.
     this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._onNsToggle() });
-
-    // Devices (gear): switch camera/mic on the fly, mid-call. The menu is populated
-    // fresh each time it opens (device labels/ids appear once permission is granted,
-    // and hot-plugged devices show up), and a change hot-swaps the device via
-    // replaceTrack — no renegotiation, and (for the mic) the NS graph is rebuilt.
-    this.cameraSelect = el("select", { class: "device", onChange: () => this._switchCameraDevice() });
-    this.micSelect = el("select", { class: "device", onChange: () => this._switchMicDevice() });
-    this.settingsBtn = el(
-      "button",
-      { type: "button", class: "ctl settings icon", title: "Input devices", "aria-label": "Input devices", onClick: () => this._toggleSettings() },
-      el("span", { class: "glyph", text: "⚙" }),
-    );
-    this.settingsMenu = el(
-      "div",
-      { class: "settings-menu", hidden: true },
-      el("label", { class: "field" }, el("span", { text: "Camera" }), this.cameraSelect),
-      el("label", { class: "field" }, el("span", { text: "Microphone" }), this.micSelect),
-    );
-    this.settingsWrap = el("div", { class: "settings-wrap" }, this.settingsBtn, this.settingsMenu);
 
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
@@ -277,7 +277,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.muteBtn, this.cameraBtn, this.shareWrap, this.nsBtn, this.settingsWrap, this.countdownBtn, this.chatBtn];
+    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -335,7 +335,9 @@ export class Controls {
       this.media.stopScreen(); // -> screen-stop -> unpublish + button
       return;
     }
-    this.shareMenu.hidden = !this.shareMenu.hidden; // toggle the Screen/Audio menu
+    const open = this.shareMenu.hidden;
+    this._closeMenus(); // only one popover open at a time
+    if (open) this.shareMenu.hidden = false;
   }
 
   // A menu choice: a screen share (video + optional audio) or an audio-only share.
@@ -348,15 +350,49 @@ export class Controls {
     else this.media.startScreen().catch(() => {});
   }
 
-  // Toggle the Devices menu; populate it from a fresh enumerate each time it opens so
-  // late-granted labels and hot-plugged devices appear.
-  async _toggleSettings() {
-    const opening = this.settingsMenu.hidden;
-    this.settingsMenu.hidden = !opening;
-    if (opening) await this._populateDevices();
+  // The caret button attached to a split control, and the little popover it opens.
+  _deviceArrow(label, onClick) {
+    return el(
+      "button",
+      { type: "button", class: "ctl ctl-arrow", title: label, "aria-label": label, "aria-haspopup": "menu", "aria-expanded": "false", onClick },
+      el("span", { class: "caret", text: "▾" }),
+    );
+  }
+  _deviceMenu(label, select) {
+    return el("div", { class: "device-menu", hidden: true }, el("label", { class: "field" }, el("span", { text: label }), select));
   }
 
-  async _populateDevices() {
+  // Close every popover (share, mic, camera) and reset the carets' expanded state.
+  _closeMenus() {
+    if (this.shareMenu) this.shareMenu.hidden = true;
+    if (this.micMenu) this.micMenu.hidden = true;
+    if (this.cameraMenu) this.cameraMenu.hidden = true;
+    if (this.micArrow) this.micArrow.setAttribute("aria-expanded", "false");
+    if (this.cameraArrow) this.cameraArrow.setAttribute("aria-expanded", "false");
+  }
+
+  // Toggle a device menu; populate it from a fresh enumerate each open so late-granted
+  // labels and hot-plugged devices appear. Only one popover is open at a time.
+  _toggleMicMenu() {
+    const open = this.micMenu.hidden;
+    this._closeMenus();
+    if (open) {
+      this.micMenu.hidden = false;
+      this.micArrow.setAttribute("aria-expanded", "true");
+      this._populateDevices("mic");
+    }
+  }
+  _toggleCameraMenu() {
+    const open = this.cameraMenu.hidden;
+    this._closeMenus();
+    if (open) {
+      this.cameraMenu.hidden = false;
+      this.cameraArrow.setAttribute("aria-expanded", "true");
+      this._populateDevices("camera");
+    }
+  }
+
+  async _populateDevices(kind) {
     if (!this.media) return;
     let devices;
     try {
@@ -364,8 +400,8 @@ export class Controls {
     } catch {
       return;
     }
-    this._fillDeviceSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
-    this._fillDeviceSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
+    if (kind === "camera") this._fillDeviceSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
+    else this._fillDeviceSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
   }
 
   _fillDeviceSelect(select, list, activeTrack, label) {
@@ -396,6 +432,7 @@ export class Controls {
     }
     this._setCameraButton(!!this.media.cameraTrack);
     if (this.grid) this.grid.refreshSelf();
+    this._closeMenus(); // selection made — dismiss the popover
   }
 
   // Hot-swap the mic mid-call. useDevices preserves the mute state, rebuilds the NS
@@ -408,6 +445,7 @@ export class Controls {
       /* media.js emits its own error event */
     }
     if (this.grid) this.grid.refreshSelf();
+    this._closeMenus(); // selection made — dismiss the popover
   }
 
   // Toggle mic noise suppression. First enable loads the ~2MB worklet, so disable
@@ -664,6 +702,8 @@ export class Controls {
     // title/aria-label carry the (action-phrased) accessible name.
     this.muteBtn.replaceChildren(svgIcon(enabled ? MIC_PATHS : MIC_OFF_PATHS));
     this.muteBtn.classList.toggle("active", !enabled);
+    // The caret shares the button's active tint so the split control reads as one unit.
+    if (this.micArrow) this.micArrow.classList.toggle("active", !enabled);
     const label = enabled ? "Mute microphone" : "Unmute microphone";
     this.muteBtn.title = label;
     this.muteBtn.setAttribute("aria-label", label);
@@ -674,6 +714,7 @@ export class Controls {
     // now that the visible text is gone (matches the mic button).
     this.cameraBtn.replaceChildren(svgIcon(enabled ? CAM_PATHS : CAM_OFF_PATHS));
     this.cameraBtn.classList.toggle("active", !enabled);
+    if (this.cameraArrow) this.cameraArrow.classList.toggle("active", !enabled);
     const label = enabled ? "Stop video" : "Start video";
     this.cameraBtn.title = label;
     this.cameraBtn.setAttribute("aria-label", label);

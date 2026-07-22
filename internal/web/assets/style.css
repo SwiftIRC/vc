@@ -690,13 +690,38 @@ video.mirror {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* Devices (gear) popover: same anchoring as the share menu, but wide enough to hold
-   two labeled <select>s for switching camera/mic mid-call. */
-.settings-wrap {
+/* Split control: a main icon button (mic/camera) fused with a caret button that opens
+   a device popover. The two share an edge so they read as one pill. */
+.controls .split-ctl {
   position: relative;
   display: inline-flex;
+  align-items: stretch;
 }
-.settings-menu {
+/* Flatten the main button's right side and the caret's left side where they meet. */
+.controls .split-ctl .ctl.icon {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.controls .ctl-arrow {
+  width: 1.15rem;
+  min-width: 1.15rem;
+  height: 2.5rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.controls .ctl-arrow .caret {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+/* Device popover: anchored above the split control, wide enough for a labeled
+   <select> of (often long) device names. */
+.device-menu {
   position: absolute;
   bottom: calc(100% + 0.3rem);
   left: 0;
@@ -712,10 +737,10 @@ video.mirror {
   z-index: 10;
 }
 /* Keep a long device name from forcing the popover wider than its column. */
-.settings-menu .field {
+.device-menu .field {
   min-width: 0;
 }
-.settings-menu select {
+.device-menu select {
   width: 100%;
   min-width: 0;
   max-width: 100%;
