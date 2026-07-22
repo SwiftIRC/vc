@@ -513,13 +513,34 @@ video.mirror {
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
-  width: 72px;
+  width: 76px;
   accent-color: var(--accent);
   cursor: pointer;
   background: rgba(0, 0, 0, 0.4);
   border-radius: 6px;
-  padding: 3px 5px;
+  /* No horizontal padding: it inset the track so the thumb couldn't reach 0% / 200%. */
+  padding: 3px 0;
   z-index: 2;
+}
+
+/* Percentage readout shown just under the slider while it's being dragged. */
+.tile .vol-label {
+  position: absolute;
+  top: 1.85rem;
+  right: 0.4rem;
+  padding: 1px 6px;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+.tile .vol-label.show {
+  opacity: 1;
 }
 
 /* Op controls move to the top-LEFT so they don't collide with the volume slider. */

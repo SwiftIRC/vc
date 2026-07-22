@@ -387,6 +387,16 @@ export class Grid {
     if (a.gain) a.gain.gain.value = boost ? v : 0;
   }
 
+  // Flash a "NNN%" readout under a volume slider while it is being dragged, auto-hiding
+  // shortly after the last move so it never lingers.
+  _showVolLabel(labelEl, v) {
+    if (!labelEl) return;
+    labelEl.textContent = Math.round(v * 100) + "%";
+    labelEl.classList.add("show");
+    if (labelEl._hideTimer) clearTimeout(labelEl._hideTimer);
+    labelEl._hideTimer = setTimeout(() => labelEl.classList.remove("show"), 900);
+  }
+
   // Update a participant's role badge from a role-change broadcast (op promotion).
   // Works for self too — the self tile carries a badge like any other.
   setPeerRole(id, role) {
@@ -478,7 +488,9 @@ export class Grid {
     // stream is (re)attached (see _attachAudio). Numeric attributes only, so it is
     // injection-safe.
     let volumeEl = null;
+    let volLabel = null;
     if (!self) {
+      volLabel = el("span", { class: "vol-label", "aria-hidden": "true" });
       volumeEl = el("input", {
         type: "range",
         class: "vol",
@@ -488,7 +500,11 @@ export class Grid {
         value: "1",
         title: "Volume (up to 200%)",
         "aria-label": "Volume",
-        onInput: (e) => this._setVolume(id, Number(e.target.value)),
+        onInput: (e) => {
+          const v = Number(e.target.value);
+          this._setVolume(id, v);
+          this._showVolLabel(volLabel, v);
+        },
       });
     }
 
@@ -498,11 +514,12 @@ export class Grid {
 
     const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, camOff, meta);
     if (volumeEl) tileEl.append(volumeEl);
+    if (volLabel) tileEl.append(volLabel);
     // Click the video to blow this tile up to fill the window; click again to restore.
     cameraVideo.title = "Click to focus";
     cameraVideo.addEventListener("click", () => this._toggleFocus(tileEl));
 
-    const tile = { el: tileEl, cameraVideo, camOff, nameEl, badgeEl, micPill, avPill, volumeEl, volume: 1, name, hasCamera: false, self };
+    const tile = { el: tileEl, cameraVideo, camOff, nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, self };
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);
@@ -583,7 +600,7 @@ export class Grid {
       const ops = this.screenOpActionsFor({ id, name });
       if (ops) elNode.append(ops);
     }
-    rec = { el: elNode, video, nameEl, placeholder, audioEl: null, volumeEl: null, source: null, gain: null, meterTrack: null };
+    rec = { el: elNode, video, nameEl, placeholder, audioEl: null, volumeEl: null, volLabel: null, source: null, gain: null, meterTrack: null };
     this.screens.set(id, rec);
     this.el.append(elNode);
     this._relayout();
@@ -615,6 +632,7 @@ export class Grid {
       // the >100% boost off a clone. Same reliable pattern as _attachAudio / _applyVolume.
       rec.audioEl = el("audio", { class: "sink", autoplay: true });
       rec.el.append(rec.audioEl);
+      rec.volLabel = el("span", { class: "vol-label", "aria-hidden": "true" });
       rec.volumeEl = el("input", {
         type: "range",
         class: "vol",
@@ -624,9 +642,14 @@ export class Grid {
         value: "1",
         title: "Screen volume (up to 200%)",
         "aria-label": "Screen volume",
-        onInput: () => this._applyVolume(rec, Math.min(2, Math.max(0, Number(rec.volumeEl.value)))),
+        onInput: () => {
+          const v = Math.min(2, Math.max(0, Number(rec.volumeEl.value)));
+          this._applyVolume(rec, v);
+          this._showVolLabel(rec.volLabel, v);
+        },
       });
       rec.el.append(rec.volumeEl);
+      rec.el.append(rec.volLabel);
     }
     // Tear down any prior WebAudio graph + its clone before re-pointing.
     if (rec.source) {
@@ -684,6 +707,10 @@ export class Grid {
     if (rec.volumeEl) {
       rec.volumeEl.remove();
       rec.volumeEl = null;
+    }
+    if (rec.volLabel) {
+      rec.volLabel.remove();
+      rec.volLabel = null;
     }
   }
 
