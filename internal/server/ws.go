@@ -14,17 +14,22 @@ import (
 	"github.com/ryanwohara/webrtc-chat/internal/signal"
 )
 
-const sendQueueCap = 64
+// sendQueueCap bounds each connection's outbound frame backlog. Generous so a brief
+// slow-read moment — a screenshare's video flooding a receiver's downlink, which shares
+// the path with these control frames — doesn't overflow and evict a live peer.
+const sendQueueCap = 128
 
 var (
 	pingInterval = 20 * time.Second
-	writeTimeout = 5 * time.Second
-	// pongTimeout bounds a keepalive ping's round trip. It is much larger than
-	// writeTimeout because the pong travels the client's UPLINK, which a screenshare's
-	// video upload can saturate for a few seconds — a tight timeout there would evict a
-	// perfectly live sharer, forcing a reconnect (and, pre-op-persistence, dropping any
-	// mid-call op). Only a genuinely dead peer stays silent past this.
-	pongTimeout = 15 * time.Second
+	// writeTimeout and pongTimeout are deliberately generous (not the usual few seconds).
+	// A screenshare saturates the sharer's UPLINK (delaying its keepalive pong) AND every
+	// receiver's DOWNLINK (delaying the offer/answer/candidate frames the server writes
+	// them) for the seconds it takes congestion control to settle. A tight deadline there
+	// evicts a perfectly live peer, forcing a reconnect — which is what fired the join
+	// chime and (before op-persistence) dropped mid-call op. Only a genuinely dead peer
+	// stays silent this long, and the ping still evicts those.
+	writeTimeout = 15 * time.Second
+	pongTimeout  = 15 * time.Second
 )
 
 // drainTimeout bounds how long writePump keeps flushing already-queued frames

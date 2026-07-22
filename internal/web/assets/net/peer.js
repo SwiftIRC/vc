@@ -33,6 +33,11 @@ import { handleRemoteOffer } from "../lib/negotiation.js";
 // recovery, so this only needs to cover a fresh gather + connectivity checks.
 const ICE_RESTART_GRACE_MS = 6000;
 
+// Max send bitrate for a screenshare (bits/sec). Plenty for typical desktop/app
+// content, while keeping the stream from saturating the sharer's uplink or a receiver's
+// downlink and starving the signaling WebSocket (see _capBitrate).
+const SCREEN_MAX_BITRATE = 2_500_000;
+
 export class Peer extends EventTarget {
   constructor(signaling) {
     super();
@@ -194,7 +199,25 @@ export class Peer extends EventTarget {
     this._streamIdByKind.set(kind, stream.id);
     this._kindByStreamId.set(stream.id, kind);
     this._senders.set(kind, transceiver.sender);
+    if (kind === "screen") this._capBitrate(transceiver.sender, SCREEN_MAX_BITRATE);
     return transceiver;
+  }
+
+  // Cap a sender's send bitrate. The SFU forwards a publisher's stream to every
+  // subscriber unchanged (no per-receiver bandwidth adaptation), so an uncapped
+  // screenshare can flood the sharer's uplink AND a receiver's downlink — starving the
+  // signaling WebSocket that shares the link until the server evicts a live peer (a
+  // spurious reconnect). A modest cap keeps the control channel breathing; congestion
+  // control still scales below it as needed.
+  _capBitrate(sender, maxBitrate) {
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+      params.encodings[0].maxBitrate = maxBitrate;
+      sender.setParameters(params).catch(() => {});
+    } catch {
+      /* setParameters/getParameters unsupported — best effort */
+    }
   }
 
   // Create and send one offer, guarded so overlapping triggers (start + the queued
