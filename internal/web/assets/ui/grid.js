@@ -330,7 +330,12 @@ export class Grid {
     for (const id of [...this.audio.keys()]) {
       if (id !== this.selfId) this._detachAudio(id);
     }
-    for (const id of [...this.screens.keys()]) this._removeScreenTile(id);
+    // Skip our OWN screen tile: it renders the local screenStream (which survives the
+    // reconnect), not a forward from the dead PC. Removing it made the share vanish for
+    // the sharer while everyone else — fed by the re-published track — still saw it.
+    for (const id of [...this.screens.keys()]) {
+      if (id !== this.selfId) this._removeScreenTile(id);
+    }
   }
 
   // Authoritative remote mic/camera state from a roster entry or a peer-media-state
