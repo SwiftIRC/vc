@@ -445,21 +445,25 @@ video.mirror {
   display: none;
 }
 
-.tile .meta {
+/* Name + role badge, centered along the top of the tile. max-width keeps a long name
+   from spanning edge-to-edge (and away from the top-right volume slider). */
+.tile .name-tag {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  top: 0.4rem;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.5rem;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  gap: 0.35rem;
+  max-width: calc(100% - 6rem);
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
   font-size: 0.85rem;
-  pointer-events: none; /* the name/pills don't intercept clicks, so most of the tile focuses */
+  pointer-events: none; /* clicks fall through to the video (focus) */
 }
 
-.tile .meta .name {
+.tile .name-tag .name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -480,10 +484,13 @@ video.mirror {
 }
 
 .tile .pills {
-  margin-left: auto;
+  position: absolute;
+  bottom: 0.4rem;
+  right: 0.4rem;
   display: flex;
   gap: 0.3rem;
-  flex: none;
+  pointer-events: none; /* clicks fall through to the video (focus) */
+  z-index: 2;
 }
 
 .tile .pill {

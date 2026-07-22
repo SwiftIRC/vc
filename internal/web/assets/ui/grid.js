@@ -527,11 +527,13 @@ export class Grid {
       });
     }
 
-    // Volume lives at the tile's top-right (a direct child, not in the meta row),
-    // above the video so dragging it never triggers the click-to-focus on the video.
-    const meta = el("div", { class: "meta" }, nameEl, badgeEl, el("span", { class: "pills" }, micPill, avPill));
+    // Name (with its op/voice badge) sits centered along the TOP of the tile; the
+    // mic/camera indicator pills sit at the bottom-right. Volume lives at the top-right
+    // (a direct child), above the video so dragging it never triggers click-to-focus.
+    const nameTag = el("div", { class: "name-tag" }, nameEl, badgeEl);
+    const pills = el("div", { class: "pills" }, micPill, avPill);
 
-    const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, camOff, meta);
+    const tileEl = el("div", { class: self ? "tile self" : "tile", "data-id": id }, cameraVideo, camOff, nameTag, pills);
     if (volumeEl) tileEl.append(volumeEl);
     if (volLabel) tileEl.append(volLabel);
     // Click the video to blow this tile up to fill the window; click again to restore.
@@ -611,7 +613,7 @@ export class Grid {
       el("span", { class: "cam-off-text", text: "Sharing audio" }),
     );
     const nameEl = el("span", { class: "name", text: `${name} (screen)` });
-    const elNode = el("div", { class: "tile screen" }, video, placeholder, el("div", { class: "meta" }, nameEl));
+    const elNode = el("div", { class: "tile screen" }, video, placeholder, el("div", { class: "name-tag" }, nameEl));
     video.title = "Click to focus";
     video.addEventListener("click", () => this._toggleFocus(elNode));
     // Ops can stop a remote participant's screenshare (never your own tile).
