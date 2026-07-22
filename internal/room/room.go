@@ -37,6 +37,11 @@ type Participant struct {
 	IP      string
 	Role    Role
 	Conn    Conn
+	// Ref is a stable, opaque per-session id (server-derived from the join frame's
+	// session nonce). Unlike ID it survives a reconnect, so it is carried in the
+	// roster / PeerJoined / PeerLeft frames purely so peers can recognise a
+	// reconnecting member and suppress the join/leave chime. "" when no nonce was sent.
+	Ref string
 	// Self-reported media state: is the mic / camera currently enabled? Updated by
 	// SetMediaState when the participant broadcasts a change, and stored here so the
 	// roster can convey it to late joiners. Guarded by Room.mu. The initial value
@@ -168,7 +173,7 @@ func (r *Room) Join(p *Participant, password string) error {
 	}
 	roster := make([]signal.PeerInfo, 0, len(r.parts))
 	for _, q := range r.parts {
-		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera})
+		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera, Ref: q.Ref})
 	}
 	replay := append([]signal.ChatEvent(nil), r.chat...)
 	quality := signal.Quality{Camera: r.qualityCamera, Screen: r.qualityScreen}
@@ -180,7 +185,7 @@ func (r *Room) Join(p *Participant, password string) error {
 	for _, ce := range replay {
 		p.Conn.Send(ce)
 	}
-	r.Broadcast(signal.PeerJoined{ID: p.ID, Name: p.Name, Role: string(p.Role), Mic: p.Mic, Camera: p.Camera}, p.ID)
+	r.Broadcast(signal.PeerJoined{ID: p.ID, Name: p.Name, Role: string(p.Role), Mic: p.Mic, Camera: p.Camera, Ref: p.Ref}, p.ID)
 	return nil
 }
 
@@ -206,7 +211,7 @@ func (r *Room) Leave(id string) {
 	if countdownCleared {
 		r.Broadcast(signal.CountdownEvent{Action: "stop", By: p.Name}, "")
 	}
-	r.Broadcast(signal.PeerLeft{ID: id}, "")
+	r.Broadcast(signal.PeerLeft{ID: id, Ref: p.Ref}, "")
 }
 
 // Countdown starts or stops the room's synced countdown sound. It is

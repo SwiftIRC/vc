@@ -118,6 +118,45 @@ func TestJoinCarriesProvidedInitialMedia(t *testing.T) {
 	}
 }
 
+// TestRefFlowsThroughRosterJoinLeave verifies the stable per-session Ref is carried on
+// the roster (PeerInfo), the PeerJoined broadcast, and the PeerLeft broadcast — the three
+// frames a client needs to recognise a reconnecting member and suppress its chime.
+func TestRefFlowsThroughRosterJoinLeave(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser)
+	alice.Ref = "refA"
+	r.Join(alice, "")
+
+	bob, bc := member("p2", "bob", RoleUser)
+	bob.Ref = "refB"
+	r.Join(bob, "")
+
+	// bob's roster carries alice's ref.
+	joined := bc.msgs[0].(signal.Joined)
+	if len(joined.Peers) != 1 || joined.Peers[0].Ref != "refA" {
+		t.Errorf("roster ref = %q, want refA", joinedFirstRef(joined))
+	}
+	// alice's PeerJoined for bob carries bob's ref.
+	ac := alice.Conn.(*fakeConn)
+	pj := ac.msgs[len(ac.msgs)-1].(signal.PeerJoined)
+	if pj.ID != "p2" || pj.Ref != "refB" {
+		t.Errorf("PeerJoined ref = %+v, want ID p2 Ref refB", pj)
+	}
+	// When bob leaves, the PeerLeft carries bob's ref too.
+	r.Leave("p2")
+	pl := ac.msgs[len(ac.msgs)-1].(signal.PeerLeft)
+	if pl.ID != "p2" || pl.Ref != "refB" {
+		t.Errorf("PeerLeft = %+v, want ID p2 Ref refB", pl)
+	}
+}
+
+func joinedFirstRef(j signal.Joined) string {
+	if len(j.Peers) == 0 {
+		return ""
+	}
+	return j.Peers[0].Ref
+}
+
 func TestGrantOp(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser) // first ad-hoc joiner -> op

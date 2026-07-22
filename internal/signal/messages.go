@@ -106,6 +106,11 @@ type PeerInfo struct {
 	Role   string `json:"role"` // "op" | "voice" | "user" | "guest"
 	Mic    bool   `json:"mic"`  // sender's mic enabled? (stored server-side)
 	Camera bool   `json:"camera"`
+	// Ref is a stable, opaque per-session id (derived from the client's session nonce,
+	// never the nonce itself). It survives a reconnect — which mints a fresh ID — so a
+	// client can tell a reconnecting member apart from a new one and skip the join/leave
+	// chime for it. "" when the client supplied no session nonce.
+	Ref string `json:"ref,omitempty"`
 }
 type Joined struct {
 	SelfID  string     `json:"selfId"`
@@ -126,6 +131,7 @@ type PeerJoined struct {
 	Role   string `json:"role"`
 	Mic    bool   `json:"mic"` // initial mic state (defaults true on join)
 	Camera bool   `json:"camera"`
+	Ref    string `json:"ref,omitempty"` // stable per-session id; see PeerInfo.Ref
 }
 
 // PeerMediaState tells every client that a peer's mic/camera enabled state
@@ -137,7 +143,8 @@ type PeerMediaState struct {
 	Camera bool   `json:"camera"`
 }
 type PeerLeft struct {
-	ID string `json:"id"`
+	ID  string `json:"id"`
+	Ref string `json:"ref,omitempty"` // stable per-session id; see PeerInfo.Ref
 }
 type TrackInfo struct {
 	Mid           string `json:"mid"`

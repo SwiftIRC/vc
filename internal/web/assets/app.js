@@ -23,6 +23,7 @@ import { Peer } from "./net/peer.js";
 import { parseToken, parseInvite } from "./lib/protocol.js";
 import { loadLayoutPrefs, saveLayoutPrefs } from "./lib/prefs.js";
 import { playSound } from "./lib/sounds.js";
+import { Presence } from "./lib/presence.js";
 import { ScreenWakeLock } from "./lib/wakelock.js";
 import { Prejoin } from "./ui/prejoin.js";
 import { Grid } from "./ui/grid.js";
@@ -52,6 +53,13 @@ let chat = null;
 let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-call)
 let mediaAlertEl = null; // in-call "media connection lost" prompt (null when not in-call)
 const screenWakeLock = new ScreenWakeLock(); // keeps the screen awake while in a call
+// Reconnect-aware join/leave chimes: a reconnecting member keeps a stable session ref
+// across its fresh participant id, so Presence rings the chime only for real arrivals /
+// departures — not for a screenshare-induced socket blip that rejoins as itself.
+const presence = new Presence({
+  onJoinChime: () => playSound("join"),
+  onDropChime: () => playSound("drop"),
+});
 let sessionQuality = { camera: "auto", screen: "auto" }; // op-set video caps for this call
 let lowBandwidth = loadLayoutPrefs().lowBandwidth === true; // per-user "data saver": receive audio only
 
@@ -209,6 +217,10 @@ function onServerError(msg) {
 function onJoined(msg) {
   showReconnecting(false);
   if (msg.quality) sessionQuality = { camera: msg.quality.camera || "auto", screen: msg.quality.screen || "auto" };
+  // Reset presence to this authoritative roster (also cancels any deferred drop chime).
+  // Runs for the initial join AND our own reconnect — the fresh roster is the source of
+  // truth for who is present, so the chime bookkeeping starts from it each time.
+  presence.seed(msg.peers);
   if (grid) {
     // Already in-call: this is a reconnect re-join. The server made a fresh SFU peer,
     // so rebuild ours to match (see rebuildPeer) before reconciling the roster — the
@@ -344,11 +356,11 @@ function renderInCall(msg) {
   // roster, and we don't want a burst of chimes when WE join a populated room.
   signaling.on("peer-joined", (m) => {
     addRosterPeer(m);
-    playSound("join");
+    presence.joined(m && m.ref); // chimes only for a genuinely new member, not a reconnect
   });
   signaling.on("peer-left", (m) => {
     grid.removePeer(m.id);
-    playSound("drop");
+    presence.left(m && m.ref); // defers the drop chime so a quick reconnect stays silent
   });
   // Authoritative per-peer mic/camera state: drives the remote mute indicators.
   signaling.on("peer-media-state", (m) => grid.setPeerMedia(m.id, { mic: m.mic, camera: m.camera }));
@@ -450,6 +462,7 @@ function showMediaFailed() {
 // before any media.stop() so grid/controls Media listeners are already detached.
 function teardownInCall() {
   screenWakeLock.disable(); // let the screen sleep again once the call is over
+  presence.clear(); // cancel any deferred drop chime so it can't fire after we leave
   if (controls) {
     controls.destroy();
     controls = null;

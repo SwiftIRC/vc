@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -224,7 +225,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		return
 	}
 
-	p := &room.Participant{ID: newID(), IP: ip, Conn: c}
+	p := &room.Participant{ID: newID(), IP: ip, Conn: c, Ref: sessionRef(join.Session)}
 	if claims != nil {
 		p.Name, p.Account, p.Role = claims.Nick, claims.Account, roleFromClaim(claims.Role)
 	} else {
@@ -380,6 +381,20 @@ func newID() string {
 	var b [9]byte
 	rand.Read(b[:])
 	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
+// sessionRef derives a STABLE, opaque per-session id from the client's session nonce.
+// It is broadcast in the roster/PeerJoined/PeerLeft frames so peers can recognise a
+// reconnecting member (same session, fresh participant ID) and suppress the join/leave
+// chime. The nonce is HASHED, never echoed: it is the single-use-invite binding secret
+// and must never leak to other clients. An empty nonce yields "", which the client
+// treats as "always a new join".
+func sessionRef(session string) string {
+	if session == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(session))
+	return base64.RawURLEncoding.EncodeToString(sum[:])[:16]
 }
 
 // sanitizeName strips control characters, collapses whitespace, and caps

@@ -228,3 +228,26 @@ type nopConn struct{}
 func (nopConn) Send(v any) bool          { return true }
 func (nopConn) Close()                   {}
 func (nopConn) CloseAfter(time.Duration) {}
+
+// TestSessionRef verifies the reconnect id derived from a session nonce: stable for the
+// same nonce (so a reconnect is recognisable), distinct per nonce, opaque (never the raw
+// nonce — it is the invite-binding secret), and empty for an empty nonce.
+func TestSessionRef(t *testing.T) {
+	const nonce = "5f3c1b2a-tab-session-nonce"
+	a := sessionRef(nonce)
+	if a == "" {
+		t.Fatal("sessionRef of a non-empty nonce must not be empty")
+	}
+	if a != sessionRef(nonce) {
+		t.Error("sessionRef must be stable for the same nonce (reconnect must match)")
+	}
+	if a == nonce || strings.Contains(a, nonce) {
+		t.Errorf("sessionRef must not echo the raw nonce, got %q", a)
+	}
+	if sessionRef("other-nonce") == a {
+		t.Error("different nonces must yield different refs")
+	}
+	if sessionRef("") != "" {
+		t.Error("an empty nonce must yield an empty ref (client falls back to always-chime)")
+	}
+}
