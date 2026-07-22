@@ -317,6 +317,22 @@ export class Grid {
     }
   }
 
+  // Drop all REMOTE media (video, audio, screen tiles) — used when the peer is rebuilt
+  // on a reconnect: those streams came from the now-dead PC. The participant TILES stay
+  // (the roster reconcile keeps them); the fresh peer's forwards repopulate the media.
+  // Self media is untouched.
+  resetRemoteMedia() {
+    for (const [id, tile] of this.tiles) {
+      if (id === this.selfId) continue;
+      tile.cameraVideo.srcObject = null;
+      tile.hasCamera = false;
+    }
+    for (const id of [...this.audio.keys()]) {
+      if (id !== this.selfId) this._detachAudio(id);
+    }
+    for (const id of [...this.screens.keys()]) this._removeScreenTile(id);
+  }
+
   // Authoritative remote mic/camera state from a roster entry or a peer-media-state
   // broadcast: crossed-out pill when off, live when on. No-op for self (the self
   // tile is driven locally by refreshSelf). If the peer's tile does not exist yet

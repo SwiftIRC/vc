@@ -206,7 +206,11 @@ function onServerError(msg) {
 function onJoined(msg) {
   showReconnecting(false);
   if (grid) {
+    // Already in-call: this is a reconnect re-join. The server made a fresh SFU peer,
+    // so rebuild ours to match (see rebuildPeer) before reconciling the roster — the
+    // old media PC can no longer negotiate with the server's new one.
     if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
+    rebuildPeer();
     for (const p of msg.peers || []) addRosterPeer(p);
     return;
   }
@@ -295,15 +299,6 @@ function renderInCall(msg) {
   // existing peer's stored mic/camera state (so an already-muted peer shows muted).
   for (const p of msg.peers || []) addRosterPeer(p);
 
-  // Remote media -> tiles.
-  peer.addEventListener("remote-track", (e) => grid.onRemoteTrack(e.detail));
-  peer.addEventListener("peer-gone", (e) => grid.onPeerGone(e.detail));
-  peer.addEventListener("error", (e) => console.error("peer error", e.detail.phase, e.detail.error));
-  // The media plane failed and one ICE restart didn't recover it. Surface a visible,
-  // non-blocking prompt; unlike kicked/banned we do NOT stop() the socket — the WS
-  // may still be fine (chat/roster keep working), and a reload rebuilds the call.
-  peer.addEventListener("media-failed", showMediaFailed);
-
   // Local mic track swapped (noise-suppression toggle): replace what we publish for
   // "mic" in place — replaceTrack needs no renegotiation for a same-kind track. The
   // `media` singleton is discarded on leave, so this listener dies with the call.
@@ -359,11 +354,45 @@ function renderInCall(msg) {
     if (m.id === grid.selfId && m.role === "op") controls.becomeOp();
   });
 
+  wirePeerAndStart();
+  controls.enableDefaultNoiseSuppression(); // denoise on by default; opt out via the control
+}
+
+// Attach the current `peer`'s events to the grid/UI and start it — offer whatever we're
+// currently sending (camera, mic, and an active screenshare). Used at first render and
+// again when the peer is rebuilt on a reconnect.
+function wirePeerAndStart() {
+  // Remote media -> tiles.
+  peer.addEventListener("remote-track", (e) => grid.onRemoteTrack(e.detail));
+  peer.addEventListener("peer-gone", (e) => grid.onPeerGone(e.detail));
+  peer.addEventListener("error", (e) => console.error("peer error", e.detail.phase, e.detail.error));
+  // The media plane failed and one ICE restart didn't recover it. Surface a visible,
+  // non-blocking prompt; unlike kicked/banned we do NOT stop() the socket — the WS
+  // may still be fine (chat/roster keep working), and a reload rebuilds the call.
+  peer.addEventListener("media-failed", showMediaFailed);
+
   const localTracks = [];
   if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });
   if (media && media.micTrack) localTracks.push({ track: media.micTrack, kind: "mic" });
+  // Re-publish an in-progress screenshare too, so a reconnect mid-share keeps sharing.
+  if (media && media.screenTrack) localTracks.push({ track: media.screenTrack, kind: "screen" });
+  if (media && media.screenAudioTrack) localTracks.push({ track: media.screenAudioTrack, kind: "screen-audio" });
   peer.start(localTracks).catch((err) => console.error("peer start failed", err));
-  controls.enableDefaultNoiseSuppression(); // denoise on by default; opt out via the control
+}
+
+// On a reconnect (or server restart) the server builds a FRESH SFU peer for us, so our
+// existing media PC is now talking to a dead peer — and the fresh peer's offers, which
+// start from m-line 0, don't match our stale PC's m-line order ("The order of m-lines
+// ... doesn't match ..."), wedging renegotiation. Rebuild our peer to match: close the
+// old one (which detaches its stale Signaling handlers), drop the remote media that
+// came from it, and start a fresh peer republishing our current local tracks. The UI
+// (grid/controls/chat) is kept — only the media plane is rebuilt.
+function rebuildPeer() {
+  if (peer) peer.close();
+  peer = new Peer(signaling);
+  if (controls) controls.peer = peer; // controls publishes screenshares through peer
+  if (grid) grid.resetRemoteMedia(); // clear old streams; the fresh peer re-delivers them
+  wirePeerAndStart();
 }
 
 // Toggle the in-call "Reconnecting…" notice (server-restarting, or any reconnect

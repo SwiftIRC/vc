@@ -41,6 +41,17 @@ export class Signaling {
     return this;
   }
 
+  // Remove a previously-registered handler. Used when the media Peer is rebuilt on a
+  // reconnect: the old Peer's offer/answer/candidate/tracks handlers must come off the
+  // (persistent) Signaling so the fresh Peer's don't run alongside stale ones.
+  off(type, handler) {
+    const list = this.handlers.get(type);
+    if (!list) return this;
+    const i = list.indexOf(handler);
+    if (i !== -1) list.splice(i, 1);
+    return this;
+  }
+
   connect() {
     if (this.stopped) return;
     const ws = new WebSocket(this.url);

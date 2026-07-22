@@ -141,6 +141,33 @@ test("on() dispatches decoded frames to the type handler and the catch-all", (t)
   assert.equal(all.length, 2, "catch-all fires for every message");
 });
 
+test("off() removes a handler so it stops receiving frames (peer rebuild on reconnect)", (t) => {
+  const { instances } = install(t);
+  const sig = new Signaling("/ws/room1");
+  const stale = [];
+  const fresh = [];
+  const onStale = (m) => stale.push(m);
+  const onFresh = (m) => fresh.push(m);
+  sig.on("offer", onStale);
+  sig.connect();
+  const ws = instances[0];
+  ws.fireOpen();
+
+  ws.fireMessage(encode("offer", { sdp: "a" }));
+  assert.equal(stale.length, 1, "handler receives while registered");
+
+  // Rebuild: detach the stale handler, attach a fresh one — only the fresh one fires.
+  sig.off("offer", onStale);
+  sig.on("offer", onFresh);
+  ws.fireMessage(encode("offer", { sdp: "b" }));
+  assert.equal(stale.length, 1, "detached handler no longer fires");
+  assert.deepEqual(fresh, [{ type: "offer", sdp: "b" }], "fresh handler fires");
+
+  // off() for an unknown handler/type is a harmless no-op.
+  assert.doesNotThrow(() => sig.off("offer", () => {}));
+  assert.doesNotThrow(() => sig.off("nope", onFresh));
+});
+
 test("a malformed inbound frame is ignored, not dispatched, and does not throw", (t) => {
   const { instances } = install(t);
   const sig = new Signaling("/ws/room1");

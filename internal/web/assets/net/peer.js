@@ -100,10 +100,16 @@ export class Peer extends EventTarget {
     this.pc.oniceconnectionstatechange = () => this._onConnectionStateChange();
 
     // Inbound signaling. Handlers receive the decoded frame ({type, ...fields}).
-    signaling.on("offer", (msg) => this._onRemoteOffer(msg).catch((err) => this._emitError(err, "offer")));
-    signaling.on("answer", (msg) => this._onRemoteAnswer(msg).catch((err) => this._emitError(err, "answer")));
-    signaling.on("candidate", (msg) => this._onRemoteCandidate(msg).catch((err) => this._emitError(err, "candidate")));
-    signaling.on("tracks", (msg) => this._onTracks(msg));
+    // Recorded so close() can detach them: on a reconnect the media Peer is rebuilt but
+    // the Signaling object persists, and stale handlers would run alongside the fresh
+    // Peer's (double-answering the SFU) if left registered.
+    this._sigHandlers = [
+      ["offer", (msg) => this._onRemoteOffer(msg).catch((err) => this._emitError(err, "offer"))],
+      ["answer", (msg) => this._onRemoteAnswer(msg).catch((err) => this._emitError(err, "answer"))],
+      ["candidate", (msg) => this._onRemoteCandidate(msg).catch((err) => this._emitError(err, "candidate"))],
+      ["tracks", (msg) => this._onTracks(msg)],
+    ];
+    for (const [type, fn] of this._sigHandlers) signaling.on(type, fn);
   }
 
   // Add the initial local tracks and send the first offer. localTracks is an
@@ -162,8 +168,11 @@ export class Peer extends EventTarget {
     this.pc.removeTrack(sender);
   }
 
-  // Tear down the peer connection.
+  // Tear down the peer connection. Detaches our Signaling handlers first so a Peer
+  // rebuilt on the same (persistent) Signaling doesn't leave this one answering too.
   close() {
+    for (const [type, fn] of this._sigHandlers) this.signaling.off(type, fn);
+    this._sigHandlers = [];
     if (this._iceGraceTimer) {
       clearTimeout(this._iceGraceTimer);
       this._iceGraceTimer = null;
