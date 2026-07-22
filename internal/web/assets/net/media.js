@@ -71,9 +71,12 @@ export class Media extends EventTarget {
     return (this.screenStream && this.screenStream.getAudioTracks()[0]) || null;
   }
 
-  // Acquire the initial camera+mic stream with a single permission prompt.
-  // Resolves with the owned stream; rejects (and emits "error") on failure.
-  async start() {
+  // Acquire the initial camera+mic stream with a single permission prompt. The
+  // optional { cameraId, micId } prefers the last-selected devices; each is applied
+  // as an `ideal` (not `exact`) deviceId, so a since-removed device falls back to the
+  // browser default instead of failing the capture. Resolves with the owned stream;
+  // rejects (and emits "error") on failure.
+  async start({ cameraId, micId } = {}) {
     // Request the mic and camera SEPARATELY (two getUserMedia calls) rather than one
     // {audio, video} request. A combined request rejects wholesale if either device is
     // blocked or absent — so a covered/denied camera would also cost you the mic. Asking
@@ -87,9 +90,9 @@ export class Media extends EventTarget {
         return null; // a denied/absent device must not block the other
       }
     };
-    const micStream = await grab({ audio: true });
+    const micStream = await grab({ audio: micId ? { deviceId: { ideal: micId } } : true });
     if (micStream) this._adopt(micStream);
-    const camStream = await grab({ video: true });
+    const camStream = await grab({ video: cameraId ? { deviceId: { ideal: cameraId } } : true });
     if (camStream) this._adopt(camStream);
     if (!this.stream) {
       const err = new Error("microphone and camera are both unavailable");

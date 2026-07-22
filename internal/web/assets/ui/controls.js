@@ -599,6 +599,7 @@ export class Controls {
     if (!this.media || !this.cameraSelect.value) return;
     try {
       await this.media.useDevices({ cameraId: this.cameraSelect.value });
+      saveMediaPrefs({ cameraId: this.cameraSelect.value }); // remember this camera for next time
     } catch {
       /* media.js emits its own error event */
     }
@@ -613,6 +614,7 @@ export class Controls {
     if (!this.media || !this.micSelect.value) return;
     try {
       await this.media.useDevices({ micId: this.micSelect.value });
+      saveMediaPrefs({ micId: this.micSelect.value }); // remember this mic for next time
     } catch {
       /* media.js emits its own error event */
     }

@@ -28,6 +28,16 @@ test("saveMediaPrefs round-trips and merges partial updates", () => {
   assert.deepEqual(loadMediaPrefs(), { mic: true, camera: false });
 });
 
+test("saved device ids coexist with the on-off flags without clobbering", () => {
+  stubStorage();
+  saveMediaPrefs({ mic: true, camera: true });
+  saveMediaPrefs({ cameraId: "cam-2" }); // remembering a device must not touch the flags
+  saveMediaPrefs({ micId: "mic-7" });
+  assert.deepEqual(loadMediaPrefs(), { mic: true, camera: true, cameraId: "cam-2", micId: "mic-7" });
+  saveMediaPrefs({ cameraId: "cam-9" }); // re-selecting overwrites just that device
+  assert.deepEqual(loadMediaPrefs(), { mic: true, camera: true, cameraId: "cam-9", micId: "mic-7" });
+});
+
 test("malformed stored JSON is ignored, not thrown", () => {
   const store = stubStorage();
   store.set("swiftirc-vc-media", "not json{");

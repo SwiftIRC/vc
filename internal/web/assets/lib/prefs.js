@@ -1,8 +1,12 @@
-// Persisted media join preferences — mic / camera / noise-suppression on-off — so the
-// next visit's lobby (and the call) default to however the user last left them. Values
-// are booleans; an ABSENT key means "no saved preference", i.e. use the app default
-// (consumers test `=== false` / `!== false`, never truthiness of a maybe-undefined key).
-// All localStorage access is guarded: it throws in private mode or when storage is off.
+// Persisted media join preferences so the next visit's lobby (and the call) default to
+// however the user last left them:
+//   - mic / camera / ns  booleans — the mic/camera/noise-suppression on-off state.
+//   - micId / cameraId   deviceId strings — the last input device explicitly selected.
+// An ABSENT key means "no saved preference", i.e. use the app default (boolean consumers
+// test `=== false` / `!== false`, never truthiness of a maybe-undefined key; a saved
+// deviceId is applied as an `ideal` constraint so a since-removed device still falls back
+// to the default). All localStorage access is guarded: it throws in private mode or when
+// storage is off.
 const KEY = "swiftirc-vc-media";
 
 export function loadMediaPrefs() {
@@ -14,8 +18,8 @@ export function loadMediaPrefs() {
   }
 }
 
-// Merge a partial update ({ mic?, camera?, ns? }) into the stored preferences, so a
-// caller that only knows about the mic doesn't clobber the saved camera/ns choice.
+// Merge a partial update ({ mic?, camera?, ns?, micId?, cameraId? }) into the stored
+// preferences, so a caller that only knows about one field doesn't clobber the others.
 export function saveMediaPrefs(update) {
   try {
     localStorage.setItem(KEY, JSON.stringify({ ...loadMediaPrefs(), ...update }));

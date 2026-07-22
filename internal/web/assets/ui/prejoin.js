@@ -228,7 +228,10 @@ export class Prejoin {
 
   async _startPreview() {
     try {
-      await this.media.start();
+      // Open the last-selected mic/camera from a previous visit (ideal constraints,
+      // so a missing device falls back to the default rather than failing).
+      const prefs = loadMediaPrefs();
+      await this.media.start({ cameraId: prefs.cameraId, micId: prefs.micId });
       if (this.destroyed) return;
       this.video.srcObject = this.media.stream;
     } catch {
@@ -274,6 +277,7 @@ export class Prejoin {
     // one. Selecting a device is a deliberate "use this camera" action.
     try {
       await this.media.useDevices({ cameraId: this.cameraSelect.value });
+      saveMediaPrefs({ cameraId: this.cameraSelect.value }); // remember this camera for next time
       this._syncMediaState(); // reflect the switch on the button + overlay
     } catch {
       this._syncMediaState(); // media.js emits its own error; reflect whatever state we ended in
@@ -284,6 +288,7 @@ export class Prejoin {
     if (!this.micSelect.value) return; // no real device id (no permission) — nothing to switch to
     try {
       await this.media.useDevices({ micId: this.micSelect.value });
+      saveMediaPrefs({ micId: this.micSelect.value }); // remember this mic for next time
       this._syncMediaState(); // the new mic inherits the old mute state; reflect it
     } catch {
       /* keep the previous device */
