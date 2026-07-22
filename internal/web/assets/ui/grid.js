@@ -370,10 +370,21 @@ export class Grid {
     const tile = this.tiles.get(id);
     if (tile) tile.volume = v;
     const a = this.audio.get(id);
-    if (a) {
-      if (a.gain) a.gain.gain.value = v; // WebAudio path: full 0-200% range
-      else if (a.audioEl) a.audioEl.volume = Math.min(1, v); // element fallback: 0-100%
+    if (a) this._applyVolume(a, v);
+  }
+
+  // Apply a 0-2 volume to an audio record { audioEl, gain }. The <audio> element covers
+  // 0-100% via element.volume — the reliable, cross-browser way to set WebRTC remote
+  // audio level — and a WebAudio gain node adds the >100% BOOST. Exactly one path is
+  // audible at a time (the element is muted while WebAudio boosts), so nothing doubles;
+  // with no gain node the element still covers the full 0-100%.
+  _applyVolume(a, v) {
+    const boost = v > 1 && a.gain != null;
+    if (a.audioEl) {
+      a.audioEl.muted = boost;
+      a.audioEl.volume = boost ? 1 : Math.min(1, v);
     }
+    if (a.gain) a.gain.gain.value = boost ? v : 0;
   }
 
   // Update a participant's role badge from a role-change broadcast (op promotion).
@@ -572,7 +583,7 @@ export class Grid {
       const ops = this.screenOpActionsFor({ id, name });
       if (ops) elNode.append(ops);
     }
-    rec = { el: elNode, video, nameEl, placeholder, audioEl: null, volumeEl: null, source: null, gain: null };
+    rec = { el: elNode, video, nameEl, placeholder, audioEl: null, volumeEl: null, source: null, gain: null, meterTrack: null };
     this.screens.set(id, rec);
     this.el.append(elNode);
     this._relayout();
@@ -600,10 +611,9 @@ export class Grid {
     if (!stream) return;
     const rec = this._ensureScreenTile(id, name);
     if (!rec.audioEl) {
-      // Muted <audio> = stream puller; playback + 0-200% volume run through the gain
-      // node below (same pattern as _attachAudio).
+      // The <audio> element itself is the audible 0-100% sink (reliable); WebAudio adds
+      // the >100% boost off a clone. Same reliable pattern as _attachAudio / _applyVolume.
       rec.audioEl = el("audio", { class: "sink", autoplay: true });
-      rec.audioEl.muted = true;
       rec.el.append(rec.audioEl);
       rec.volumeEl = el("input", {
         type: "range",
@@ -614,32 +624,42 @@ export class Grid {
         value: "1",
         title: "Screen volume (up to 200%)",
         "aria-label": "Screen volume",
-        onInput: (e) => {
-          const v = Math.min(2, Math.max(0, Number(e.target.value)));
-          if (rec.gain) rec.gain.gain.value = v;
-          else if (rec.audioEl) rec.audioEl.volume = Math.min(1, v);
-        },
+        onInput: () => this._applyVolume(rec, Math.min(2, Math.max(0, Number(rec.volumeEl.value)))),
       });
       rec.el.append(rec.volumeEl);
     }
-    rec.audioEl.srcObject = stream;
+    // Tear down any prior WebAudio graph + its clone before re-pointing.
     if (rec.source) {
       try { rec.source.disconnect(); } catch { /* already gone */ }
     }
     if (rec.gain) {
       try { rec.gain.disconnect(); } catch { /* already gone */ }
     }
+    if (rec.meterTrack) {
+      try { rec.meterTrack.stop(); } catch { /* already stopped */ }
+    }
     rec.source = null;
     rec.gain = null;
+    rec.meterTrack = null;
+
+    rec.audioEl.srcObject = stream;
     try {
-      const ctx = this._ensureAudioCtx();
-      rec.source = ctx.createMediaStreamSource(stream);
-      rec.gain = ctx.createGain();
-      rec.gain.gain.value = rec.volumeEl ? Number(rec.volumeEl.value) : 1;
-      rec.source.connect(rec.gain).connect(ctx.destination);
+      const raw = stream.getAudioTracks()[0];
+      if (raw) {
+        const ctx = this._ensureAudioCtx();
+        rec.meterTrack = raw.clone();
+        rec.source = ctx.createMediaStreamSource(new MediaStream([rec.meterTrack]));
+        rec.gain = ctx.createGain();
+        rec.gain.gain.value = 0; // silent unless _applyVolume boosts past 100%
+        rec.source.connect(rec.gain).connect(ctx.destination);
+      }
     } catch {
-      rec.audioEl.muted = false; // WebAudio unavailable: element playback (0-100%)
+      // WebAudio unavailable: the element alone still covers 0-100%.
+      rec.source = null;
+      rec.gain = null;
+      if (rec.meterTrack) { try { rec.meterTrack.stop(); } catch { /* ignore */ } rec.meterTrack = null; }
     }
+    this._applyVolume(rec, rec.volumeEl ? Math.min(2, Math.max(0, Number(rec.volumeEl.value))) : 1);
     rec.audioEl.play().catch(() => {});
   }
 
@@ -652,8 +672,12 @@ export class Grid {
     if (rec.gain) {
       try { rec.gain.disconnect(); } catch { /* already gone */ }
     }
+    if (rec.meterTrack) {
+      try { rec.meterTrack.stop(); } catch { /* already stopped */ }
+    }
     rec.source = null;
     rec.gain = null;
+    rec.meterTrack = null;
     rec.audioEl.srcObject = null;
     rec.audioEl.remove();
     rec.audioEl = null;
@@ -671,6 +695,9 @@ export class Grid {
     }
     if (rec.gain) {
       try { rec.gain.disconnect(); } catch { /* already gone */ }
+    }
+    if (rec.meterTrack) {
+      try { rec.meterTrack.stop(); } catch { /* already stopped */ }
     }
     rec.video.srcObject = null;
     if (rec.audioEl) rec.audioEl.srcObject = null;
@@ -698,41 +725,52 @@ export class Grid {
     if (!tile || !stream) return;
 
     const vol = typeof tile.volume === "number" ? tile.volume : 1;
-    // Playback runs through a WebAudio gain node so the slider can boost PAST 100%
-    // (an <audio> element's .volume caps at 1.0). The muted <audio> element is kept
-    // only as a stream puller — belt-and-suspenders for browsers that won't render a
-    // bare MediaStreamSource. If WebAudio is unavailable we fall back to element
-    // playback (0-100% only).
+    // Play the remote mic through the <audio> element itself: element.volume is the
+    // reliable, cross-browser control for WebRTC remote audio. (The old design muted the
+    // element and routed playback through a WebAudio gain node, so the slider did nothing
+    // whenever createMediaStreamSource produced no audible output.) WebAudio is now used
+    // ONLY for the >100% boost and the active-speaker meter, and it taps a CLONE of the
+    // track so tapping can never silence the element. See _applyVolume.
     const audioEl = el("audio", { class: "sink", autoplay: true });
     audioEl.srcObject = stream;
-    audioEl.muted = true;
     tile.el.append(audioEl);
 
     let source = null;
     let gain = null;
     let analyser = null;
     let data = null;
+    let meterTrack = null;
     try {
-      const ctx = this._ensureAudioCtx();
-      source = ctx.createMediaStreamSource(stream);
-      gain = ctx.createGain();
-      gain.gain.value = vol;
-      source.connect(gain).connect(ctx.destination); // audible; gain 0-2 = 0-200%
-      analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.8;
-      source.connect(analyser); // parallel tap for the active-speaker meter
-      data = new Uint8Array(analyser.fftSize);
+      const raw = stream.getAudioTracks()[0];
+      if (raw) {
+        const ctx = this._ensureAudioCtx();
+        meterTrack = raw.clone();
+        source = ctx.createMediaStreamSource(new MediaStream([meterTrack]));
+        gain = ctx.createGain();
+        gain.gain.value = 0; // silent unless _applyVolume raises it past 100%
+        source.connect(gain).connect(ctx.destination);
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8;
+        source.connect(analyser); // parallel tap for the active-speaker meter
+        data = new Uint8Array(analyser.fftSize);
+      }
     } catch {
-      // WebAudio unavailable/blocked: play via the element (capped at 100%), no meter.
-      audioEl.muted = false;
-      audioEl.volume = Math.min(1, vol);
+      // WebAudio unavailable: the element alone still covers 0-100%.
       source = null;
       gain = null;
       analyser = null;
+      data = null;
+      if (meterTrack) {
+        try { meterTrack.stop(); } catch { /* ignore */ }
+        meterTrack = null;
+      }
     }
 
-    this.audio.set(id, { audioEl, source, gain, analyser, data });
+    const a = { audioEl, source, gain, analyser, data, meterTrack };
+    this.audio.set(id, a);
+    this._applyVolume(a, vol);
+    audioEl.play().catch(() => {}); // unmuted autoplay is allowed under the join gesture
     this._ensureLevelLoop();
   }
 
@@ -788,6 +826,13 @@ export class Grid {
         a.gain.disconnect();
       } catch {
         /* already disconnected */
+      }
+    }
+    if (a.meterTrack) {
+      try {
+        a.meterTrack.stop(); // the clone that fed the WebAudio boost/meter
+      } catch {
+        /* already stopped */
       }
     }
     if (a.audioEl) {
