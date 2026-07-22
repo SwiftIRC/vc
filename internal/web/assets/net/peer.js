@@ -226,23 +226,25 @@ export class Peer extends EventTarget {
   // --- inbound signaling ---
 
   // A server-initiated offer (renegotiation). Ask lib/negotiation whether this
-  // collides with an offer of our own; the polite peer rolls its own offer back
-  // first, then answers either way. Rolling back discards our local offer but keeps
-  // any transceiver we had added (notably a screenshare) — that transceiver is now
-  // on the PC but absent from the negotiated description, so the SFU cannot see it.
-  // We therefore re-offer EXPLICITLY once we are back to stable rather than relying
-  // on onnegotiationneeded to re-fire after the rollback: browsers do not re-fire it
-  // dependably in that case, and without the re-offer the screen track would sit
-  // unpublished and never reach the other participants.
+  // collides with an offer of our own. On collision the polite peer yields via
+  // IMPLICIT rollback: a bare setRemoteDescription(offer) while we hold a local offer
+  // rolls ours back atomically (the WebRTC perfect-negotiation pattern) and applies
+  // the server's in one operation. We deliberately do NOT do a manual
+  // setLocalDescription({type:"rollback"}) first: that two-step reshuffles m-lines —
+  // a send transceiver we just added (a screenshare) gets re-associated with the
+  // server's freshly forwarded m-line, so our next offer's m-line order no longer
+  // matches the last answer and the peer wedges ("The order of m-lines ... doesn't
+  // match ..."). Rolling back still keeps the added transceiver on the PC but out of
+  // the negotiated description, so we re-offer EXPLICITLY once stable (browsers don't
+  // dependably re-fire onnegotiationneeded after a rollback) — otherwise the screen
+  // track would sit unpublished.
   async _onRemoteOffer(msg) {
     const { action } = handleRemoteOffer({
       makingOffer: this.makingOffer,
       signalingState: this.pc.signalingState,
     });
     const rolledBack = action === "rollback-then-answer";
-    if (rolledBack) {
-      await this.pc.setLocalDescription({ type: "rollback" });
-    }
+    // Implicit rollback: no manual rollback step — SRD(offer) does it when we're not stable.
     await this.pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
     await this._drainCandidates();
     const answer = await this.pc.createAnswer();
