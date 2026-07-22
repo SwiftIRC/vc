@@ -99,6 +99,11 @@ type Room struct {
 	chat           []signal.ChatEvent
 	bannedAccounts map[string]struct{}
 	bannedIPs      map[string]struct{}
+	// Accounts granted op mid-call (via GrantOp). A grant lives on the Participant,
+	// which is discarded on a reconnect, so remember it by account and re-apply on
+	// (re)join — otherwise a network blip or a screenshare-induced reconnect silently
+	// demotes them. Identified users only; a guest has no stable identity to key on.
+	opAccounts map[string]struct{}
 	emptySince     time.Time
 	hasBeenJoined  bool
 	// Synced countdown sound. countdownActive gates the control for everyone;
@@ -116,6 +121,7 @@ func New(cfg Config) *Room {
 		parts:          map[string]*Participant{},
 		bannedAccounts: map[string]struct{}{},
 		bannedIPs:      map[string]struct{}{},
+		opAccounts:     map[string]struct{}{},
 	}
 }
 
@@ -141,6 +147,12 @@ func (r *Room) Join(p *Participant, password string) error {
 	}
 	if r.cfg.Adhoc && !r.hasBeenJoined {
 		p.Role = RoleOp
+	}
+	// Restore a mid-call op grant this account earned before a reconnect.
+	if p.Account != "" {
+		if _, ok := r.opAccounts[p.Account]; ok {
+			p.Role = RoleOp
+		}
 	}
 	r.hasBeenJoined = true
 	// Media defaults ON unless the client reported its true state (which may be
@@ -385,6 +397,9 @@ func (r *Room) GrantOp(actorID, targetID string) error {
 		return nil // already op
 	}
 	tgt.Role = RoleOp
+	if tgt.Account != "" {
+		r.opAccounts[tgt.Account] = struct{}{} // survive this account's future reconnects
+	}
 	r.mu.Unlock()
 	r.Broadcast(signal.RoleChange{ID: tgt.ID, Role: string(RoleOp)}, "")
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "op", Target: tgt.Name}, "")

@@ -19,6 +19,12 @@ const sendQueueCap = 64
 var (
 	pingInterval = 20 * time.Second
 	writeTimeout = 5 * time.Second
+	// pongTimeout bounds a keepalive ping's round trip. It is much larger than
+	// writeTimeout because the pong travels the client's UPLINK, which a screenshare's
+	// video upload can saturate for a few seconds — a tight timeout there would evict a
+	// perfectly live sharer, forcing a reconnect (and, pre-op-persistence, dropping any
+	// mid-call op). Only a genuinely dead peer stays silent past this.
+	pongTimeout = 15 * time.Second
 )
 
 // drainTimeout bounds how long writePump keeps flushing already-queued frames
@@ -94,7 +100,7 @@ func (c *wsClient) writePump() {
 				return
 			}
 		case <-ticker.C:
-			pctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+			pctx, cancel := context.WithTimeout(context.Background(), pongTimeout)
 			err := c.conn.Ping(pctx)
 			cancel()
 			if err != nil {

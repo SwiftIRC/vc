@@ -114,9 +114,9 @@ func TestOverflowReturnsFalse(t *testing.T) {
 }
 
 func TestPingEvictsDeadPeer(t *testing.T) {
-	oldPing, oldWrite := pingInterval, writeTimeout
-	pingInterval, writeTimeout = 30*time.Millisecond, 100*time.Millisecond
-	t.Cleanup(func() { pingInterval, writeTimeout = oldPing, oldWrite })
+	oldPing, oldPong := pingInterval, pongTimeout
+	pingInterval, pongTimeout = 30*time.Millisecond, 100*time.Millisecond // ping uses pongTimeout
+	t.Cleanup(func() { pingInterval, pongTimeout = oldPing, oldPong })
 
 	closed := make(chan struct{})
 	_ = wsPair(t, func(c *wsClient) {

@@ -179,6 +179,38 @@ func TestGrantOp(t *testing.T) {
 	}
 }
 
+// A mid-call op grant must survive a reconnect (new participant, same account) — a
+// screenshare-induced or network reconnect shouldn't silently demote an op.
+func TestOpGrantSurvivesReconnect(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice, _ := member("p1", "alice", RoleUser) // first ad-hoc joiner -> op
+	r.Join(alice, "")
+
+	bob := &Participant{ID: "p2", Name: "bob", Role: RoleUser, Account: "bob-acct", Conn: &fakeConn{}}
+	r.Join(bob, "")
+	if err := r.GrantOp("p1", "p2"); err != nil {
+		t.Fatalf("GrantOp: %v", err)
+	}
+
+	// bob's socket drops and he reconnects as a fresh participant (new ID, same
+	// account, default role). The grant must be re-applied.
+	r.Leave("p2")
+	bob2 := &Participant{ID: "p2b", Name: "bob", Role: RoleUser, Account: "bob-acct", Conn: &fakeConn{}}
+	if err := r.Join(bob2, ""); err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if bob2.Role != RoleOp {
+		t.Errorf("bob rejoined as %q, want op (grant should survive reconnect)", bob2.Role)
+	}
+
+	// An unrelated account (and a guest with no account) is not silently opped.
+	guest := &Participant{ID: "p3", Name: "carol", Role: RoleUser, Conn: &fakeConn{}}
+	r.Join(guest, "")
+	if guest.Role == RoleOp {
+		t.Error("a fresh guest wrongly received op")
+	}
+}
+
 func TestSetMediaStateBroadcastsToRoom(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser)
