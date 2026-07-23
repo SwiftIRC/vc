@@ -159,7 +159,7 @@ func (h *Hub) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	conn.SetReadLimit(16384)
+	conn.SetReadLimit(readLimit)
 	c := newWSClient(conn, h.log.With("room", slug))
 	h.conns.Add(1)
 	go func() {
@@ -239,6 +239,11 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		reject(c, signal.Error{Code: errCode(err), Message: err.Error()})
 		return
 	}
+	// A join whose ref was already present (same browser session) is a rejoin — the
+	// socket dropped and came back. Debug-level lifecycle: correlate the role here
+	// with a prior op to spot op lost across a reconnect (an ad-hoc/guest op is not
+	// restored, so it returns as "user").
+	h.log.Debug("peer joined", "room", slug, "id", p.ID, "role", string(p.Role), "ref", p.Ref, "identified", p.Account != "")
 	defer rm.Leave(p.ID)
 
 	// Attach the participant to the media plane: one SFU peer per socket,
@@ -253,6 +258,16 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 	for {
 		v, err := c.readNext(c.ctx)
 		if err != nil {
+			// If our own writePump/Close cancelled the context, the reason is
+			// already logged there (an eviction warn). A read error while the
+			// context is still live means the peer closed the socket from its
+			// side (or the network dropped it) — the "not a server eviction"
+			// case. Logging it makes a reconnect-with-no-eviction-warn explicit
+			// instead of inferred from silence, and carries the participant id
+			// the writePump-side warn cannot.
+			if c.ctx.Err() == nil {
+				h.log.Debug("peer read ended (client closed socket)", "id", p.ID, "err", err)
+			}
 			return
 		}
 		switch m := v.(type) {

@@ -19,6 +19,15 @@ import (
 // the path with these control frames — doesn't overflow and evict a live peer.
 const sendQueueCap = 128
 
+// readLimit bounds a single inbound frame. It must comfortably exceed the largest
+// signaling frame — an SDP offer/answer — because in an SFU a peer's SDP grows one
+// m-line per forwarded track, so a group call with screenshares easily produces
+// offers/answers of tens of KB. The old 16 KiB cap silently rejected those the moment
+// a screenshare pushed a renegotiation over it: coder/websocket closed the socket with
+// "message too big", the client reconnected as a fresh guest, and any ad-hoc/guest op
+// was lost. 1 MiB fits hundreds of m-lines while still bounding a malicious frame.
+const readLimit = 1 << 20
+
 var (
 	pingInterval = 20 * time.Second
 	// writeTimeout and pongTimeout are deliberately generous (not the usual few seconds).
@@ -73,6 +82,10 @@ func (c *wsClient) Send(v any) bool {
 	case <-c.ctx.Done():
 		return true // already closing; not an overflow
 	default:
+		// Backlog is full: the peer is reading slower than we produce. Room
+		// responds by closing this client, so this is an eviction of a peer that
+		// was (as far as we know) still connected — the reconnect we are hunting.
+		c.log.Warn("evicting live peer", "reason", "send queue overflow", "cap", cap(c.send))
 		return false
 	}
 }
@@ -101,7 +114,8 @@ func (c *wsClient) writePump() {
 	for {
 		select {
 		case data := <-c.send:
-			if !c.writeFrame(data) {
+			if err := c.writeFrame(data); err != nil {
+				c.logClose("frame write", err)
 				return
 			}
 		case <-ticker.C:
@@ -109,6 +123,7 @@ func (c *wsClient) writePump() {
 			err := c.conn.Ping(pctx)
 			cancel()
 			if err != nil {
+				c.logClose("keepalive ping", err)
 				return
 			}
 		case <-c.ctx.Done():
@@ -120,11 +135,27 @@ func (c *wsClient) writePump() {
 
 // writeFrame writes one frame with a bounded deadline. It derives from a fresh
 // background context (not c.ctx) so a frame already dequeued still flushes even
-// as Close cancels c.ctx.
-func (c *wsClient) writeFrame(data []byte) bool {
+// as Close cancels c.ctx. Returns the write error (nil on success) so writePump
+// can log WHY it is tearing the socket down — a deadline-exceeded error is a
+// live peer we could not reach in time, not a peer that left.
+func (c *wsClient) writeFrame(data []byte) error {
 	wctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
-	return c.conn.Write(wctx, websocket.MessageText, data) == nil
+	return c.conn.Write(wctx, websocket.MessageText, data)
+}
+
+// logClose records why writePump is tearing this socket down. A ping or frame
+// write that fails with a deadline-exceeded error evicted a peer that was still
+// connected but could not keep the control channel flowing within the timeout —
+// the screenshare-contention / read-loop-stall reconnect we are hunting — so it
+// is logged at Warn to stand out in a capture. Any other error is an ordinary
+// departure (the client closed its socket), logged at Debug to avoid noise.
+func (c *wsClient) logClose(op string, err error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		c.log.Warn("evicting live peer", "reason", op+" timed out", "err", err)
+		return
+	}
+	c.log.Debug("peer socket closed", "reason", op, "err", err)
 }
 
 // drain flushes frames already queued when Close was requested, bounded by

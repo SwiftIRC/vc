@@ -107,6 +107,10 @@ func (s *SFU) AddPeer(slug, peerID string, sig Signaler) (*Peer, error) {
 	})
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		if st == webrtc.PeerConnectionStateFailed || st == webrtc.PeerConnectionStateClosed {
+			// The media transport (ICE/DTLS) died — SEPARATE from the signaling
+			// WebSocket. Logged so a reconnect can be correlated with a media-plane
+			// failure during a screenshare renegotiation.
+			s.log.Warn("sfu peer media transport down; removing peer", "slug", slug, "peer", peerID, "state", st.String())
 			s.RemovePeer(slug, peerID)
 		}
 	})
