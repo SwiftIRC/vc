@@ -49,7 +49,10 @@ function el(tag, attrs = {}, ...kids) {
 const LEVEL_INTERVAL_MS = 150;
 // RMS level (0..1) a stream must exceed to be considered "speaking"; also the
 // floor a tile must beat to steal the highlight, so background hiss stays quiet.
-const ACTIVE_THRESHOLD = 0.03;
+// ~0.015 (≈ -36 dBFS) lights the outline at a normal conversational level rather
+// than only when raised; below this, an un-suppressed mic's room noise can start
+// triggering it on its own.
+const ACTIVE_THRESHOLD = 0.015;
 
 // Desired tile aspect ratio (width / height). The grid picks the column count that
 // keeps cells closest to this — so 4 participants become a 2x2 block rather than a
