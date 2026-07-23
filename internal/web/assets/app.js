@@ -228,6 +228,12 @@ function onJoined(msg) {
     if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
     rebuildPeer();
     for (const p of msg.peers || []) addRosterPeer(p);
+    // Reconcile our OWN role from the authoritative rejoin. The server restores op
+    // across a reconnect (by account or session ref), so trust msg.role rather than
+    // the role the initial render captured — otherwise the control bar keeps stale op
+    // buttons whose actions the server now rejects. Mirrors the "role" handler below.
+    if (grid.selfId) grid.setPeerRole(grid.selfId, msg.role);
+    if (msg.role === "op") controls.becomeOp();
     return;
   }
   if (prejoin) {

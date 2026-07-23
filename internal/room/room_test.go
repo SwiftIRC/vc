@@ -250,6 +250,63 @@ func TestOpGrantSurvivesReconnect(t *testing.T) {
 	}
 }
 
+// The ad-hoc first-joiner op is a GUEST (no account); it must still survive a
+// reconnect, keyed by the stable session ref rather than an account.
+func TestAdhocOpSurvivesReconnectByRef(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice := &Participant{ID: "p1", Name: "alice", Role: RoleUser, Ref: "refA", Conn: &fakeConn{}}
+	if err := r.Join(alice, ""); err != nil {
+		t.Fatal(err)
+	}
+	if alice.Role != RoleOp {
+		t.Fatalf("first ad-hoc joiner should be op, got %q", alice.Role)
+	}
+	// Her socket drops; she reconnects as a fresh participant (new ID, SAME ref,
+	// no account). Op must be restored from the session ref.
+	r.Leave("p1")
+	alice2 := &Participant{ID: "p1b", Name: "alice", Role: RoleUser, Ref: "refA", Conn: &fakeConn{}}
+	if err := r.Join(alice2, ""); err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if alice2.Role != RoleOp {
+		t.Errorf("ad-hoc op rejoined as %q, want op (should survive reconnect by ref)", alice2.Role)
+	}
+}
+
+// A guest (no account) hand-opped mid-call must survive a reconnect too, keyed by ref.
+func TestGuestOpGrantSurvivesReconnectByRef(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice := &Participant{ID: "p1", Name: "alice", Role: RoleUser, Ref: "refA", Conn: &fakeConn{}}
+	r.Join(alice, "") // ad-hoc op
+	bob := &Participant{ID: "p2", Name: "bob", Role: RoleUser, Ref: "refB", Conn: &fakeConn{}}
+	r.Join(bob, "")
+	if err := r.GrantOp("p1", "p2"); err != nil {
+		t.Fatalf("GrantOp: %v", err)
+	}
+	// bob reconnects (new ID, same ref, still no account).
+	r.Leave("p2")
+	bob2 := &Participant{ID: "p2b", Name: "bob", Role: RoleUser, Ref: "refB", Conn: &fakeConn{}}
+	if err := r.Join(bob2, ""); err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if bob2.Role != RoleOp {
+		t.Errorf("guest op rejoined as %q, want op (grant should survive by ref)", bob2.Role)
+	}
+}
+
+// Security: an empty ref must never become an op key — otherwise the first no-nonce
+// op would seed a "" entry that hands op to every other no-nonce joiner.
+func TestEmptyRefNeverInheritsOp(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	alice := &Participant{ID: "p1", Name: "alice", Role: RoleUser, Ref: "", Conn: &fakeConn{}}
+	r.Join(alice, "") // ad-hoc op, but Ref==""
+	bob := &Participant{ID: "p2", Name: "bob", Role: RoleUser, Ref: "", Conn: &fakeConn{}}
+	r.Join(bob, "")
+	if bob.Role == RoleOp {
+		t.Error("a no-ref guest wrongly inherited op via an empty ref key")
+	}
+}
+
 func TestSetQuality(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser) // first ad-hoc joiner -> op

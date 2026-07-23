@@ -104,11 +104,18 @@ type Room struct {
 	chat           []signal.ChatEvent
 	bannedAccounts map[string]struct{}
 	bannedIPs      map[string]struct{}
-	// Accounts granted op mid-call (via GrantOp). A grant lives on the Participant,
-	// which is discarded on a reconnect, so remember it by account and re-apply on
-	// (re)join — otherwise a network blip or a screenshare-induced reconnect silently
-	// demotes them. Identified users only; a guest has no stable identity to key on.
+	// Op grants outlive the Participant (discarded on reconnect) so a network blip or
+	// a screenshare-induced reconnect doesn't silently demote an op. Two keys, because
+	// a grant must be restorable however the joiner is identified:
+	//   opAccounts — identified users, keyed by NickServ account (survives across tabs).
+	//   opRefs     — guests and the ad-hoc first-joiner, keyed by the stable per-session
+	//                ref (a hash of the client's crypto-random session nonce; survives a
+	//                reconnect in the same tab). The raw nonce is never broadcast, so a
+	//                ref cannot be forged — same trust model as the single-use invite.
+	// A "" key is never stored in either (see rememberOp): it would match every
+	// anonymous/no-nonce joiner and hand them op.
 	opAccounts map[string]struct{}
+	opRefs     map[string]struct{}
 
 	// Op-set session video caps: tier ids the clients map to a resolution/framerate
 	// cap for their camera / screenshare senders. "" means uncapped (auto).
@@ -132,6 +139,21 @@ func New(cfg Config) *Room {
 		bannedAccounts: map[string]struct{}{},
 		bannedIPs:      map[string]struct{}{},
 		opAccounts:     map[string]struct{}{},
+		opRefs:         map[string]struct{}{},
+	}
+}
+
+// rememberOp records p's op grant so it survives p's future reconnects: by account
+// for identified users, and by session ref for everyone else (a guest or ad-hoc op
+// has no account, but its ref is stable across a reconnect in the same tab). Called
+// with r.mu held. A "" key is never stored — it would match every anonymous/no-nonce
+// joiner and hand them op.
+func (r *Room) rememberOp(p *Participant) {
+	if p.Account != "" {
+		r.opAccounts[p.Account] = struct{}{}
+	}
+	if p.Ref != "" {
+		r.opRefs[p.Ref] = struct{}{}
 	}
 }
 
@@ -157,10 +179,18 @@ func (r *Room) Join(p *Participant, password string) error {
 	}
 	if r.cfg.Adhoc && !r.hasBeenJoined {
 		p.Role = RoleOp
+		r.rememberOp(p) // an ad-hoc op is a guest — record it so it survives its own reconnect
 	}
-	// Restore a mid-call op grant this account earned before a reconnect.
+	// Restore an op grant this participant earned before a reconnect: by account for
+	// identified users, or by session ref for a guest/ad-hoc op. Without this a
+	// network blip or a screenshare-induced reconnect silently demotes them.
 	if p.Account != "" {
 		if _, ok := r.opAccounts[p.Account]; ok {
+			p.Role = RoleOp
+		}
+	}
+	if p.Ref != "" {
+		if _, ok := r.opRefs[p.Ref]; ok {
 			p.Role = RoleOp
 		}
 	}
@@ -408,9 +438,7 @@ func (r *Room) GrantOp(actorID, targetID string) error {
 		return nil // already op
 	}
 	tgt.Role = RoleOp
-	if tgt.Account != "" {
-		r.opAccounts[tgt.Account] = struct{}{} // survive this account's future reconnects
-	}
+	r.rememberOp(tgt) // survive this participant's future reconnects (by account and/or ref)
 	r.mu.Unlock()
 	r.Broadcast(signal.RoleChange{ID: tgt.ID, Role: string(RoleOp)}, "")
 	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "op", Target: tgt.Name}, "")
