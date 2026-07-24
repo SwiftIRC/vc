@@ -195,6 +195,23 @@ input[readonly] {
   font-weight: 600;
 }
 
+/* Camera-off avatar: the participant's initial in an IRC-palette circle, centered
+   on the black .cam-off backdrop. Fill/text color are set inline by applyAvatar
+   (lib/avatar.js). Size tracks the tile via container-query units; the light ring
+   keeps a dark fill readable against the black backdrop. */
+.cam-off-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(40px, 34cqw, 128px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: clamp(1.1rem, 18cqw, 3rem);
+  line-height: 1;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+
 /* Pre-join mic/camera toggles: a two-up row under the preview. */
 .media-toggles {
   display: flex;
@@ -409,6 +426,7 @@ body.in-call #app {
 
 .tile {
   position: relative;
+  container-type: inline-size; /* lets .cam-off-avatar size to the tile (cqw) */
   min-height: 0;
   background: #000;
   border: 2px solid var(--border);

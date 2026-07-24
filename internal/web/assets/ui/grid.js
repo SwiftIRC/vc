@@ -28,6 +28,7 @@
 // via textContent (the el() "text" key), never innerHTML.
 
 import { playSound } from "../lib/sounds.js";
+import { applyAvatar } from "../lib/avatar.js";
 
 // Tiny DOM helper: el("div", {class:"x", onClick:fn}, child, "text"...). The
 // "text" key sets textContent, so caller-supplied strings can never inject markup.
@@ -493,12 +494,11 @@ export class Grid {
     // Camera-off placeholder over the video: a released camera (or a remote peer
     // reporting camera off) leaves the <video> black/frozen, so cover it. Driven by
     // refreshSelf (self) and _applyPeerMedia (remotes); hidden until camera is known off.
-    const camOff = el(
-      "div",
-      { class: "cam-off", hidden: true },
-      el("span", { class: "cam-off-icon", text: "🎥" }),
-      el("span", { class: "cam-off-text", text: "Camera off" }),
-    );
+    // Camera-off placeholder: the participant's initial in an IRC-palette circle
+    // (see lib/avatar.js), stable per nick. Re-painted on rename in _setName.
+    const camOffAvatar = el("span", { class: "cam-off-avatar" });
+    const camOff = el("div", { class: "cam-off", hidden: true }, camOffAvatar);
+    applyAvatar(camOffAvatar, name);
     const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
     const badgeEl = el("span", { class: "badge", hidden: true });
     const micPill = el("span", { class: "pill mic", text: "mic" });
@@ -543,7 +543,7 @@ export class Grid {
     cameraVideo.title = "Click to focus";
     cameraVideo.addEventListener("click", () => this._toggleFocus(tileEl));
 
-    const tile = { el: tileEl, cameraVideo, camOff, nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, self };
+    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, self };
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);
@@ -557,6 +557,7 @@ export class Grid {
 
   _setName(tile, name) {
     tile.name = name;
+    applyAvatar(tile.camOffAvatar, name);
     tile.nameEl.textContent = tile.self ? `${name} (you)` : name;
     const screen = this.screens.get(tile.el.getAttribute("data-id"));
     if (screen) screen.nameEl.textContent = `${name} (screen)`;
