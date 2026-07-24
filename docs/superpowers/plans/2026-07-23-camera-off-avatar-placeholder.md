@@ -89,18 +89,22 @@ test("bg is always drawn from the colorful palette for real names", () => {
   }
 });
 
-test("fg is legible: dark text on bright bg, light text on dark bg", () => {
-  // Force known names is fragile; instead assert the contrast rule directly by
-  // checking that fg differs from bg brightness across the whole palette.
-  for (const hex of IRC_AVATAR_COLORS) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
+test("avatarFor picks a legible fg for the bg it chose", () => {
+  // Exercise the real function: for whatever bg a name lands on, fg must be the
+  // YIQ-correct black/white. Covers both branches across a spread of names.
+  let sawDark = false;
+  let sawLight = false;
+  for (const n of ["alice", "bob", "carol", "dave", "eve", "mallory", "zoe", "trent", "peggy", "victor"]) {
+    const { bg, fg } = avatarFor(n);
+    const r = parseInt(bg.slice(1, 3), 16);
+    const g = parseInt(bg.slice(3, 5), 16);
+    const b = parseInt(bg.slice(5, 7), 16);
     const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-    // Re-derive expected fg and confirm avatarFor would agree for a name landing here.
-    const expected = yiq > 140 ? "#000000" : "#FFFFFF";
-    assert.match(expected, /^#(000000|FFFFFF)$/);
+    assert.equal(fg, yiq > 140 ? "#000000" : "#FFFFFF", `fg wrong for ${n} (bg ${bg})`);
+    if (fg === "#000000") sawDark = true;
+    else sawLight = true;
   }
+  assert.ok(sawDark && sawLight, "expected both dark and light fg across the sample");
 });
 ```
 
