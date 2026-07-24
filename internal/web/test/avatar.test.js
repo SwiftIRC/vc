@@ -26,8 +26,23 @@ test("IRC_AVATAR_COLORS drops every grayscale code and keeps a rich set", () => 
 });
 
 test("avatarFor is deterministic per name", () => {
-  assert.equal(avatarFor("alice").bg, avatarFor("alice").bg);
-  assert.notEqual(avatarFor("alice").initial, undefined);
+  for (const n of ["alice", "mallory"]) {
+    const a = avatarFor(n), b = avatarFor(n);
+    assert.equal(a.bg, b.bg);
+    assert.equal(a.fg, b.fg);
+    assert.equal(a.initial, b.initial);
+  }
+});
+
+test("avatarFor pins known name->color mappings (guards 'stable per nick')", () => {
+  // Snapshot of the real hash->palette mapping. If djb2, the palette order, or the
+  // grayscale threshold change, these break — which is the point: a silent recolor of
+  // every user must fail a test.
+  assert.equal(avatarFor("alice").bg, "#59B4FF");
+  assert.equal(avatarFor("alice").fg, "#000000");
+  assert.equal(avatarFor("bob").bg, "#000074");
+  assert.equal(avatarFor("bob").fg, "#FFFFFF");
+  assert.equal(avatarFor("eve").bg, "#FC7F00");
 });
 
 test("avatarFor uses the uppercased first code point as the initial", () => {

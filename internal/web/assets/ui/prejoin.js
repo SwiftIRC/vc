@@ -143,13 +143,12 @@ export class Prejoin {
     this.video = el("video", { class: "preview mirror", autoplay: true, muted: true, playsinline: true });
     this.video.muted = true; // attribute + property: some browsers honour only the property
 
-    // Camera-off placeholder over the preview. A disabled video track just freezes
-    // or blacks the last frame, so make the off-state explicit; shown/hidden by
-    // _setCameraToggle. Sits inside .preview-wrap, which the overlay positions over.
-    // Camera-off placeholder: the participant's initial in an IRC-palette circle
-    // (see lib/avatar.js), or a neutral "?" until a name is typed. Painted whenever
-    // the overlay is shown (_setCameraToggle) and live as the name field changes.
-    this.cameraOffAvatar = el("span", { class: "cam-off-avatar" });
+    // Camera-off placeholder: a disabled video track just freezes or blacks the last
+    // frame, so make the off-state explicit. Shows the participant's initial in an
+    // IRC-palette circle (see lib/avatar.js), or a neutral "?" until a name is typed.
+    // Sits inside .preview-wrap; shown/hidden by _setCameraToggle and repainted live
+    // as the name field changes.
+    this.cameraOffAvatar = el("span", { class: "cam-off-avatar", "aria-hidden": "true" });
     this.cameraOffOverlay = el("div", { class: "cam-off", hidden: true }, this.cameraOffAvatar);
 
     // Pre-join mic/camera toggles: let a participant join already muted and/or with
@@ -381,7 +380,7 @@ export class Prejoin {
   }
 
   _submit() {
-    const name = this.nick || this.nameInput.value.trim();
+    const name = this._avatarName();
     if (!this.nick) saveName(name); // remember the typed name for next visit
     const password = this.passwordInput.value; // sent always; unlocked rooms ignore it server-side
     this.errorLabel.textContent = "";

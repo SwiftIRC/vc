@@ -496,7 +496,7 @@ export class Grid {
     // refreshSelf (self) and _applyPeerMedia (remotes); hidden until camera is known off.
     // Camera-off placeholder: the participant's initial in an IRC-palette circle
     // (see lib/avatar.js), stable per nick. Re-painted on rename in _setName.
-    const camOffAvatar = el("span", { class: "cam-off-avatar" });
+    const camOffAvatar = el("span", { class: "cam-off-avatar", "aria-hidden": "true" });
     const camOff = el("div", { class: "cam-off", hidden: true }, camOffAvatar);
     applyAvatar(camOffAvatar, name);
     const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
