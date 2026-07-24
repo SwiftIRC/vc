@@ -296,6 +296,7 @@ function renderInCall(msg) {
   grid = new Grid({
     selfId: msg.selfId,
     selfName,
+    selfGravatar,
     selfRole: msg.role,
     media,
     opActionsFor: (p) => controls.opActionsFor(p),

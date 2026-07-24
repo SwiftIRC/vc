@@ -68,9 +68,10 @@ export class Grid {
   // or null for non-ops; screenOpActionsFor(participant) returns a screen-tile
   // op-controls node ("stop screenshare") or null. Both are owned by controls.js
   // and only placed here.
-  constructor({ selfId, selfName, selfRole, media, opActionsFor, screenOpActionsFor } = {}) {
+  constructor({ selfId, selfName, selfRole, selfGravatar, media, opActionsFor, screenOpActionsFor } = {}) {
     this.selfId = selfId;
     this.selfName = selfName || "You";
+    this.selfGravatar = selfGravatar || "";
     this.media = media || null;
     this.opActionsFor = typeof opActionsFor === "function" ? opActionsFor : () => null;
     this.screenOpActionsFor = typeof screenOpActionsFor === "function" ? screenOpActionsFor : () => null;
@@ -264,7 +265,8 @@ export class Grid {
   // Add or update a remote participant's base tile (name/role). No-op for self.
   addPeer(peer) {
     if (!peer || !peer.id || peer.id === this.selfId) return;
-    const tile = this._ensureTile(peer.id, peer.name, peer.role);
+    const tile = this._ensureTile(peer.id, peer.name, peer.role, peer.gravatar);
+    if (peer.gravatar != null) tile.gravatar = peer.gravatar;
     if (peer.name != null && peer.name !== "") this._setName(tile, peer.name);
     if (peer.role != null) this._setRole(tile, peer.role);
   }
@@ -459,7 +461,7 @@ export class Grid {
   }
 
   _addSelfTile(role) {
-    const tile = this._buildTile(this.selfId, this.selfName, role, { self: true });
+    const tile = this._buildTile(this.selfId, this.selfName, role, { self: true, gravatar: this.selfGravatar });
     tile.cameraVideo.muted = true; // never monitor your own mic
     if (this.media && this.media.stream) tile.cameraVideo.srcObject = this.media.stream;
     this._selfTile = tile;
@@ -471,10 +473,10 @@ export class Grid {
 
   // --- tile construction ---
 
-  _ensureTile(id, name, role) {
+  _ensureTile(id, name, role, gravatar) {
     let tile = this.tiles.get(id);
     if (tile) return tile;
-    tile = this._buildTile(id, name || "guest", role, { self: false });
+    tile = this._buildTile(id, name || "guest", role, { self: false, gravatar });
     this.tiles.set(id, tile);
     this.el.append(tile.el);
     this._relayout();
@@ -487,7 +489,7 @@ export class Grid {
     return tile;
   }
 
-  _buildTile(id, name, role, { self }) {
+  _buildTile(id, name, role, { self, gravatar } = {}) {
     // Only the local (self) camera is mirrored — a selfie view, as call apps do.
     // Screen-share tiles are built separately (_addScreenTile) and never mirrored.
     const cameraVideo = el("video", { class: self ? "cam mirror" : "cam", autoplay: true, playsinline: true });
@@ -498,7 +500,7 @@ export class Grid {
     // (see lib/avatar.js), stable per nick. Re-painted on rename in _setName.
     const camOffAvatar = el("span", { class: "cam-off-avatar", "aria-hidden": "true" });
     const camOff = el("div", { class: "cam-off", hidden: true }, camOffAvatar);
-    applyAvatar(camOffAvatar, name);
+    applyAvatar(camOffAvatar, name, gravatar);
     const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
     const badgeEl = el("span", { class: "badge", hidden: true });
     const micPill = el("span", { class: "pill mic", text: "mic" });
@@ -543,7 +545,7 @@ export class Grid {
     cameraVideo.title = "Click to focus";
     cameraVideo.addEventListener("click", () => this._toggleFocus(tileEl));
 
-    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, self };
+    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, gravatar: gravatar || "", nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, self };
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);
@@ -557,7 +559,7 @@ export class Grid {
 
   _setName(tile, name) {
     tile.name = name;
-    applyAvatar(tile.camOffAvatar, name);
+    applyAvatar(tile.camOffAvatar, name, tile.gravatar);
     tile.nameEl.textContent = tile.self ? `${name} (you)` : name;
     const screen = this.screens.get(tile.el.getAttribute("data-id"));
     if (screen) screen.nameEl.textContent = `${name} (screen)`;
