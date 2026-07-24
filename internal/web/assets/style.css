@@ -165,6 +165,7 @@ input[readonly] {
 /* Wrap the preview so the camera-off placeholder can be layered over the <video>. */
 .preview-wrap {
   position: relative;
+  container-type: inline-size;
 }
 
 /* Camera-off placeholder: covers the frozen/black preview when the camera is

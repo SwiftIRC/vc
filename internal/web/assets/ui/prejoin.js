@@ -9,6 +9,7 @@
 // it in so the very stream previewed here is the one published once in-call.
 
 import { loadMediaPrefs, saveMediaPrefs } from "../lib/prefs.js";
+import { applyAvatar } from "../lib/avatar.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -145,12 +146,11 @@ export class Prejoin {
     // Camera-off placeholder over the preview. A disabled video track just freezes
     // or blacks the last frame, so make the off-state explicit; shown/hidden by
     // _setCameraToggle. Sits inside .preview-wrap, which the overlay positions over.
-    this.cameraOffOverlay = el(
-      "div",
-      { class: "cam-off", hidden: true },
-      el("span", { class: "cam-off-icon", text: "🎥" }),
-      el("span", { class: "cam-off-text", text: "Camera off" }),
-    );
+    // Camera-off placeholder: the participant's initial in an IRC-palette circle
+    // (see lib/avatar.js), or a neutral "?" until a name is typed. Painted whenever
+    // the overlay is shown (_setCameraToggle) and live as the name field changes.
+    this.cameraOffAvatar = el("span", { class: "cam-off-avatar" });
+    this.cameraOffOverlay = el("div", { class: "cam-off", hidden: true }, this.cameraOffAvatar);
 
     // Pre-join mic/camera toggles: let a participant join already muted and/or with
     // the camera off. Each flips the SHARED Media instance's track.enabled, which
@@ -183,6 +183,7 @@ export class Prejoin {
       placeholder: "Display name",
       maxlength: "32",
       autocomplete: "off",
+      onInput: () => applyAvatar(this.cameraOffAvatar, this._avatarName()),
     });
     if (this.nick) {
       this.nameInput.value = this.nick;
@@ -340,6 +341,12 @@ export class Prejoin {
     this.micLabel.textContent = off ? "Mic off" : "Mic on";
   }
 
+  // The name the avatar should reflect: a locked/invite nick wins over the typed
+  // field, matching how join() resolves the name.
+  _avatarName() {
+    return this.nick || this.nameInput.value.trim();
+  }
+
   _setCameraToggle(on, available) {
     const off = available && !on;
     this.cameraToggle.disabled = !available;
@@ -349,6 +356,7 @@ export class Prejoin {
     this.cameraLabel.textContent = off ? "Camera off" : "Camera on";
     // Placeholder over the (now black/frozen) preview whenever a camera is available
     // but currently off.
+    if (off) applyAvatar(this.cameraOffAvatar, this._avatarName());
     this.cameraOffOverlay.hidden = !off;
   }
 
