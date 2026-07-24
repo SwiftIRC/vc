@@ -788,18 +788,30 @@ export class Controls {
       makeop,
       el("button", {
         type: "button", class: "op kick", title: "Kick",
-        onClick: async () => {
-          if (await confirmDialog({ title: `Kick ${name}?`, message: "They'll be removed from the call.", confirmLabel: "Kick", tone: "danger" })) {
-            this._send("kick", { id });
+        onClick: async (e) => {
+          const btn = e.currentTarget; // captured before the await; disabled so a double-click can't stack two dialogs / double-send
+          btn.disabled = true;
+          try {
+            if (await confirmDialog({ title: `Kick ${name}?`, message: "They'll be removed from the call.", confirmLabel: "Kick", tone: "danger" })) {
+              this._send("kick", { id });
+            }
+          } finally {
+            btn.disabled = false;
           }
         },
       }, "kick"),
       el("button", { type: "button", class: "op mute", title: "Mute mic", onClick: () => this._send("mute-peer", { id, kind: "mic" }) }, "mute"),
       el("button", {
         type: "button", class: "op ban", title: "Ban",
-        onClick: async () => {
-          if (await confirmDialog({ title: `Ban ${name}?`, message: "They'll be removed and blocked from rejoining.", confirmLabel: "Ban", tone: "danger" })) {
-            this._send("ban", { id });
+        onClick: async (e) => {
+          const btn = e.currentTarget; // captured before the await; disabled so a double-click can't stack two dialogs / double-send
+          btn.disabled = true;
+          try {
+            if (await confirmDialog({ title: `Ban ${name}?`, message: "They'll be removed and blocked from rejoining.", confirmLabel: "Ban", tone: "danger" })) {
+              this._send("ban", { id });
+            }
+          } finally {
+            btn.disabled = false;
           }
         },
       }, "ban"),
