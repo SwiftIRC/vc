@@ -63,10 +63,56 @@ export function avatarFor(name) {
   return { initial, bg, fg: textColor(bg) };
 }
 
-// DOM helper: paint a <span> with the avatar for `name`. Used by grid.js/prejoin.js.
-export function applyAvatar(node, name) {
+// SHA-256 hex of the normalized email, computed in-browser (no MD5 dependency).
+// Only this hash is ever sent or stored; the raw email never leaves the client.
+// Returns "" for blank input or when SubtleCrypto is unavailable (insecure context).
+export async function gravatarHash(email) {
+  const e = (email || "").trim().toLowerCase();
+  if (!e) return "";
+  try {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(e));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return "";
+  }
+}
+
+// Gravatar image URL for a validated hash. d=404 makes Gravatar 404 for an unknown
+// email, which triggers our letter/color fallback rather than Gravatar's own default.
+// Returns "" for a malformed hash so a bad value can never build a URL.
+export function gravatarUrl(hash, size) {
+  if (!/^[a-f0-9]{64}$/.test(hash || "")) return "";
+  const s = Number.isFinite(size) && size > 0 ? Math.round(size) : 80;
+  return `https://www.gravatar.com/avatar/${hash}?d=404&s=${s}`;
+}
+
+// Pixel size to request, scaled for retina and capped.
+function gravatarSize() {
+  const dpr = typeof devicePixelRatio === "number" && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  return Math.min(320, Math.round(160 * dpr));
+}
+
+// DOM helper: paint a <span> with the avatar for `name`, then — if `gravatar` is a
+// valid hash — swap in the Gravatar image once it loads. The letter/color is painted
+// synchronously first, so it is the instant, correct fallback for no-email, no-
+// Gravatar (404), offline, or blocked cases. Used by grid.js/prejoin.js.
+export function applyAvatar(node, name, gravatar) {
   const { initial, bg, fg } = avatarFor(name);
   node.textContent = initial;
   node.style.background = bg;
   node.style.color = fg;
+  node.style.backgroundImage = ""; // drop any prior image (rename / cleared email)
+  const token = gravatar || "";
+  node.dataset.avatarToken = token; // identity guard for the async load below
+  const url = gravatarUrl(token, gravatarSize());
+  if (!url) return; // no/invalid hash — letter/color stays
+  const img = new Image();
+  img.onload = () => {
+    if (node.dataset.avatarToken !== token) return; // superseded by a later applyAvatar
+    node.style.backgroundImage = `url("${url}")`;
+    node.style.backgroundSize = "cover";
+    node.style.backgroundPosition = "center";
+    node.textContent = ""; // opaque image covers the letter
+  };
+  img.src = url; // on error (404/offline/blocked) do nothing — fallback already shows
 }

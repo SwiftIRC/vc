@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { IRC_COLORS, IRC_AVATAR_COLORS, avatarFor } from "../assets/lib/avatar.js";
+import { IRC_COLORS, IRC_AVATAR_COLORS, avatarFor, gravatarHash, gravatarUrl } from "../assets/lib/avatar.js";
 
 // The known grayscale codes in the mIRC spec: white/black/grey/light-grey and the
 // 88..98 black->white ramp. None of them may survive into the avatar palette.
@@ -81,4 +81,23 @@ test("avatarFor picks a legible fg for the bg it chose", () => {
     else sawLight = true;
   }
   assert.ok(sawDark && sawLight, "expected both dark and light fg across the sample");
+});
+
+test("gravatarHash matches the known SHA-256 vector and normalizes case/space", async () => {
+  const want = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee";
+  assert.equal(await gravatarHash("MyEmailAddress@example.com"), want);
+  assert.equal(await gravatarHash("  MYEMAILADDRESS@EXAMPLE.COM  "), want);
+});
+
+test("gravatarHash returns empty for blank input", async () => {
+  assert.equal(await gravatarHash(""), "");
+  assert.equal(await gravatarHash("   "), "");
+});
+
+test("gravatarUrl builds a d=404 URL for a valid hash and rejects malformed hashes", () => {
+  const h = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee";
+  assert.equal(gravatarUrl(h, 160), `https://www.gravatar.com/avatar/${h}?d=404&s=160`);
+  assert.equal(gravatarUrl("nope", 160), "");
+  assert.equal(gravatarUrl(h.toUpperCase(), 160), "");
+  assert.equal(gravatarUrl("", 160), "");
 });
