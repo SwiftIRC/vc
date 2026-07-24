@@ -23,6 +23,10 @@ type Join struct {
 	// means "unknown", which the server defaults to ON.
 	Mic    *bool `json:"mic,omitempty"`
 	Camera *bool `json:"camera,omitempty"`
+	// Gravatar is the SHA-256 hex hash of the joiner's normalized email, computed
+	// client-side. Only the hash is ever sent — never the raw email. Cosmetic and
+	// unverified (like Name for a guest); the server hex-validates it.
+	Gravatar string `json:"gravatar,omitempty"`
 }
 type Offer struct {
 	SDP string `json:"sdp"`
@@ -110,7 +114,8 @@ type PeerInfo struct {
 	// never the nonce itself). It survives a reconnect — which mints a fresh ID — so a
 	// client can tell a reconnecting member apart from a new one and skip the join/leave
 	// chime for it. "" when the client supplied no session nonce.
-	Ref string `json:"ref,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	Gravatar string `json:"gravatar,omitempty"` // SHA-256 email hash for the peer's Gravatar; "" if none
 }
 type Joined struct {
 	SelfID  string     `json:"selfId"`
@@ -131,7 +136,8 @@ type PeerJoined struct {
 	Role   string `json:"role"`
 	Mic    bool   `json:"mic"` // initial mic state (defaults true on join)
 	Camera bool   `json:"camera"`
-	Ref    string `json:"ref,omitempty"` // stable per-session id; see PeerInfo.Ref
+	Ref      string `json:"ref,omitempty"`      // stable per-session id; see PeerInfo.Ref
+	Gravatar string `json:"gravatar,omitempty"` // see PeerInfo.Gravatar
 }
 
 // PeerMediaState tells every client that a peer's mic/camera enabled state
