@@ -9,7 +9,7 @@
 // it in so the very stream previewed here is the one published once in-call.
 
 import { loadMediaPrefs, saveMediaPrefs } from "../lib/prefs.js";
-import { applyAvatar } from "../lib/avatar.js";
+import { applyAvatar, gravatarHash } from "../lib/avatar.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -80,6 +80,26 @@ function saveName(name) {
   }
 }
 
+const EMAIL_KEY = "swiftirc-vc-email";
+
+// loadSavedEmail / saveEmail persist the Gravatar email across visits. Only ever
+// read locally to compute the hash; the raw email is never sent to the server.
+function loadSavedEmail() {
+  try {
+    return localStorage.getItem(EMAIL_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function saveEmail(email) {
+  try {
+    if (email) localStorage.setItem(EMAIL_KEY, email);
+    else localStorage.removeItem(EMAIL_KEY);
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
 export class Prejoin {
   // { root, slug, token, media, onJoin }. onJoin({name, password}) is called once
   // per Join click; app.js drives the socket and calls back showError/destroy.
@@ -94,6 +114,7 @@ export class Prejoin {
     this.locked = false;
     this.destroyed = false;
     this.pollTimer = null;
+    this.gravatar = ""; // live Gravatar hash of the typed email; kept in sync by _onEmailInput
   }
 
   // Fetch the display name a short invite (#i=) grants, so the name field can be
@@ -182,7 +203,7 @@ export class Prejoin {
       placeholder: "Display name",
       maxlength: "32",
       autocomplete: "off",
-      onInput: () => applyAvatar(this.cameraOffAvatar, this._avatarName()),
+      onInput: () => applyAvatar(this.cameraOffAvatar, this._avatarName(), this.gravatar),
     });
     if (this.nick) {
       this.nameInput.value = this.nick;
@@ -193,6 +214,16 @@ export class Prejoin {
       // nick always wins over this.
       this.nameInput.value = loadSavedName();
     }
+
+    this.emailInput = el("input", {
+      class: "email",
+      type: "email",
+      placeholder: "Email for Gravatar (optional)",
+      autocomplete: "email",
+      maxlength: "254",
+      onInput: () => this._onEmailInput(),
+    });
+    this.emailInput.value = loadSavedEmail();
 
     this.passwordInput = el("input", { class: "password", type: "password", placeholder: "Room password (if locked)", autocomplete: "off" });
     // Always shown: it's optional (an unlocked room ignores it server-side), and
@@ -217,6 +248,7 @@ export class Prejoin {
         el("label", { class: "field" }, el("span", { text: "Microphone" }), this.micSelect),
       ),
       el("label", { class: "field" }, el("span", { text: "Display name" }), this.nameInput),
+      el("label", { class: "field" }, el("span", { text: "Gravatar email" }), this.emailInput),
       this.passwordField,
       this.errorLabel,
       this.joinButton,
@@ -224,6 +256,7 @@ export class Prejoin {
 
     this.root.replaceChildren(form);
     this._syncMediaState(); // initial (pre-permission) state: no tracks yet -> disabled
+    this._onEmailInput(); // compute the hash for any prefilled email (fire-and-forget)
   }
 
   async _startPreview() {
@@ -355,8 +388,18 @@ export class Prejoin {
     this.cameraLabel.textContent = off ? "Camera off" : "Camera on";
     // Placeholder over the (now black/frozen) preview whenever a camera is available
     // but currently off.
-    if (off) applyAvatar(this.cameraOffAvatar, this._avatarName());
+    if (off) applyAvatar(this.cameraOffAvatar, this._avatarName(), this.gravatar);
     this.cameraOffOverlay.hidden = !off;
+  }
+
+  // Recompute the Gravatar hash as the email changes and repaint the self-preview.
+  // Guarded against out-of-order async results: only the latest keystroke wins.
+  async _onEmailInput() {
+    const email = this.emailInput.value;
+    const hash = await gravatarHash(email);
+    if (this.emailInput.value !== email) return; // superseded by a newer keystroke
+    this.gravatar = hash;
+    applyAvatar(this.cameraOffAvatar, this._avatarName(), this.gravatar);
   }
 
   async _poll() {
@@ -379,14 +422,17 @@ export class Prejoin {
     this.locked = !!locked;
   }
 
-  _submit() {
+  async _submit() {
     const name = this._avatarName();
     if (!this.nick) saveName(name); // remember the typed name for next visit
+    const email = this.emailInput.value;
+    saveEmail(email);
     const password = this.passwordInput.value; // sent always; unlocked rooms ignore it server-side
     this.errorLabel.textContent = "";
     this.joinButton.disabled = true;
     this.joinButton.textContent = "Joining…";
-    this.onJoin({ name, password });
+    const gravatar = await gravatarHash(email);
+    this.onJoin({ name, password, gravatar });
   }
 
   // Called by app.js when the server rejects the join: surface the reason and

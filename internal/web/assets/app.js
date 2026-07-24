@@ -42,6 +42,7 @@ let slug = "";
 let token = ""; // long-link identity token (#t=); still accepted for old links
 let invite = ""; // short invite id (#i=), resolved server-side — the current link form
 let selfName = ""; // display name chosen in the lobby; labels the self tile
+let selfGravatar = ""; // Gravatar email hash chosen in the lobby; "" when none set
 let pendingJoin = null; // {name, password, token, invite, session} re-sent on every socket (re)open
 let media = null;
 let signaling = null;
@@ -145,11 +146,12 @@ function renderPrejoin() {
 // inbound contract, then lets rejoinOnReopen send the join frame once the socket
 // opens (and re-send it on every backoff reconnect). A prior socket (from a
 // rejected attempt) is stopped first so its close can't trigger a reconnect.
-function onJoin({ name, password }) {
+function onJoin({ name, password, gravatar }) {
   selfName = name || "";
+  selfGravatar = gravatar || "";
   // token and invite are page-fixed; whichever is present is the identity. session
   // binds a #i= invite to this tab so it's single-use (see sessionNonce).
-  pendingJoin = { name, password, token, invite, session: sessionNonce() };
+  pendingJoin = { name, password, gravatar, token, invite, session: sessionNonce() };
   if (signaling) signaling.stop();
   signaling = new Signaling(`/ws/${slug}`);
   signaling.on("joined", onJoined);
