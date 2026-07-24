@@ -614,6 +614,42 @@ video.mirror {
   border-color: #2f9e6b;
 }
 
+/* Reusable confirmation modal (native <dialog>): a dark card over a dim backdrop.
+   Buttons inherit the generic <button> style; .danger paints the confirm action red. */
+.confirm-dialog {
+  margin: auto; /* center in the top layer */
+  max-width: 22rem;
+  width: calc(100% - 2rem);
+  padding: 1.1rem 1.2rem 1rem;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.confirm-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+.confirm-title {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+.confirm-message {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.confirm-ok.danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--bg);
+  font-weight: 600;
+}
+
 /* The control bar floats over the bottom of the stage and autohides when idle. */
 .controls {
   position: absolute;
