@@ -252,6 +252,42 @@ func TestSessionRef(t *testing.T) {
 	}
 }
 
+func TestJoinGravatarReachesRoster(t *testing.T) {
+	const good = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"
+	_, srv := newTestHub(t, "", true)
+	a := dialRoom(t, srv, "lobby")
+	send(t, a, map[string]any{"type": "join", "name": "alice", "gravatar": good})
+	recv(t, a, "joined")
+	// bob joins with a MALFORMED gravatar — sanitizeGravatar must drop it on the join path
+	b := dialRoom(t, srv, "lobby")
+	send(t, b, map[string]any{"type": "join", "name": "bob", "gravatar": "NOT-A-HASH"})
+	recv(t, b, "joined")
+	// carol's roster shows alice's valid hash and bob's dropped (omitempty → absent)
+	c := dialRoom(t, srv, "lobby")
+	send(t, c, map[string]any{"type": "join", "name": "carol"})
+	jc := recv(t, c, "joined")
+	var aliceG, bobG any
+	seenBob := false
+	for _, p := range jc["peers"].([]any) {
+		m := p.(map[string]any)
+		switch m["name"] {
+		case "alice":
+			aliceG = m["gravatar"]
+		case "bob":
+			bobG, seenBob = m["gravatar"], true
+		}
+	}
+	if aliceG != good {
+		t.Errorf("alice roster gravatar = %v, want %s", aliceG, good)
+	}
+	if !seenBob {
+		t.Fatal("bob missing from carol's roster")
+	}
+	if bobG != nil {
+		t.Errorf("bob roster gravatar = %v, want absent (malformed → sanitized away)", bobG)
+	}
+}
+
 func TestSanitizeGravatar(t *testing.T) {
 	const good = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"
 	if got := sanitizeGravatar(good); got != good {

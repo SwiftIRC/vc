@@ -2,8 +2,9 @@
 // local camera/mic preview, lets the user pick input devices, reports the room's
 // current occupancy (polled from GET /api/rooms/<slug>), collects a display name
 // (read-only when an invite token already carries the nick), and — only for a
-// locked room — a password. Clicking Join hands {name, password} back to app.js;
-// the socket, the join handshake, and the error/success routing all live there.
+// locked room — a password. Clicking Join hands {name, password, gravatar} back
+// to app.js; the socket, the join handshake, and the error/success routing all
+// live there.
 //
 // This module owns no Signaling/Peer state: app.js constructs Media and passes
 // it in so the very stream previewed here is the one published once in-call.
@@ -101,8 +102,8 @@ function saveEmail(email) {
 }
 
 export class Prejoin {
-  // { root, slug, token, media, onJoin }. onJoin({name, password}) is called once
-  // per Join click; app.js drives the socket and calls back showError/destroy.
+  // { root, slug, token, media, onJoin }. onJoin({name, password, gravatar}) is
+  // called once per Join click; app.js drives the socket and calls back showError/destroy.
   constructor({ root, slug, token, invite, media, onJoin }) {
     this.root = root;
     this.slug = slug;
@@ -256,7 +257,7 @@ export class Prejoin {
 
     this.root.replaceChildren(form);
     this._syncMediaState(); // initial (pre-permission) state: no tracks yet -> disabled
-    this._onEmailInput(); // compute the hash for any prefilled email (fire-and-forget)
+    this._applyEmailGravatar(); // compute the hash for any prefilled email (fire-and-forget)
   }
 
   async _startPreview() {
@@ -393,11 +394,19 @@ export class Prejoin {
   }
 
   // Recompute the Gravatar hash as the email changes and repaint the self-preview.
-  // Guarded against out-of-order async results: only the latest keystroke wins.
-  async _onEmailInput() {
+  // Debounced so each keystroke doesn't fire a (mostly-404) Gravatar request — and a
+  // partial-email hash — to gravatar.com.
+  _onEmailInput() {
+    clearTimeout(this._emailTimer);
+    this._emailTimer = setTimeout(() => this._applyEmailGravatar(), 250);
+  }
+
+  // Hash the current email and repaint the self-preview. Guarded against out-of-order
+  // async results (latest value wins) and against a repaint after unmount.
+  async _applyEmailGravatar() {
     const email = this.emailInput.value;
     const hash = await gravatarHash(email);
-    if (this.emailInput.value !== email) return; // superseded by a newer keystroke
+    if (this.destroyed || this.emailInput.value !== email) return;
     this.gravatar = hash;
     applyAvatar(this.cameraOffAvatar, this._avatarName(), this.gravatar);
   }
@@ -452,6 +461,7 @@ export class Prejoin {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+    clearTimeout(this._emailTimer);
     if (this.video) this.video.srcObject = null;
     this.root.replaceChildren();
   }

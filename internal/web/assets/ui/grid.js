@@ -63,7 +63,7 @@ const ACTIVE_THRESHOLD = 0.015;
 const TILE_ASPECT = 1;
 
 export class Grid {
-  // { selfId, selfName, selfRole, media, opActionsFor, screenOpActionsFor }.
+  // { selfId, selfName, selfRole, selfGravatar, media, opActionsFor, screenOpActionsFor }.
   // opActionsFor(participant) returns a base-tile op-controls node (kick/mute/ban)
   // or null for non-ops; screenOpActionsFor(participant) returns a screen-tile
   // op-controls node ("stop screenshare") or null. Both are owned by controls.js
@@ -496,8 +496,9 @@ export class Grid {
     // Camera-off placeholder over the video: a released camera (or a remote peer
     // reporting camera off) leaves the <video> black/frozen, so cover it. Driven by
     // refreshSelf (self) and _applyPeerMedia (remotes); hidden until camera is known off.
-    // Camera-off placeholder: the participant's initial in an IRC-palette circle
-    // (see lib/avatar.js), stable per nick. Re-painted on rename in _setName.
+    // Camera-off placeholder: shows the participant's Gravatar image when available,
+    // otherwise their initial in an IRC-palette circle (see lib/avatar.js), stable
+    // per nick. Re-painted on rename in _setName.
     const camOffAvatar = el("span", { class: "cam-off-avatar", "aria-hidden": "true" });
     const camOff = el("div", { class: "cam-off", hidden: true }, camOffAvatar);
     applyAvatar(camOffAvatar, name, gravatar);

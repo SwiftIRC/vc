@@ -43,7 +43,7 @@ let token = ""; // long-link identity token (#t=); still accepted for old links
 let invite = ""; // short invite id (#i=), resolved server-side — the current link form
 let selfName = ""; // display name chosen in the lobby; labels the self tile
 let selfGravatar = ""; // Gravatar email hash chosen in the lobby; "" when none set
-let pendingJoin = null; // {name, password, token, invite, session} re-sent on every socket (re)open
+let pendingJoin = null; // {name, password, token, invite, session, gravatar} re-sent on every socket (re)open
 let media = null;
 let signaling = null;
 let peer = null;

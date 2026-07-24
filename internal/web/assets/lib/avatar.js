@@ -80,10 +80,10 @@ export async function gravatarHash(email) {
 // Gravatar image URL for a validated hash. d=404 makes Gravatar 404 for an unknown
 // email, which triggers our letter/color fallback rather than Gravatar's own default.
 // Returns "" for a malformed hash so a bad value can never build a URL.
-export function gravatarUrl(hash, size) {
-  if (!/^[a-f0-9]{64}$/.test(hash || "")) return "";
+export function gravatarUrl(hex, size) {
+  if (!/^[a-f0-9]{64}$/.test(hex || "")) return "";
   const s = Number.isFinite(size) && size > 0 ? Math.round(size) : 80;
-  return `https://www.gravatar.com/avatar/${hash}?d=404&s=${s}`;
+  return `https://www.gravatar.com/avatar/${hex}?d=404&s=${s}`;
 }
 
 // Pixel size to request, scaled for retina and capped.
