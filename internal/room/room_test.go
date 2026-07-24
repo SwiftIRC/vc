@@ -77,6 +77,36 @@ func TestJoinSendsRosterAndBroadcasts(t *testing.T) {
 	}
 }
 
+func TestJoinCarriesGravatar(t *testing.T) {
+	const aliceHash = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"
+	const bobHash = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+	r := New(Config{Slug: "swift", Adhoc: true})
+	alice, ac := member("p1", "alice", RoleUser)
+	alice.Gravatar = aliceHash
+	if err := r.Join(alice, ""); err != nil {
+		t.Fatal(err)
+	}
+	bob, bc := member("p2", "bob", RoleUser)
+	bob.Gravatar = bobHash
+	if err := r.Join(bob, ""); err != nil {
+		t.Fatal(err)
+	}
+	// bob's Joined roster carries alice's gravatar
+	joined, ok := bc.msgs[0].(signal.Joined)
+	if !ok {
+		t.Fatalf("bob msg[0] = %T, want signal.Joined", bc.msgs[0])
+	}
+	if len(joined.Peers) != 1 || joined.Peers[0].Gravatar != aliceHash {
+		t.Errorf("roster gravatar = %+v, want alice %q", joined.Peers, aliceHash)
+	}
+	// alice was told bob arrived, with bob's gravatar
+	last := ac.msgs[len(ac.msgs)-1]
+	pj, ok := last.(signal.PeerJoined)
+	if !ok || pj.Gravatar != bobHash {
+		t.Errorf("alice last msg = %#v, want PeerJoined with gravatar %q", last, bobHash)
+	}
+}
+
 func TestJoinDefaultsMediaOn(t *testing.T) {
 	r := New(Config{Slug: "s", Adhoc: true})
 	alice, _ := member("p1", "alice", RoleUser)

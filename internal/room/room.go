@@ -31,12 +31,13 @@ type Conn interface {
 }
 
 type Participant struct {
-	ID      string
-	Name    string
-	Account string // NickServ account; "" for guests
-	IP      string
-	Role    Role
-	Conn    Conn
+	ID       string
+	Name     string
+	Gravatar string // SHA-256 email hash for the participant's Gravatar; "" if none. Guarded by Room.mu.
+	Account  string // NickServ account; "" for guests
+	IP       string
+	Role     Role
+	Conn     Conn
 	// Ref is a stable, opaque per-session id (server-derived from the join frame's
 	// session nonce). Unlike ID it survives a reconnect, so it is carried in the
 	// roster / PeerJoined / PeerLeft frames purely so peers can recognise a
@@ -121,8 +122,8 @@ type Room struct {
 	// cap for their camera / screenshare senders. "" means uncapped (auto).
 	qualityCamera string
 	qualityScreen string
-	emptySince     time.Time
-	hasBeenJoined  bool
+	emptySince    time.Time
+	hasBeenJoined bool
 	// Synced countdown sound. countdownActive gates the control for everyone;
 	// countdownBy is the starter's participant ID so only they may stop it.
 	countdownActive bool
@@ -203,7 +204,7 @@ func (r *Room) Join(p *Participant, password string) error {
 	}
 	roster := make([]signal.PeerInfo, 0, len(r.parts))
 	for _, q := range r.parts {
-		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera, Ref: q.Ref})
+		roster = append(roster, signal.PeerInfo{ID: q.ID, Name: q.Name, Role: string(q.Role), Mic: q.Mic, Camera: q.Camera, Ref: q.Ref, Gravatar: q.Gravatar})
 	}
 	replay := append([]signal.ChatEvent(nil), r.chat...)
 	quality := signal.Quality{Camera: r.qualityCamera, Screen: r.qualityScreen}
@@ -215,7 +216,7 @@ func (r *Room) Join(p *Participant, password string) error {
 	for _, ce := range replay {
 		p.Conn.Send(ce)
 	}
-	r.Broadcast(signal.PeerJoined{ID: p.ID, Name: p.Name, Role: string(p.Role), Mic: p.Mic, Camera: p.Camera, Ref: p.Ref}, p.ID)
+	r.Broadcast(signal.PeerJoined{ID: p.ID, Name: p.Name, Role: string(p.Role), Mic: p.Mic, Camera: p.Camera, Ref: p.Ref, Gravatar: p.Gravatar}, p.ID)
 	return nil
 }
 

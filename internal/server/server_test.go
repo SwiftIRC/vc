@@ -251,3 +251,21 @@ func TestSessionRef(t *testing.T) {
 		t.Error("an empty nonce must yield an empty ref (client falls back to always-chime)")
 	}
 }
+
+func TestSanitizeGravatar(t *testing.T) {
+	const good = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"
+	if got := sanitizeGravatar(good); got != good {
+		t.Errorf("sanitizeGravatar(valid) = %q, want unchanged", got)
+	}
+	for _, bad := range []string{
+		"",
+		"tooshort",
+		good + "ff",     // too long
+		good[:63] + "G", // non-hex char
+		"84059B07D4BE67B806386C0AAD8070A23F18836BBAAE342275DC0A83414C32EE", // uppercase
+	} {
+		if got := sanitizeGravatar(bad); got != "" {
+			t.Errorf("sanitizeGravatar(%q) = %q, want \"\"", bad, got)
+		}
+	}
+}

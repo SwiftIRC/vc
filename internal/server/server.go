@@ -231,6 +231,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 	} else {
 		p.Name, p.Role = sanitizeName(join.Name), room.RoleGuest
 	}
+	p.Gravatar = sanitizeGravatar(join.Gravatar)
 	// Carry the joiner's reported mic/camera into the room before Join, so its
 	// roster + PeerJoined broadcast reflect the real state (a pre-join mute shows
 	// crossed-out immediately). A client that omits the fields defaults to ON.
@@ -410,6 +411,23 @@ func sessionRef(session string) string {
 	}
 	sum := sha256.Sum256([]byte(session))
 	return base64.RawURLEncoding.EncodeToString(sum[:])[:16]
+}
+
+// sanitizeGravatar returns s only if it is a well-formed lowercase SHA-256 hex
+// digest (64 hex chars); anything else becomes "". The value is echoed to every
+// other client and used to build a URL, so a crafted client must not be able to
+// inject arbitrary text through it.
+func sanitizeGravatar(s string) string {
+	if len(s) != 64 {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return ""
+		}
+	}
+	return s
 }
 
 // sanitizeName strips control characters, collapses whitespace, and caps
