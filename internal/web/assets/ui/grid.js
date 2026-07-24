@@ -29,6 +29,7 @@
 
 import { playSound } from "../lib/sounds.js";
 import { applyAvatar } from "../lib/avatar.js";
+import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS } from "../lib/icons.js";
 
 // Tiny DOM helper: el("div", {class:"x", onClick:fn}, child, "text"...). The
 // "text" key sets textContent, so caller-supplied strings can never inject markup.
@@ -504,8 +505,12 @@ export class Grid {
     applyAvatar(camOffAvatar, name, gravatar);
     const nameEl = el("span", { class: "name", text: self ? `${name} (you)` : name });
     const badgeEl = el("span", { class: "badge", hidden: true });
-    const micPill = el("span", { class: "pill mic", text: "mic" });
-    const avPill = el("span", { class: "pill av", text: "cam" });
+    const micPill = el("span", { class: "pill mic", role: "img" });
+    micPill._paths = { on: MIC_PATHS, off: MIC_OFF_PATHS };
+    micPill._labels = { on: "Microphone on", off: "Microphone muted" };
+    const avPill = el("span", { class: "pill av", role: "img" });
+    avPill._paths = { on: CAM_PATHS, off: CAM_OFF_PATHS };
+    avPill._labels = { on: "Camera on", off: "Camera off" };
 
     // Per-participant volume (remote tiles only): a purely LOCAL slider that sets
     // this participant's playback <audio>.volume. No wire message — everyone
@@ -597,6 +602,12 @@ export class Grid {
   _setIndicator(pill, on) {
     pill.classList.toggle("on", !!on);
     pill.classList.toggle("off", !on);
+    if (pill._paths) pill.replaceChildren(svgIcon(on ? pill._paths.on : pill._paths.off));
+    if (pill._labels) {
+      const label = on ? pill._labels.on : pill._labels.off;
+      pill.setAttribute("aria-label", label);
+      pill.setAttribute("title", label);
+    }
   }
 
   // --- screen tiles ---
