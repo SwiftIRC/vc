@@ -26,6 +26,7 @@
 import { loadMediaPrefs, saveMediaPrefs, loadLayoutPrefs, saveLayoutPrefs } from "../lib/prefs.js";
 import { QUALITY_TIERS } from "../lib/quality.js";
 import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS } from "../lib/icons.js";
+import { confirmDialog } from "../lib/confirm.js";
 
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
 // sets textContent, so any caller string is inert markup-wise.
@@ -773,6 +774,7 @@ export class Controls {
   opActionsFor(participant) {
     if (!this.isOp || !participant || !participant.id) return null;
     const id = participant.id;
+    const name = participant.name || "this participant";
     // No "+op" for someone who is already an op — it would be a no-op grant. The
     // button carries the "makeop" class so grid.js can show/hide it if the target's
     // role changes (a promotion) without rebuilding the whole action group.
@@ -784,9 +786,23 @@ export class Controls {
       "div",
       { class: "op-actions" },
       makeop,
-      el("button", { type: "button", class: "op kick", title: "Kick", onClick: () => this._send("kick", { id }) }, "kick"),
+      el("button", {
+        type: "button", class: "op kick", title: "Kick",
+        onClick: async () => {
+          if (await confirmDialog({ title: `Kick ${name}?`, message: "They'll be removed from the call.", confirmLabel: "Kick", tone: "danger" })) {
+            this._send("kick", { id });
+          }
+        },
+      }, "kick"),
       el("button", { type: "button", class: "op mute", title: "Mute mic", onClick: () => this._send("mute-peer", { id, kind: "mic" }) }, "mute"),
-      el("button", { type: "button", class: "op ban", title: "Ban", onClick: () => this._send("ban", { id }) }, "ban"),
+      el("button", {
+        type: "button", class: "op ban", title: "Ban",
+        onClick: async () => {
+          if (await confirmDialog({ title: `Ban ${name}?`, message: "They'll be removed and blocked from rejoining.", confirmLabel: "Ban", tone: "danger" })) {
+            this._send("ban", { id });
+          }
+        },
+      }, "ban"),
     );
   }
 
