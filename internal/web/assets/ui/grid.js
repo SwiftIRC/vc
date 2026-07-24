@@ -365,7 +365,7 @@ export class Grid {
   }
 
   // Authoritative remote mic/camera state from a roster entry or a peer-media-state
-  // broadcast: crossed-out pill when off, live when on. No-op for self (the self
+  // broadcast: slashed-glyph icon when off, live icon when on. No-op for self (the self
   // tile is driven locally by refreshSelf). If the peer's tile does not exist yet
   // (state raced ahead of the roster / track), remember it and apply when the tile
   // is built (see _ensureTile). Non-boolean fields are ignored, so a partial or
@@ -604,9 +604,9 @@ export class Grid {
     pill.classList.toggle("off", !on);
     if (pill._paths) pill.replaceChildren(svgIcon(on ? pill._paths.on : pill._paths.off));
     if (pill._labels) {
-      const label = on ? pill._labels.on : pill._labels.off;
-      pill.setAttribute("aria-label", label);
-      pill.setAttribute("title", label);
+      // aria-label only: .tile .pills is pointer-events:none (clicks fall through to
+      // focus), so a title tooltip would never surface — the label is for assistive tech.
+      pill.setAttribute("aria-label", on ? pill._labels.on : pill._labels.off);
     }
   }
 
