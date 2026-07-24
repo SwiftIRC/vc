@@ -358,6 +358,18 @@ body.in-call #app {
   align-self: center;
   height: min(var(--strip-tile-h), 100%);
 }
+/* Filmstrip tiles are narrow (--strip-w): drop the op moderation controls and the
+   per-tile volume slider there so the name gets the room. Both stay in the DOM and
+   reappear when the tile is focused or the grid leaves focus mode. */
+.grid.has-focus .tile:not(.focused) .op-actions,
+.grid.has-focus .tile:not(.focused) .vol,
+.grid.has-focus .tile:not(.focused) .vol-label {
+  display: none;
+}
+/* With both side controls gone, let the (still-centered) name use nearly the full width. */
+.grid.has-focus .tile:not(.focused) .name-tag {
+  max-width: calc(100% - 1.2rem);
+}
 
 /* 3-up: two tiles on top, the third centered on the bottom — all the same (half)
    width, via a 4-column grid (see Grid._relayout). */
