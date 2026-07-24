@@ -131,11 +131,11 @@ type Quality struct {
 	Screen string `json:"screen"`
 }
 type PeerJoined struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Role   string `json:"role"`
-	Mic    bool   `json:"mic"` // initial mic state (defaults true on join)
-	Camera bool   `json:"camera"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+	Mic      bool   `json:"mic"` // initial mic state (defaults true on join)
+	Camera   bool   `json:"camera"`
 	Ref      string `json:"ref,omitempty"`      // stable per-session id; see PeerInfo.Ref
 	Gravatar string `json:"gravatar,omitempty"` // see PeerInfo.Gravatar
 }
@@ -180,6 +180,7 @@ type RoleChange struct {
 	ID   string `json:"id"`
 	Role string `json:"role"`
 }
+
 // CountdownEvent tells every client the synced countdown started or stopped.
 // By is the starter's display name. On start clients play /RocketCountdown.mp3
 // and lock the control for everyone but the starter; on stop they reset it.

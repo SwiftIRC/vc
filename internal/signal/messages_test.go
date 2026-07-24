@@ -71,6 +71,7 @@ func TestEncodeServerMessages(t *testing.T) {
 		contains []string
 	}{
 		{Joined{SelfID: "p1", Role: "op", Peers: []PeerInfo{{ID: "p2", Name: "bob", Role: "user", Mic: true, Camera: false}}}, "joined", []string{`"selfId":"p1"`, `"role":"op"`, `"peers"`, `"mic":true`, `"camera":false`}},
+		{PeerJoined{ID: "p2", Name: "bob", Role: "voice", Mic: false, Camera: true}, "peer-joined", []string{`"id":"p2"`, `"mic":false`, `"camera":true`}},
 		{PeerJoined{ID: "p2", Name: "bob", Role: "user", Gravatar: "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"}, "peer-joined", []string{`"gravatar":"84059b07`}},
 		{PeerLeft{ID: "p2"}, "peer-left", nil},
 		{PeerMediaState{ID: "p2", Mic: false, Camera: true}, "peer-media-state", []string{`"id":"p2"`, `"mic":false`, `"camera":true`}},
