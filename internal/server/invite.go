@@ -76,7 +76,11 @@ func (s *inviteStore) get(id string) (token.Claims, bool) {
 // the link is refused. A join with no session (an older client that can't bind) is
 // allowed but leaves the invite unbound, so it stays reusable for such clients rather
 // than locking the identity behind a nonce they never sent — no worse than the
-// pre-single-use behavior. An absent/expired id returns ok=false (expired dropped).
+// pre-single-use behavior. Once bound, the invite outlives its original short
+// (first-use) TTL: the bound session keeps succeeding and each (re)claim slides a
+// longer GC horizon, so its tab refreshes/reconnects for the whole call. An
+// unbound absent/expired id returns ok=false (expired dropped — the first-use
+// window is still enforced for ids that were never bound).
 func (s *inviteStore) claim(id, session string) (token.Claims, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
