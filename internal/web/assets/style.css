@@ -314,6 +314,27 @@ body.in-call #app {
   font-weight: 600;
 }
 
+/* Call-duration readout: floats top-center over the video, autohides with the
+   control bar (body.ui-idle). Purely visual — clicks fall through to the tiles. */
+.call-timer {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--fg);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+body.ui-idle .call-timer {
+  opacity: 0;
+}
+
 /* The stage fills all remaining height; the grid lives here, chat overlays it. */
 .stage {
   position: relative;
@@ -669,8 +690,9 @@ video.mirror {
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
-/* Autohidden state (controls.js toggles this after ~3s of pointer inactivity). */
-.controls.is-hidden {
+/* Autohidden state: controls.js toggles body.ui-idle after ~3s of pointer inactivity;
+   the control bar and the call timer both fade from this one class. */
+body.ui-idle .controls {
   opacity: 0;
   transform: translateY(100%);
   pointer-events: none;

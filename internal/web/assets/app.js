@@ -29,6 +29,7 @@ import { Prejoin } from "./ui/prejoin.js";
 import { Grid } from "./ui/grid.js";
 import { Controls } from "./ui/controls.js";
 import { Chat } from "./ui/chat.js";
+import { formatDuration } from "./lib/duration.js";
 
 // Mirror of the server's room-slug rule (internal/server: slugRe). A path that
 // doesn't match can never join, so we route it to home with a hint instead.
@@ -51,6 +52,7 @@ let prejoin = null;
 let grid = null;
 let controls = null;
 let chat = null;
+let durationTimer = null; // setInterval handle for the call-duration readout
 let statusEl = null; // in-call "Reconnecting…" indicator (null when not in-call)
 let mediaAlertEl = null; // in-call "media connection lost" prompt (null when not in-call)
 const screenWakeLock = new ScreenWakeLock(); // keeps the screen awake while in a call
@@ -319,6 +321,18 @@ function renderInCall(msg) {
   // by renderHome / renderPrejoin / renderRemoved when we leave the call.
   document.body.classList.add("in-call");
 
+  // Call-duration readout (top-center, autohides with the control bar via body.ui-idle).
+  // The server sends the room's age at join; count up from it with the local clock so
+  // everyone converges on the same value and a refresh resumes correctly.
+  const timerEl = el("span", { class: "call-timer" });
+  const baseAgeSec = Number(msg.roomAge) || 0;
+  const startedTick = Date.now();
+  const tickTimer = () => {
+    timerEl.textContent = formatDuration(baseAgeSec + Math.floor((Date.now() - startedTick) / 1000));
+  };
+  tickTimer(); // paint immediately so it isn't blank for the first second
+  durationTimer = setInterval(tickTimer, 1000);
+
   // Stage holds the grid with the chat panel overlaid; the control bar floats over
   // the bottom of the whole in-call view (autohiding when idle).
   root.replaceChildren(
@@ -326,6 +340,7 @@ function renderInCall(msg) {
       "div",
       { class: "incall" },
       el("header", { class: "call-head" }, el("h1", { text: `#${slug}` }), statusEl, mediaAlertEl),
+      timerEl,
       el("div", { class: "stage" }, grid.el, chat.el),
       controls.el,
     ),
@@ -471,6 +486,10 @@ function showMediaFailed() {
 // before any media.stop() so grid/controls Media listeners are already detached.
 function teardownInCall() {
   screenWakeLock.disable(); // let the screen sleep again once the call is over
+  if (durationTimer) {
+    clearInterval(durationTimer);
+    durationTimer = null;
+  }
   presence.clear(); // cancel any deferred drop chime so it can't fire after we leave
   if (controls) {
     controls.destroy();

@@ -223,7 +223,7 @@ export class Controls {
   // --- autohide control bar ---
 
   _revealControls() {
-    this.el.classList.remove("is-hidden");
+    document.body.classList.remove("ui-idle");
     if (this._hideTimer) clearTimeout(this._hideTimer);
     this._hideTimer = setTimeout(() => this._maybeHide(), this._hideDelayMs);
   }
@@ -235,7 +235,7 @@ export class Controls {
       this._hideTimer = setTimeout(() => this._maybeHide(), this._hideDelayMs);
       return;
     }
-    this.el.classList.add("is-hidden");
+    document.body.classList.add("ui-idle");
   }
 
   _build() {
@@ -965,6 +965,7 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.removeEventListener(ev, this._onActivity);
     }
+    document.body.classList.remove("ui-idle");
     window.removeEventListener("keydown", this._onKeyDown);
     window.removeEventListener("keyup", this._onKeyUp);
     window.removeEventListener("blur", this._onWinBlur);
