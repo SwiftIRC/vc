@@ -118,10 +118,11 @@ type PeerInfo struct {
 	Gravatar string `json:"gravatar,omitempty"` // SHA-256 email hash for the peer's Gravatar; "" if none
 }
 type Joined struct {
-	SelfID  string     `json:"selfId"`
-	Role    string     `json:"role"`
-	Peers   []PeerInfo `json:"peers"`
-	Quality Quality    `json:"quality"` // current session video caps, so a late joiner applies them
+	SelfID     string     `json:"selfId"`
+	Role       string     `json:"role"`
+	Peers      []PeerInfo `json:"peers"`
+	Quality    Quality    `json:"quality"`           // current session video caps, so a late joiner applies them
+	RoomAgeSec int64      `json:"roomAge,omitempty"` // seconds the room has existed, as of this join
 }
 
 // Quality is the session's outbound-video caps: each field is a tier id the client

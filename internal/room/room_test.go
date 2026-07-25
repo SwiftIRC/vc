@@ -77,6 +77,23 @@ func TestJoinSendsRosterAndBroadcasts(t *testing.T) {
 	}
 }
 
+func TestJoinedCarriesRoomAge(t *testing.T) {
+	now := time.Unix(1000, 0)
+	r := New(Config{Slug: "swift", Adhoc: true, Now: func() time.Time { return now }})
+	now = time.Unix(1090, 0) // 90s after the room was created
+	alice, ac := member("p1", "alice", RoleUser)
+	if err := r.Join(alice, ""); err != nil {
+		t.Fatal(err)
+	}
+	joined, ok := ac.msgs[0].(signal.Joined)
+	if !ok {
+		t.Fatalf("msg[0] = %T, want signal.Joined", ac.msgs[0])
+	}
+	if joined.RoomAgeSec != 90 {
+		t.Errorf("RoomAgeSec = %d, want 90", joined.RoomAgeSec)
+	}
+}
+
 func TestJoinCarriesGravatar(t *testing.T) {
 	const aliceHash = "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"
 	const bobHash = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"

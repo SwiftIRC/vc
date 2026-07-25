@@ -123,6 +123,7 @@ type Room struct {
 	qualityCamera string
 	qualityScreen string
 	emptySince    time.Time
+	startedAt     time.Time // when the room/call began (New); sent as roomAge in Joined
 	hasBeenJoined bool
 	// Synced countdown sound. countdownActive gates the control for everyone;
 	// countdownBy is the starter's participant ID so only they may stop it.
@@ -141,6 +142,7 @@ func New(cfg Config) *Room {
 		bannedIPs:      map[string]struct{}{},
 		opAccounts:     map[string]struct{}{},
 		opRefs:         map[string]struct{}{},
+		startedAt:      cfg.Now(),
 	}
 }
 
@@ -212,7 +214,7 @@ func (r *Room) Join(p *Participant, password string) error {
 	r.emptySince = time.Time{}
 	r.mu.Unlock()
 
-	p.Conn.Send(signal.Joined{SelfID: p.ID, Role: string(p.Role), Peers: roster, Quality: quality})
+	p.Conn.Send(signal.Joined{SelfID: p.ID, Role: string(p.Role), Peers: roster, Quality: quality, RoomAgeSec: int64(r.cfg.Now().Sub(r.startedAt).Seconds())})
 	for _, ce := range replay {
 		p.Conn.Send(ce)
 	}
