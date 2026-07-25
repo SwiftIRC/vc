@@ -39,6 +39,13 @@ const ICE_RESTART_GRACE_MS = 6000;
 // downlink and starving the signaling WebSocket (see _capBitrate).
 const SCREEN_MAX_BITRATE = 2_500_000;
 
+// TEMP DEBUG: diagnose "remote camera stays black on join". A remote video only
+// attaches when its media (ontrack, keyed by transceiver mid) pairs with the SFU's
+// label (the "tracks" message, keyed by mid) — see _emitRemoteTrack. A lingering
+// UNPAIRED entry in the dumps below (media-without-label or label-without-media) is
+// the black-tile bug. Grep the console for "[track-debug]". Set false / remove once fixed.
+const TRACK_DEBUG = true;
+
 export class Peer extends EventTarget {
   constructor(signaling) {
     super();
@@ -384,6 +391,7 @@ export class Peer extends EventTarget {
       this._trackInfo.set(info.mid, { participantId: info.participantId, kind: info.kind });
       this._emitRemoteTrack(info.mid);
     }
+    this._dumpPairing("onTracks");
   }
 
   // --- inbound media ---
@@ -400,6 +408,7 @@ export class Peer extends EventTarget {
     const shared = event.streams[0] || null;
     this._incoming.set(mid, { stream, track: event.track, emitted: false, info: null });
     this._emitRemoteTrack(mid);
+    this._dumpPairing(`onTrack mid=${mid} rtpKind=${event.track.kind}`);
 
     // A forwarded track ends when the publisher leaves/unpublishes and the SFU
     // renegotiates the sender away: the receiver track fires "ended", or the shared
@@ -418,11 +427,31 @@ export class Peer extends EventTarget {
     if (!info || !rec || rec.emitted) return;
     rec.emitted = true;
     rec.info = info;
+    if (TRACK_DEBUG) console.info(`[track-debug] ATTACH mid=${mid} ${info.kind}@${info.participantId}`);
     this.dispatchEvent(
       new CustomEvent("remote-track", {
         detail: { participantId: info.participantId, kind: info.kind, stream: rec.stream },
       }),
     );
+  }
+
+  // TEMP DEBUG (see TRACK_DEBUG): dump the mid-pairing state after a media/label event
+  // and flag any track whose media (ontrack) and label (tracks message) haven't paired.
+  // A persistent UNPAIRED entry for a camera mid is the black-tile-on-join signature:
+  //   media-without-label -> RTP/ontrack arrived on a mid the SFU never labelled (or
+  //     labelled on a different mid) — a mid-mismatch on the client side.
+  //   label-without-media -> the SFU labelled a mid whose RTP/ontrack never arrived —
+  //     the SFU isn't forwarding it (cross-check chrome://webrtc-internals bytesReceived).
+  _dumpPairing(where) {
+    if (!TRACK_DEBUG) return;
+    const incoming = [...this._incoming.keys()];
+    const labels = [...this._trackInfo.entries()].map(([mid, i]) => `${mid}=${i.kind}@${i.participantId}`);
+    const mediaNoLabel = incoming.filter((mid) => !this._trackInfo.has(mid));
+    const labelNoMedia = [...this._trackInfo.keys()].filter((mid) => !this._incoming.has(mid));
+    let line = `[track-debug ${where}] incomingMids=[${incoming.join(",")}] labels=[${labels.join(" ")}]`;
+    if (mediaNoLabel.length) line += ` !! UNPAIRED media-without-label mids=[${mediaNoLabel.join(",")}]`;
+    if (labelNoMedia.length) line += ` !! UNPAIRED label-without-media mids=[${labelNoMedia.join(",")}]`;
+    console.info(line);
   }
 
   _onStreamGone(mid) {
