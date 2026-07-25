@@ -11,6 +11,13 @@ import (
 	"github.com/ryanwohara/webrtc-chat/internal/token"
 )
 
+// boundInviteTTL is how long a CLAIMED invite stays collectable after its last use —
+// the GC horizon for a session-bound link, slid forward on every (re)claim so the
+// bound tab can refresh/reconnect for the whole call. Generous on purpose: the
+// horizon only advances on a (re)claim, so it must exceed the longest a socket stays
+// up between joins. A bound entry is nonce-locked, so a lingering one is harmless.
+const boundInviteTTL = 24 * time.Hour
+
 // inviteStore maps a short opaque id -> the verified token Claims it stands in for.
 // The Anope module registers a token under a random id and hands out a compact link
 // (origin/slug#i=<id>) instead of embedding the whole token, which is long enough to
@@ -77,17 +84,33 @@ func (s *inviteStore) claim(id, session string) (token.Claims, bool) {
 	if !ok {
 		return token.Claims{}, false
 	}
+	// The session that already bound this invite keeps it alive past the original
+	// short first-use TTL, so its tab can refresh/reconnect for the whole call. Each
+	// such (re)claim slides the GC horizon forward; the entry is nonce-locked, so a
+	// lingering one is harmless. Checked BEFORE the expiry gate below — that gate is
+	// the first-use window, and it must not evict the bound session.
+	if e.claimedBy != "" && e.claimedBy == session {
+		e.expires = s.now().Add(boundInviteTTL)
+		s.m[id] = e
+		return e.claims, true
+	}
+	// Every other path still requires the invite to be within its current window.
 	if !s.now().Before(e.expires) {
 		delete(s.m, id)
 		return token.Claims{}, false
 	}
 	switch {
 	case e.claimedBy == "" && session != "":
-		e.claimedBy = session // first use binds the link to this session
+		// First use binds the link to this session and grants it the longer,
+		// session-tied life (slid on each later reclaim above).
+		e.claimedBy = session
+		e.expires = s.now().Add(boundInviteTTL)
 		s.m[id] = e
 		return e.claims, true
-	case e.claimedBy == session:
-		return e.claims, true // same session reconnecting/refreshing (covers the unbound no-session case)
+	case e.claimedBy == "" && session == "":
+		// Legacy no-session client on an unbound invite: allowed but never binds, so
+		// it stays reusable under the original expiry (unchanged behavior).
+		return e.claims, true
 	default:
 		return token.Claims{}, false // bound to a different session — already used elsewhere
 	}

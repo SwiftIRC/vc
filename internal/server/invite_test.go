@@ -138,3 +138,50 @@ func TestInviteStoreExpiry(t *testing.T) {
 		t.Error("expired invite still resolved")
 	}
 }
+
+func TestInviteBoundSessionSurvivesOriginalTTL(t *testing.T) {
+	now := time.Unix(1000, 0)
+	s := newInviteStore(func() time.Time { return now })
+	s.put("id", token.Claims{Nick: "alice", ExpiresAt: 2000}) // original short first-use TTL
+
+	// First use binds the invite to sessionA (within the original window).
+	if cl, ok := s.claim("id", "sessionA"); !ok || cl.Nick != "alice" {
+		t.Fatalf("first claim = %+v %v, want alice ok", cl, ok)
+	}
+	// Advance well past the original ExpiresAt (2000) — the refresh scenario.
+	now = time.Unix(9000, 0)
+	// The bound session can still re-claim (refresh/reconnect). This is the fix.
+	if cl, ok := s.claim("id", "sessionA"); !ok || cl.Nick != "alice" {
+		t.Errorf("bound reclaim after original expiry = %+v %v, want ok", cl, ok)
+	}
+	// A genuinely different session is still refused.
+	if _, ok := s.claim("id", "sessionB"); ok {
+		t.Error("a different session must still be refused for a bound invite")
+	}
+}
+
+func TestInviteBoundHorizonSlidesAndGCs(t *testing.T) {
+	base := time.Unix(1000, 0)
+	now := base
+	s := newInviteStore(func() time.Time { return now })
+	s.put("id", token.Claims{Nick: "alice", ExpiresAt: 2000})
+	if _, ok := s.claim("id", "sessionA"); !ok { // bind → horizon = base + boundInviteTTL
+		t.Fatal("bind failed")
+	}
+	// Reclaim just before the horizon slides it forward; a sweep then must NOT drop it.
+	now = base.Add(boundInviteTTL - time.Minute)
+	if _, ok := s.claim("id", "sessionA"); !ok {
+		t.Fatal("reclaim before the horizon should succeed")
+	}
+	now = base.Add(boundInviteTTL + time.Minute) // past the ORIGINAL horizon, within the slid one
+	s.sweep()
+	if _, ok := s.claim("id", "sessionA"); !ok {
+		t.Error("bound invite was swept despite a recent reclaim — horizon did not slide")
+	}
+	// Abandoned: no reclaim for a full horizon → sweep GCs it, and it is then gone.
+	now = now.Add(boundInviteTTL + time.Minute)
+	s.sweep()
+	if _, ok := s.claim("id", "sessionA"); ok {
+		t.Error("an abandoned bound invite should be swept after the horizon")
+	}
+}
