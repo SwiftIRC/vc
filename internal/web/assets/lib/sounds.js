@@ -36,7 +36,10 @@ export function playSound(name) {
 // MUST be called from a real user-gesture handler. Silent: primes muted, then pauses
 // and resets — no sound on any platform. Best-effort; swallows rejection.
 export function primeAudio(el) {
-  if (!el) return;
+  // Skip a null element, and one that's ALREADY playing: a playing element is already
+  // unlocked, and priming it would mute/pause/rewind a chime or countdown that's mid-play
+  // for a real reason (e.g. the user's first gesture landing during the countdown).
+  if (!el || !el.paused) return;
   el.muted = true;
   const done = () => {
     el.pause();
@@ -47,7 +50,13 @@ export function primeAudio(el) {
     }
     el.muted = false;
   };
-  const p = el.play();
+  let p;
+  try {
+    p = el.play();
+  } catch {
+    el.muted = false; // the rare synchronous throw — leave nothing muted
+    return;
+  }
   if (p && typeof p.then === "function") p.then(done).catch(() => { el.muted = false; });
   else done();
 }
