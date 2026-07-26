@@ -25,7 +25,7 @@
 
 import { loadMediaPrefs, saveMediaPrefs, loadLayoutPrefs, saveLayoutPrefs } from "../lib/prefs.js";
 import { QUALITY_TIERS } from "../lib/quality.js";
-import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS } from "../lib/icons.js";
+import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS, EYE_PATHS, EYE_OFF_PATHS } from "../lib/icons.js";
 import { confirmDialog } from "../lib/confirm.js";
 import { primeAudio, unlockSounds } from "../lib/sounds.js";
 
@@ -91,6 +91,9 @@ export class Controls {
     // Pinned camera-grid column count (2/3/4) or null for auto, restored from last time.
     const savedCols = loadLayoutPrefs().columns;
     this._cols = savedCols === 2 || savedCols === 3 || savedCols === 4 ? savedCols : null;
+
+    // Hide-self-view: hide our OWN camera tile from our OWN grid (local only), restored.
+    this._selfHidden = !!loadLayoutPrefs().selfHidden;
 
     // Current session video caps (tier ids), kept in sync via setQualityState so the op
     // menu — built now or on a mid-call promotion — always reflects the live values.
@@ -198,6 +201,7 @@ export class Controls {
   attachGrid(grid) {
     this.grid = grid || null;
     if (this.grid && this._cols) this.grid.setColumns(this._cols); // apply the restored choice
+    if (this.grid) this.grid.setSelfHidden(this._selfHidden); // restore hide-self-view
   }
 
   // --- chat panel toggle ---
@@ -304,6 +308,13 @@ export class Controls {
     this.colsWrap = el("div", { class: "share-wrap" }, this.colsBtn, this.colsMenu);
     this._markColsActive();
 
+    this.hideSelfBtn = el("button", {
+      type: "button", class: "ctl hide-self icon",
+      "aria-label": "Hide yourself from your view",
+      onClick: () => this._toggleSelfHidden(),
+    });
+    this._setSelfHiddenButton();
+
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
     this.chatBadge = el("span", { class: "chat-badge", hidden: true });
@@ -349,7 +360,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.colsWrap, this.lowBwBtn, this.countdownBtn, this.chatBtn];
+    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.colsWrap, this.hideSelfBtn, this.lowBwBtn, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -528,6 +539,19 @@ export class Controls {
     for (const item of this.colsMenu.querySelectorAll(".cols-item")) {
       item.classList.toggle("active", item.getAttribute("data-cols") === key);
     }
+  }
+
+  _setSelfHiddenButton() {
+    this.hideSelfBtn.replaceChildren(svgIcon(this._selfHidden ? EYE_OFF_PATHS : EYE_PATHS));
+    this.hideSelfBtn.classList.toggle("active", this._selfHidden);
+    this.hideSelfBtn.title = this._selfHidden ? "Show yourself" : "Hide yourself from your view";
+  }
+
+  _toggleSelfHidden() {
+    this._selfHidden = !this._selfHidden;
+    saveLayoutPrefs({ selfHidden: this._selfHidden });
+    this._setSelfHiddenButton();
+    if (this.grid) this.grid.setSelfHidden(this._selfHidden);
   }
 
   // Toggle a device menu; populate it from a fresh enumerate each open so late-granted
