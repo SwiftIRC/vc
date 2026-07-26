@@ -27,6 +27,7 @@ import { loadMediaPrefs, saveMediaPrefs, loadLayoutPrefs, saveLayoutPrefs } from
 import { QUALITY_TIERS } from "../lib/quality.js";
 import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS } from "../lib/icons.js";
 import { confirmDialog } from "../lib/confirm.js";
+import { primeAudio, unlockSounds } from "../lib/sounds.js";
 
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
 // sets textContent, so any caller string is inert markup-wise.
@@ -138,6 +139,24 @@ export class Controls {
     this._onActivity = () => this._revealControls();
     for (const ev of this._activityEvents) {
       window.addEventListener(ev, this._onActivity, { passive: true });
+    }
+
+    // iOS Safari blocks HTMLAudioElement.play() outside a user gesture until the
+    // element has been played once within one. The countdown and chimes are played
+    // from network events, so prime every sound element on the first REAL gesture in
+    // the call (once), then drop these listeners. mousemove is deliberately excluded —
+    // it is not a user-activation gesture.
+    this._audioUnlocked = false;
+    this._audioUnlockEvents = ["touchstart", "mousedown", "keydown"];
+    this._onAudioUnlock = () => {
+      if (this._audioUnlocked) return;
+      this._audioUnlocked = true;
+      primeAudio(this._countdownSound());
+      unlockSounds();
+      this._removeAudioUnlock();
+    };
+    for (const ev of this._audioUnlockEvents) {
+      window.addEventListener(ev, this._onAudioUnlock, { passive: true });
     }
 
     // Push-to-talk: hold Space to go live while muted, release to re-mute. Separate
@@ -729,6 +748,12 @@ export class Controls {
       : "Play countdown for everyone";
   }
 
+  _removeAudioUnlock() {
+    for (const ev of this._audioUnlockEvents) {
+      window.removeEventListener(ev, this._onAudioUnlock);
+    }
+  }
+
   // Lazily build the Audio element and wire its natural-end handler once.
   _countdownSound() {
     if (!this.countdownAudio) {
@@ -743,10 +768,11 @@ export class Controls {
     try {
       audio.currentTime = 0;
     } catch {}
-    // Autoplay policy: for the STARTER this play() runs in the call stack of
-    // their click (a user gesture), so it is allowed. For OTHERS it is triggered
-    // by a network message and the browser may block it — that is acceptable and
-    // best-effort. Swallow the rejection so it is not an unhandled promise.
+    // Best-effort: this runs from the `countdown` broadcast handler for EVERYONE —
+    // including the starter, whose click only _send()s — so it is never a user
+    // gesture. iOS therefore blocks it unless the element was unlocked on the first
+    // in-call gesture (see the audio-unlock in the constructor); desktop permits it
+    // once the page has been interacted with. Swallow the rejection either way.
     const p = audio.play();
     if (p && typeof p.catch === "function") p.catch(() => {});
   }
@@ -965,6 +991,7 @@ export class Controls {
     for (const ev of this._activityEvents) {
       window.removeEventListener(ev, this._onActivity);
     }
+    this._removeAudioUnlock();
     document.body.classList.remove("ui-idle");
     window.removeEventListener("keydown", this._onKeyDown);
     window.removeEventListener("keyup", this._onKeyUp);

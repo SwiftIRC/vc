@@ -30,3 +30,38 @@ export function playSound(name) {
   const p = audio.play();
   if (p && typeof p.catch === "function") p.catch(() => {});
 }
+
+// Unlock an <audio> element for later programmatic play on iOS Safari, which blocks
+// play() outside a user gesture until the element has been played once within one.
+// MUST be called from a real user-gesture handler. Silent: primes muted, then pauses
+// and resets — no sound on any platform. Best-effort; swallows rejection.
+export function primeAudio(el) {
+  if (!el) return;
+  el.muted = true;
+  const done = () => {
+    el.pause();
+    try {
+      el.currentTime = 0;
+    } catch {
+      /* not seekable — harmless */
+    }
+    el.muted = false;
+  };
+  const p = el.play();
+  if (p && typeof p.then === "function") p.then(done).catch(() => { el.muted = false; });
+  else done();
+}
+
+// Prime every chime element on a user gesture so iOS lets the later network-triggered
+// plays through. Creates each element the way playSound does lazily, then primes it.
+// Idempotent — safe to call more than once.
+export function unlockSounds() {
+  for (const name of Object.keys(FILES)) {
+    let audio = cache[name];
+    if (!audio) {
+      audio = new Audio(FILES[name]);
+      cache[name] = audio;
+    }
+    primeAudio(audio);
+  }
+}
