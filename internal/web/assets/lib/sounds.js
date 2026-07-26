@@ -7,9 +7,9 @@
 // clicked "Join" and live WebRTC audio is already playing, so the page is unlocked —
 // but we still swallow the rejection, because a missed blip is harmless.
 const FILES = {
-  join: "/door_open.ogg", // a peer joined
-  drop: "/sounds_drop.ogg", // a peer disconnected
-  bloop: "/sounds_bloop.ogg", // a peer started a share
+  join: "/door_open.mp3", // a peer joined
+  drop: "/sounds_drop.mp3", // a peer disconnected
+  bloop: "/sounds_bloop.mp3", // a peer started a share
 };
 
 const cache = {};
