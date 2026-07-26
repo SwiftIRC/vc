@@ -102,19 +102,20 @@ export class Media extends EventTarget {
     return this.stream;
   }
 
-  // List available camera and microphone inputs as {cameras, mics} arrays of
-  // MediaDeviceInfo. Labels are only populated after permission is granted, so
-  // call this after start() to get named entries.
+  // List available camera/microphone inputs and audio outputs as {cameras, mics,
+  // speakers} arrays of MediaDeviceInfo. Labels are only populated after permission
+  // is granted, so call this after start() to get named entries.
   async enumerate() {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const cameras = devices.filter((d) => d.kind === "videoinput");
     const mics = devices.filter((d) => d.kind === "audioinput");
+    const speakers = devices.filter((d) => d.kind === "audiooutput");
     // A camera EXISTS even if the default one failed to open (busy/in use by another
     // app). Mark it available so the camera toggle stays enabled — otherwise a failed
     // default would disable the toggle and leave the user unable to pick a working
     // camera from the list. Only "no camera hardware at all" leaves this false.
     if (cameras.length > 0) this.cameraAvailable = true;
-    return { cameras, mics };
+    return { cameras, mics, speakers };
   }
 
   // Switch to the given camera and/or mic. Only the requested kinds are

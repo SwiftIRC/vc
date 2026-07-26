@@ -2,6 +2,7 @@
 // however the user last left them:
 //   - mic / camera / ns  booleans — the mic/camera/noise-suppression on-off state.
 //   - micId / cameraId   deviceId strings — the last input device explicitly selected.
+//   - speakerId          deviceId string — the last audio-OUTPUT device explicitly selected.
 // An ABSENT key means "no saved preference", i.e. use the app default (boolean consumers
 // test `=== false` / `!== false`, never truthiness of a maybe-undefined key; a saved
 // deviceId is applied as an `ideal` constraint so a since-removed device still falls back

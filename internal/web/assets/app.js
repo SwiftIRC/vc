@@ -30,6 +30,7 @@ import { Grid } from "./ui/grid.js";
 import { Controls } from "./ui/controls.js";
 import { Chat } from "./ui/chat.js";
 import { formatDuration } from "./lib/duration.js";
+import { useCommunicationAudio } from "./lib/audioSession.js";
 
 // Mirror of the server's room-slug rule (internal/server: slugRe). A path that
 // doesn't match can never join, so we route it to home with a hint instead.
@@ -288,6 +289,8 @@ function setLowBandwidth(on) {
 // the tile grid (self + remotes, screen-shares, active-speaker), the control bar
 // (local mute/camera/screenshare/leave, plus op moderation), and the chat panel.
 function renderInCall(msg) {
+  // Tag this as a communication session so mobile uses the CALL volume (no-op off iOS).
+  useCommunicationAudio();
   // Media plane. Peer registers its own offer/answer/candidate/tracks handlers in
   // its constructor; that must happen before start() sends the first offer, and
   // synchronously here so it precedes any inbound SFU frame on this socket.
