@@ -110,6 +110,10 @@ export class Grid {
     this._audioCtx = null; // shared AudioContext (lazy: created with the first remote mic)
     this._levelTimer = null; // active-speaker polling handle (null when idle)
 
+    // Local audio-output routing + deafen (both apply to CURRENT and FUTURE sinks).
+    this._sinkId = ""; // chosen audio-output deviceId (setSinkId); "" = browser default
+    this._deafened = false; // when true, ALL incoming audio is muted (transient)
+
     // Bound Media listeners for the self tile; kept so destroy() can detach them.
     this._onMicTrack = () => {
       this._attachSelfAnalyser(); // re-point the self active-speaker meter at the new mic track
@@ -418,12 +422,47 @@ export class Grid {
   // audible at a time (the element is muted while WebAudio boosts), so nothing doubles;
   // with no gain node the element still covers the full 0-100%.
   _applyVolume(a, v) {
+    // Deafen wins over any volume/boost: mute the element AND zero the boost gain, so a
+    // >100% remote (audible only through the gain node) is silenced too.
+    if (this._deafened) {
+      if (a.audioEl) a.audioEl.muted = true;
+      if (a.gain) a.gain.gain.value = 0;
+      return;
+    }
     const boost = v > 1 && a.gain != null;
     if (a.audioEl) {
       a.audioEl.muted = boost;
       a.audioEl.volume = boost ? 1 : Math.min(1, v);
     }
     if (a.gain) a.gain.gain.value = boost ? v : 0;
+  }
+
+  // --- audio output device + deafen (local only) ---
+
+  // Route ALL remote audio to a chosen output device: the <audio class="sink"> elements
+  // (the 0-100% path) AND the shared AudioContext used for the >100% boost, since a
+  // boosted remote plays through ctx.destination, not its (muted) element. setSinkId is
+  // Chrome/Edge/Firefox on elements, Chrome-only on AudioContext; every call is caught so
+  // a vanished device / unsupported API just falls back to the default output.
+  setAudioOutput(deviceId) {
+    this._sinkId = deviceId || "";
+    for (const a of this.el.querySelectorAll("audio.sink")) {
+      if (typeof a.setSinkId === "function") a.setSinkId(this._sinkId).catch(() => {});
+    }
+    if (this._audioCtx && typeof this._audioCtx.setSinkId === "function") {
+      this._audioCtx.setSinkId(this._sinkId).catch(() => {});
+    }
+  }
+
+  // Mute/unmute ALL incoming audio (deafen). Transient — not persisted. Re-applies volume
+  // across every live participant AND screen-share audio entry so the _applyVolume deafen
+  // guard takes (or releases) effect on both the element and the boost gain.
+  setDeafened(on) {
+    this._deafened = !!on;
+    for (const [id, a] of this.audio) this._applyVolume(a, this.tiles.get(id)?.volume ?? 1);
+    for (const rec of this.screens.values()) {
+      if (rec.audioEl) this._applyVolume(rec, rec.volumeEl ? Math.min(2, Math.max(0, Number(rec.volumeEl.value))) : 1);
+    }
   }
 
   // Flash a "NNN%" readout under a volume slider while it is being dragged, auto-hiding
@@ -684,6 +723,8 @@ export class Grid {
       // the >100% boost off a clone. Same reliable pattern as _attachAudio / _applyVolume.
       rec.audioEl = el("audio", { class: "sink", autoplay: true });
       rec.el.append(rec.audioEl);
+      // Inherit the chosen output device (no-op when unsupported or "" default).
+      if (this._sinkId && typeof rec.audioEl.setSinkId === "function") rec.audioEl.setSinkId(this._sinkId).catch(() => {});
       rec.volLabel = el("span", { class: "vol-label", "aria-hidden": "true" });
       rec.volumeEl = el("input", {
         type: "range",
@@ -791,6 +832,10 @@ export class Grid {
     if (!this._audioCtx) {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       this._audioCtx = new Ctx();
+      // Inherit any already-chosen output device for the >100% boost path.
+      if (this._sinkId && typeof this._audioCtx.setSinkId === "function") {
+        this._audioCtx.setSinkId(this._sinkId).catch(() => {});
+      }
     }
     if (this._audioCtx.state === "suspended") this._audioCtx.resume().catch(() => {});
     return this._audioCtx;
@@ -813,6 +858,8 @@ export class Grid {
     const audioEl = el("audio", { class: "sink", autoplay: true });
     audioEl.srcObject = stream;
     tile.el.append(audioEl);
+    // Inherit the chosen output device (no-op when unsupported or "" default).
+    if (this._sinkId && typeof audioEl.setSinkId === "function") audioEl.setSinkId(this._sinkId).catch(() => {});
 
     let source = null;
     let gain = null;
