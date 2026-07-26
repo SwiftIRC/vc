@@ -25,7 +25,7 @@
 
 import { loadMediaPrefs, saveMediaPrefs, loadLayoutPrefs, saveLayoutPrefs } from "../lib/prefs.js";
 import { QUALITY_TIERS } from "../lib/quality.js";
-import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS, EYE_PATHS, EYE_OFF_PATHS } from "../lib/icons.js";
+import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS, EYE_PATHS, EYE_OFF_PATHS, SPEAKER_PATHS, SPEAKER_OFF_PATHS } from "../lib/icons.js";
 import { confirmDialog } from "../lib/confirm.js";
 import { primeAudio, unlockSounds } from "../lib/sounds.js";
 
@@ -94,6 +94,9 @@ export class Controls {
 
     // Hide-self-view: hide our OWN camera tile from our OWN grid (local only), restored.
     this._selfHidden = !!loadLayoutPrefs().selfHidden;
+
+    // Chosen audio-output device (setSinkId), restored; "" = the browser default output.
+    this._speakerId = loadMediaPrefs().speakerId || "";
 
     // Current session video caps (tier ids), kept in sync via setQualityState so the op
     // menu — built now or on a mid-call promotion — always reflects the live values.
@@ -202,6 +205,7 @@ export class Controls {
     this.grid = grid || null;
     if (this.grid && this._cols) this.grid.setColumns(this._cols); // apply the restored choice
     if (this.grid) this.grid.setSelfHidden(this._selfHidden); // restore hide-self-view
+    if (this.grid && this._speakerId) this.grid.setAudioOutput(this._speakerId); // restore output device
   }
 
   // --- chat panel toggle ---
@@ -269,8 +273,14 @@ export class Controls {
     // renegotiation, and for the mic the NS graph is rebuilt.
     this.muteBtn = el("button", { type: "button", class: "ctl mic icon", onClick: () => this._toggleMic() });
     this.micSelect = el("select", { class: "device", onChange: () => this._switchMicDevice() });
+    // Output-device selection rides in the SAME mic menu (saves a control-bar button), but
+    // only where the browser can actually switch outputs (Chrome/Edge/Firefox; NOT iOS).
+    this._outputSupported = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+    this.speakerSelect = this._outputSupported
+      ? el("select", { class: "device", onChange: () => this._switchSpeakerDevice() })
+      : null;
     this.micArrow = this._deviceArrow("Choose microphone", () => this._toggleMicMenu());
-    this.micMenu = this._deviceMenu("Microphone", this.micSelect);
+    this.micMenu = this._deviceMenu2("Microphone", this.micSelect, "Speaker", this.speakerSelect);
     this.micWrap = el("div", { class: "split-ctl" }, this.muteBtn, this.micArrow, this.micMenu);
 
     this.cameraBtn = el("button", { type: "button", class: "ctl cam icon", onClick: () => this._toggleCamera() });
@@ -314,6 +324,16 @@ export class Controls {
       onClick: () => this._toggleSelfHidden(),
     });
     this._setSelfHiddenButton();
+
+    // Deafen: mute ALL incoming audio locally. Its own compact toggle (not in a menu) so
+    // its state is visible and one click away. Transient — every call starts un-deafened.
+    this.deafenBtn = el("button", {
+      type: "button", class: "ctl deafen icon",
+      "aria-label": "Deafen (mute all incoming audio)",
+      onClick: () => this._toggleDeafen(),
+    });
+    this._deafened = false;
+    this._setDeafenButton();
 
     // Chat toggle: shows/hides the (default-hidden) chat panel; the badge counts
     // unread messages that arrive while the panel is closed.
@@ -360,7 +380,7 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.micWrap, this.cameraWrap, this.shareWrap, this.nsBtn, this.colsWrap, this.hideSelfBtn, this.lowBwBtn, this.countdownBtn, this.chatBtn];
+    const children = [this.micWrap, this.cameraWrap, this.deafenBtn, this.shareWrap, this.nsBtn, this.colsWrap, this.hideSelfBtn, this.lowBwBtn, this.countdownBtn, this.chatBtn];
     if (this.isOp) {
       this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
       this._setLockButton(false);
@@ -503,6 +523,14 @@ export class Controls {
   _deviceMenu(label, select) {
     return el("div", { class: "device-menu", hidden: true }, el("label", { class: "field" }, el("span", { text: label }), select));
   }
+  // Like _deviceMenu but renders one OR two labelled fields; the second is omitted when
+  // selectB is null (e.g. where output selection is unsupported). Used by the mic menu,
+  // which carries both the Microphone and Speaker selects.
+  _deviceMenu2(labelA, selectA, labelB, selectB) {
+    const fields = [el("label", { class: "field" }, el("span", { text: labelA }), selectA)];
+    if (selectB) fields.push(el("label", { class: "field" }, el("span", { text: labelB }), selectB));
+    return el("div", { class: "device-menu", hidden: true }, ...fields);
+  }
 
   // Close every popover (share, mic, camera) and reset the carets' expanded state.
   _closeMenus() {
@@ -556,6 +584,20 @@ export class Controls {
     if (this.grid) this.grid.setSelfHidden(this._selfHidden);
   }
 
+  _setDeafenButton() {
+    this.deafenBtn.replaceChildren(svgIcon(this._deafened ? SPEAKER_OFF_PATHS : SPEAKER_PATHS));
+    this.deafenBtn.classList.toggle("active", this._deafened);
+    const label = this._deafened ? "Undeafen (restore incoming audio)" : "Deafen (mute all incoming audio)";
+    this.deafenBtn.title = label;
+    this.deafenBtn.setAttribute("aria-label", label); // keep the AT label in step with state
+  }
+
+  _toggleDeafen() {
+    this._deafened = !this._deafened;
+    this._setDeafenButton();
+    if (this.grid) this.grid.setDeafened(this._deafened);
+  }
+
   // Toggle a device menu; populate it from a fresh enumerate each open so late-granted
   // labels and hot-plugged devices appear. Only one popover is open at a time.
   _toggleMicMenu() {
@@ -585,8 +627,12 @@ export class Controls {
     } catch {
       return;
     }
-    if (kind === "camera") this._fillDeviceSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
-    else this._fillDeviceSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
+    if (kind === "camera") {
+      this._fillDeviceSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
+    } else {
+      this._fillDeviceSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
+      if (this.speakerSelect) this._fillOutputSelect(devices.speakers || []);
+    }
   }
 
   _fillDeviceSelect(select, list, activeTrack, label) {
@@ -603,6 +649,33 @@ export class Controls {
       if (d.deviceId && d.deviceId === activeId) opt.selected = true;
       select.append(opt);
     });
+  }
+
+  // Like _fillDeviceSelect, but for audio OUTPUTS: there is no "active track" to read the
+  // current sink from, so mark the persisted choice (this._speakerId) as selected.
+  _fillOutputSelect(list) {
+    const select = this.speakerSelect;
+    select.replaceChildren();
+    if (list.length === 0) {
+      select.append(el("option", { value: "", text: "No speaker found" }));
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    list.forEach((d, i) => {
+      const opt = el("option", { value: d.deviceId, text: d.label || `Speaker ${i + 1}` });
+      if (d.deviceId && d.deviceId === this._speakerId) opt.selected = true;
+      select.append(opt);
+    });
+  }
+
+  // Route all remote audio to the chosen output device (persisted for next time).
+  async _switchSpeakerDevice() {
+    if (!this.grid || !this.speakerSelect) return;
+    this._speakerId = this.speakerSelect.value;
+    this.grid.setAudioOutput(this._speakerId);
+    saveMediaPrefs({ speakerId: this._speakerId }); // remember this output for next time
+    this._closeMenus(); // selection made — dismiss the popover
   }
 
   // Hot-swap the camera mid-call. useDevices acquires the chosen device (turning the
