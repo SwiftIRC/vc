@@ -144,8 +144,9 @@ export class Grid {
   // called on every tile add/remove and on resize.
   _relayout() {
     if (!this.el) return;
-    const tiles = [...this.el.querySelectorAll(":scope > .tile")];
-    for (const t of tiles) t.classList.remove("pos3-a", "pos3-b", "pos3-c"); // recomputed below
+    const all = [...this.el.querySelectorAll(":scope > .tile")];
+    for (const t of all) t.classList.remove("pos3-a", "pos3-b", "pos3-c"); // recomputed below
+    const tiles = all.filter((t) => !t.hidden); // a hidden (self-view) tile leaves no cell
     if (this._focusedEl) {
       this._layoutFocus(tiles);
       return;
@@ -199,6 +200,18 @@ export class Grid {
   // its own thing).
   setColumns(cols) {
     this._forcedCols = cols === 2 || cols === 3 || cols === 4 ? cols : null;
+    this._relayout();
+  }
+
+  // Hide/show THIS client's own camera tile in the local grid. Others are unaffected —
+  // the media keeps publishing; this only changes what WE render. A hidden self tile is
+  // excluded from _relayout, so the remaining tiles fill the space. Clears focus first
+  // so we never leave a focused-but-invisible tile.
+  setSelfHidden(hidden) {
+    this._selfHidden = !!hidden;
+    if (!this._selfTile) return;
+    if (this._selfHidden && this._focusedEl === this._selfTile.el) this._clearFocus();
+    this._selfTile.el.hidden = this._selfHidden;
     this._relayout();
   }
 
