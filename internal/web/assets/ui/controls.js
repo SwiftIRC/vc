@@ -544,7 +544,9 @@ export class Controls {
   _setSelfHiddenButton() {
     this.hideSelfBtn.replaceChildren(svgIcon(this._selfHidden ? EYE_OFF_PATHS : EYE_PATHS));
     this.hideSelfBtn.classList.toggle("active", this._selfHidden);
-    this.hideSelfBtn.title = this._selfHidden ? "Show yourself" : "Hide yourself from your view";
+    const label = this._selfHidden ? "Show yourself" : "Hide yourself from your view";
+    this.hideSelfBtn.title = label;
+    this.hideSelfBtn.setAttribute("aria-label", label); // keep the AT label in step with the state, like title
   }
 
   _toggleSelfHidden() {
