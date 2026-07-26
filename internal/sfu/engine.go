@@ -50,6 +50,19 @@ func NewEngine(cfg config.Config) (*Engine, error) {
 		s.SetNAT1To1IPs([]string{cfg.PublicIP}, webrtc.ICECandidateTypeHost)
 	}
 
+	// Pin the SFU to always be the DTLS server (browser = DTLS client). Without this,
+	// Pion's answering role defaults to DTLSRoleClient, so the effective role depends on
+	// who offered when the transport was established: a client-initiated offer makes Pion
+	// the client, but a join-time glare where the browser answers the SFU's offer makes the
+	// browser the client and Pion the server. A later client-initiated renegotiation then
+	// has Pion answer as client again, flipping its established role — which the browser
+	// rejects with "Failed to set SSL role for the transport" and aborts the renegotiation.
+	// Fixing the answering role to server makes Pion consistently the DTLS server no matter
+	// who offers or how a glare resolves, so the role can never flip.
+	if err := s.SetAnsweringDTLSRole(webrtc.DTLSRoleServer); err != nil {
+		return nil, fmt.Errorf("dtls answering role: %w", err)
+	}
+
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(m),
 		webrtc.WithInterceptorRegistry(i),

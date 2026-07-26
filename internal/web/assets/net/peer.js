@@ -351,7 +351,23 @@ export class Peer extends EventTarget {
 
   // Our own offer was accepted; complete the exchange.
   async _onRemoteAnswer(msg) {
-    await this.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+    try {
+      await this.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+    } catch (err) {
+      // "Failed to set SSL role for the transport" lands here when the answer's DTLS role
+      // conflicts with the established transport (a role flip across renegotiation). The
+      // failed SRD did not apply. Dump the a=setup/a=fingerprint of BOTH our offer and the
+      // server's answer so a recurrence is diagnosable — that's the pair that disagrees.
+      const dtls = (sdp) => (sdp || "").split(/\r?\n/).filter((l) => l.startsWith("m=") || l.startsWith("a=mid:") || l.startsWith("a=setup:") || l.startsWith("a=fingerprint:")).join("  ");
+      console.error(
+        "[peer] answer setRemoteDescription failed:", String(err),
+        "\nOUR-OFFER    setup:", dtls(this.pc.localDescription && this.pc.localDescription.sdp),
+        "\nSERVER-ANSWER setup:", dtls(msg.sdp),
+        "\n--- OUR LOCAL DESCRIPTION (our offer) ---\n" + (this.pc.localDescription ? this.pc.localDescription.sdp : "(none)"),
+        "\n--- FAILED SERVER ANSWER ---\n" + msg.sdp,
+      );
+      throw err;
+    }
     await this._drainCandidates();
     // Back to stable — send any offer that was deferred while this one was in flight.
     this._flushPendingOffer();
