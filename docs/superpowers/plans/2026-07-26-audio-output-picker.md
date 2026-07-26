@@ -228,10 +228,12 @@ Immediately after the `_applyVolume` method (before `_showVolLabel`), add:
     this._deafened = !!on;
     for (const [id, a] of this.audio) this._applyVolume(a, this.tiles.get(id)?.volume ?? 1);
     for (const rec of this.screens.values()) {
-      if (rec.audioEl) this._applyVolume(rec, rec.volumeEl ? Number(rec.volumeEl.value) || 1 : 1);
+      if (rec.audioEl) this._applyVolume(rec, rec.volumeEl ? Math.min(2, Math.max(0, Number(rec.volumeEl.value))) : 1);
     }
   }
 ```
+
+(The screen volume is clamped to [0,2] and reads the exact slider value — matching `_attachScreenAudio`/`onInput` at grid.js:739,778 — so an explicitly-muted (0%) screen stays muted on undeafen rather than snapping back to 100%.)
 
 - [ ] **Step 4: Apply the sink when the AudioContext is created**
 
