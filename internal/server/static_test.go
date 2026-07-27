@@ -59,7 +59,97 @@ func TestStaticShellAndAssets(t *testing.T) {
 	}
 }
 
-// TestStaticDoesNotShadowRoutes guards the Go 1.22 mux precedence: the GET /
+// The shell's asset URLs carry the build digest, and the whole module graph rides
+// along on the path prefix (app.js's imports are relative), so a redeploy changes
+// every JS/CSS URL and no cache can serve stale client code.
+func TestShellStampsAssetURLsWithVersion(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+
+	_, body := httpGet(t, srv.URL+"/")
+	for _, want := range []string{
+		"/v/" + assetsVersion + "/app.js",
+		"/v/" + assetsVersion + "/style.css",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("shell does not reference %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, versionPlaceholder) {
+		t.Errorf("shell still carries the unsubstituted %s placeholder", versionPlaceholder)
+	}
+}
+
+// A current-version URL names one build's bytes for good, so it is served immutable —
+// including the nested module paths the entry point imports.
+func TestVersionedAssetsAreImmutable(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+
+	for _, path := range []string{"/app.js", "/style.css", "/ui/grid.js", "/lib/sounds.js"} {
+		resp, body := httpGet(t, srv.URL+"/v/"+assetsVersion+path)
+		if resp.StatusCode != 200 {
+			t.Errorf("GET versioned %s = %d, want 200", path, resp.StatusCode)
+			continue
+		}
+		if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+			t.Errorf("versioned %s Cache-Control = %q, want immutable", path, cc)
+		}
+		if body == "" {
+			t.Errorf("versioned %s served an empty body", path)
+		}
+	}
+}
+
+// A stale client keeps requesting its OLD version's URLs. Those must still serve the
+// current bytes (so the page self-heals on reload) but must NOT be marked immutable —
+// a rollback would otherwise strand newer content under an older build's URL.
+func TestStaleVersionServesCurrentBytesRevalidating(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+
+	resp, body := httpGet(t, srv.URL+"/v/0000000000000000/app.js")
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET stale-versioned /app.js = %d, want 200", resp.StatusCode)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", cc)
+	}
+	_, current := httpGet(t, srv.URL+"/v/"+assetsVersion+"/app.js")
+	if body != current {
+		t.Error("stale-versioned URL did not serve the current app.js bytes")
+	}
+}
+
+// A version-stamped path is unambiguously an asset request, never a room slug, so a
+// miss is a 404 — not the HTML shell, which a stale client would try to parse as JS.
+func TestVersionedMissIs404(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+
+	resp, body := httpGet(t, srv.URL+"/v/"+assetsVersion+"/since-renamed.js")
+	if resp.StatusCode != 404 {
+		t.Errorf("GET versioned missing asset = %d, want 404", resp.StatusCode)
+	}
+	if strings.Contains(body, `id="app"`) {
+		t.Error("versioned miss returned the SPA shell instead of a 404")
+	}
+}
+
+// Unversioned asset URLs keep working (the mp3 chimes and the worklet are still
+// referenced that way), and a room slug of "v" is still a room, not an asset path.
+func TestUnversionedAssetsStillServed(t *testing.T) {
+	_, srv := newTestHub(t, "", true)
+
+	resp, _ := httpGet(t, srv.URL+"/app.js")
+	if resp.StatusCode != 200 {
+		t.Errorf("GET /app.js = %d, want 200", resp.StatusCode)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("unversioned /app.js Cache-Control = %q, want no-cache", cc)
+	}
+	resp, body := httpGet(t, srv.URL+"/v")
+	if resp.StatusCode != 200 || !strings.Contains(body, `id="app"`) {
+		t.Errorf("GET /v = %d, want the shell for a room named \"v\"", resp.StatusCode)
+	}
+}
+
 // The version endpoint reports a non-empty asset digest so the client can detect a
 // redeploy. It must not be cached.
 func TestVersionEndpoint(t *testing.T) {
@@ -88,6 +178,7 @@ func TestVersionEndpoint(t *testing.T) {
 	}
 }
 
+// TestStaticDoesNotShadowRoutes guards the Go 1.22 mux precedence: the GET /
 // catch-all must not swallow the more specific health/WS routes.
 func TestStaticDoesNotShadowRoutes(t *testing.T) {
 	_, srv := newTestHub(t, "", true)

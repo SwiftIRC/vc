@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,16 +20,26 @@ import (
 // while assets still cache within a single run.
 var startTime = time.Now()
 
-// shell is the SPA app shell (index.html), read once from the embedded FS at
-// startup so serving it is a plain byte write with an explicit content type.
+// shell is the SPA app shell (index.html), read once from the embedded FS at startup
+// so serving it is a plain byte write with an explicit content type. Its asset URLs
+// are version-stamped as they are read (see mustReadShell).
 var shell = mustReadShell()
+
+// versionPlaceholder is the token index.html carries where the asset digest belongs.
+const versionPlaceholder = "__ASSET_VERSION__"
 
 func mustReadShell() []byte {
 	b, err := fs.ReadFile(web.Assets, "index.html")
 	if err != nil {
 		panic(err)
 	}
-	return b
+	// Stamp the build's digest into the shell's asset URLs (/v/<version>/app.js). A
+	// missing placeholder would ship a shell pointing at a literal "__ASSET_VERSION__"
+	// path — a 404 and a blank app — so fail loudly at startup instead.
+	if !bytes.Contains(b, []byte(versionPlaceholder)) {
+		panic("index.html is missing " + versionPlaceholder)
+	}
+	return bytes.ReplaceAll(b, []byte(versionPlaceholder), []byte(assetsVersion))
 }
 
 // assetsVersion is a digest of the embedded client assets, computed once at startup.
@@ -66,13 +77,35 @@ func (h *Hub) handleVersion(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"version": assetsVersion})
 }
 
+// splitVersioned peels a "v/<version>/" prefix off an asset path. It reports the
+// underlying asset path, whether the request was version-stamped at all, and whether
+// that version is the running build's.
+//
+// A stale client still asks for its OLD version's URLs; those keep serving the CURRENT
+// bytes (all we have) so the page self-heals, but only a CURRENT-version URL is safe to
+// mark immutable — a rollback would otherwise leave the browser holding newer content
+// under an older build's URL forever.
+func splitVersioned(p string) (assetPath string, versioned, current bool) {
+	rest, ok := strings.CutPrefix(p, "v/")
+	if !ok {
+		return p, false, false
+	}
+	version, assetPath, ok := strings.Cut(rest, "/")
+	if !ok || assetPath == "" {
+		return p, false, false
+	}
+	return assetPath, true, version == assetsVersion
+}
+
 // handleStatic serves an embedded asset, or the SPA shell (index.html) for the
 // app root and room paths. A request that names a real embedded file (e.g.
-// /app.js, /style.css) is served from the embedded FS with its correct
-// Content-Type; everything else — the root and room slugs like /lobby — returns
-// the shell, and the client reads the room from location.pathname.
+// /app.js, /style.css, or its version-stamped /v/<version>/app.js form) is served
+// from the embedded FS with its correct Content-Type; everything else — the root
+// and room slugs like /lobby — returns the shell, and the client reads the room
+// from location.pathname.
 func (h *Hub) handleStatic(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/")
+	p, versioned, current := splitVersioned(p)
 	if p != "" {
 		// fs.Stat validates the path (rejecting "..") and tells a real asset
 		// apart from a room slug. Directories fall through to the shell.
@@ -84,12 +117,26 @@ func (h *Hub) handleStatic(w http.ResponseWriter, r *http.Request) {
 				// Content-Type from the extension and handles Range + conditional
 				// requests against startTime.
 				if rs, ok := file.(io.ReadSeeker); ok {
-					w.Header().Set("Cache-Control", "no-cache") // revalidate; 304 within a run, 200 after redeploy
+					// A current-version URL names exactly one build's bytes, so it can be
+					// cached hard — that URL never changes meaning. Everything else
+					// revalidates: 304 within a run, 200 after a redeploy.
+					if versioned && current {
+						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					} else {
+						w.Header().Set("Cache-Control", "no-cache")
+					}
 					http.ServeContent(w, r, p, startTime, rs)
 					return
 				}
 			}
 			http.FileServerFS(web.Assets).ServeHTTP(w, r) // fallback (should not happen for embed)
+			return
+		}
+		// A version-stamped path is unambiguously an asset request, never a room slug —
+		// so a miss is a 404. Falling through to the shell would answer a stale client's
+		// request for a since-renamed module with HTML, which it would try to parse as JS.
+		if versioned {
+			http.NotFound(w, r)
 			return
 		}
 	}
