@@ -943,6 +943,21 @@ body.ui-idle .controls {
 
 .chat-text {
   color: var(--fg);
+  /* A pasted URL is one unbroken word: let it wrap mid-string (and let the flex item
+     shrink below its content width) so it can't stretch the panel. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Links in a chat message (they open in a new tab — see chat.js _body). */
+.chat-link {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.chat-link:hover,
+.chat-link:focus-visible {
+  text-decoration-thickness: 2px;
 }
 
 /* Moderation feed line: muted, italic, visually distinct from chat. */

@@ -18,7 +18,12 @@
 // Injection-safety: EVERY participant-controlled string — from, text, actor,
 // target — is written via textContent (the el() "text" key), never innerHTML. A
 // hostile chat body or display name like "<img src=x onerror=…>" is therefore
-// inert text, never parsed as markup.
+// inert text, never parsed as markup. Links are the one place a message becomes
+// something other than a text node, and they are built the same way: lib/linkify
+// only ever recognises http/https, so an <a href> can never carry a javascript:
+// or data: scheme, and the anchor's own text is set with textContent like the rest.
+
+import { linkSegments } from "../lib/linkify.js";
 
 // Tiny DOM helper: el("div", {class:"x", onClick:fn}, child, "text"...). The
 // "text" key sets textContent, so caller-supplied strings can never inject markup.
@@ -143,9 +148,27 @@ export class Chat {
       { class: "chat-msg" },
       el("span", { class: "chat-time", text: hhmm(ts) }),
       el("span", { class: "chat-from", text: from || "guest" }),
-      el("span", { class: "chat-text", text: String(text) }),
+      this._body(String(text)),
     );
     this._append(line);
+  }
+
+  // The message body: plain runs as text nodes, http/https runs as anchors that open
+  // in a new tab. rel="noopener" denies the opened page a handle on this one (it could
+  // otherwise redirect the call away via window.opener); "noreferrer" also withholds
+  // the Referer, which would hand the room's URL — an invite link — to whatever site
+  // someone posts.
+  _body(text) {
+    const span = el("span", { class: "chat-text" });
+    for (const seg of linkSegments(text)) {
+      // append(string) makes a TEXT node — the non-link runs stay inert markup-wise.
+      span.append(
+        seg.href
+          ? el("a", { class: "chat-link", href: seg.href, target: "_blank", rel: "noopener noreferrer", text: seg.text })
+          : seg.text,
+      );
+    }
+    return span;
   }
 
   // Inbound `moderation` {actor, action, target, kind?} -> one feed line.
