@@ -129,6 +129,14 @@ type Room struct {
 	// countdownBy is the starter's participant ID so only they may stop it.
 	countdownActive bool
 	countdownBy     string
+
+	// The room's single active poll (nil until an op creates one) and the counter its
+	// ids come from. A counter, not randomness: the id only has to invalidate votes
+	// against a superseded poll within this room's lifetime, it is never a secret, and
+	// a deterministic id keeps the room tests reproducible. newID() lives in
+	// internal/server and is unreachable from here anyway (server imports room).
+	poll    *Poll
+	pollSeq int
 }
 
 func New(cfg Config) *Room {
