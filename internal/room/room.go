@@ -329,6 +329,21 @@ func (r *Room) SetMediaState(id string, mic, camera bool) {
 	r.Broadcast(signal.PeerMediaState{ID: id, Mic: mic, Camera: camera}, id)
 }
 
+// Rename changes a participant's display name and tells everyone (the sender
+// included, so it renders the sanitized result). No-op if the participant is gone
+// or the name is empty/unchanged. Display-only: Account and Role are untouched.
+func (r *Room) Rename(id, name string) {
+	r.mu.Lock()
+	p, ok := r.parts[id]
+	if !ok || name == "" || name == p.Name {
+		r.mu.Unlock()
+		return
+	}
+	p.Name = name
+	r.mu.Unlock()
+	r.Broadcast(signal.PeerRenamed{ID: id, Name: name}, "")
+}
+
 // Broadcast sends v to every participant except exceptID ("" = everyone).
 // Connections that report overflow are closed; their Leave arrives when the
 // transport notices the close.

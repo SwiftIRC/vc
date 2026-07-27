@@ -100,6 +100,12 @@ type MediaState struct {
 	Mic    bool `json:"mic"`
 	Camera bool `json:"camera"`
 }
+
+// Rename is a participant changing its OWN display name mid-call (display-only —
+// the server keeps the account/role from the join token untouched).
+type Rename struct {
+	Name string `json:"name"`
+}
 type Leave struct{}
 
 // ---- server → client ----
@@ -148,6 +154,12 @@ type PeerMediaState struct {
 	ID     string `json:"id"`
 	Mic    bool   `json:"mic"`
 	Camera bool   `json:"camera"`
+}
+
+// PeerRenamed tells every client (the sender included) a peer's display name changed.
+type PeerRenamed struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 type PeerLeft struct {
 	ID  string `json:"id"`
@@ -247,6 +259,8 @@ func Decode(data []byte) (any, error) {
 		v = &Countdown{}
 	case "media-state":
 		v = &MediaState{}
+	case "rename":
+		v = &Rename{}
 	case "leave":
 		v = &Leave{}
 	default:
@@ -286,6 +300,8 @@ func serverTypeName(v any) (string, error) {
 		return "peer-left", nil
 	case PeerMediaState, *PeerMediaState:
 		return "peer-media-state", nil
+	case PeerRenamed, *PeerRenamed:
+		return "peer-renamed", nil
 	case Offer, *Offer:
 		return "offer", nil
 	case Answer, *Answer:

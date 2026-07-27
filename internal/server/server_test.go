@@ -305,3 +305,23 @@ func TestSanitizeGravatar(t *testing.T) {
 		}
 	}
 }
+
+func TestDisplayName(t *testing.T) {
+	cl := &token.Claims{Nick: "alice"}
+	cases := []struct {
+		desc, join string
+		claims     *token.Claims
+		want       string
+	}{
+		{"guest empty -> guest", "", nil, "guest"},
+		{"guest name -> sanitized", "  Bob ", nil, "Bob"},
+		{"token empty -> nick", "", cl, "alice"},
+		{"token whitespace -> nick", "   ", cl, "alice"},
+		{"token name wins (rename survives reconnect)", "Bobby", cl, "Bobby"},
+	}
+	for _, c := range cases {
+		if got := displayName(c.join, c.claims); got != c.want {
+			t.Errorf("%s: displayName(%q, claims) = %q, want %q", c.desc, c.join, got, c.want)
+		}
+	}
+}

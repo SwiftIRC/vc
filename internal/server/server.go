@@ -227,10 +227,11 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 
 	p := &room.Participant{ID: newID(), IP: ip, Conn: c, Ref: sessionRef(join.Session)}
 	if claims != nil {
-		p.Name, p.Account, p.Role = claims.Nick, claims.Account, roleFromClaim(claims.Role)
+		p.Account, p.Role = claims.Account, roleFromClaim(claims.Role)
 	} else {
-		p.Name, p.Role = sanitizeName(join.Name), room.RoleGuest
+		p.Role = room.RoleGuest
 	}
+	p.Name = displayName(join.Name, claims) // client-sent name wins (rename-safe); falls back to token nick
 	p.Gravatar = sanitizeGravatar(join.Gravatar)
 	// Carry the joiner's reported mic/camera into the room before Join, so its
 	// roster + PeerJoined broadcast reflect the real state (a pre-join mute shows
@@ -274,7 +275,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		switch m := v.(type) {
 		case *signal.Leave:
 			return
-		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.SetQuality, *signal.Countdown, *signal.MediaState:
+		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.SetQuality, *signal.Countdown, *signal.MediaState, *signal.Rename:
 			h.dispatch(rm, p, m)
 		case *signal.Offer:
 			if err := mp.HandleOffer(m.SDP, m.Kinds); err != nil {
@@ -346,6 +347,13 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 		// A participant's own mic/camera state changed (or its initial post-join
 		// assertion). Store it and fan it out so remote mute indicators are correct.
 		rm.SetMediaState(p.ID, m.Mic, m.Camera)
+		return
+	case *signal.Rename:
+		name := strings.TrimSpace(m.Name)
+		if name == "" { // empty submit = cancel
+			return
+		}
+		rm.Rename(p.ID, sanitizeName(name))
 		return
 	case *signal.SetLock:
 		err = rm.SetLock(p.ID, m.Password)
@@ -428,6 +436,20 @@ func sanitizeGravatar(s string) string {
 		}
 	}
 	return s
+}
+
+// displayName resolves a joiner's display name. A non-empty client-sent name wins
+// (sanitized) so a rename survives a reconnect; it falls back to the token's verified
+// nick only when the client sent none. Guests (claims == nil) always use their sent
+// name (sanitizeName maps empty -> "guest").
+func displayName(joinName string, claims *token.Claims) string {
+	if strings.TrimSpace(joinName) != "" {
+		return sanitizeName(joinName)
+	}
+	if claims != nil {
+		return claims.Nick
+	}
+	return sanitizeName(joinName)
 }
 
 // sanitizeName strips control characters, collapses whitespace, and caps

@@ -25,6 +25,7 @@ func TestDecodeClientMessages(t *testing.T) {
 		{`{"type":"countdown","action":"stop"}`, &Countdown{Action: "stop"}},
 		{`{"type":"media-state","mic":true,"camera":false}`, &MediaState{Mic: true, Camera: false}},
 		{`{"type":"media-state","mic":false,"camera":true}`, &MediaState{Mic: false, Camera: true}},
+		{`{"type":"rename","name":"bob"}`, &Rename{Name: "bob"}},
 		{`{"type":"leave"}`, &Leave{}},
 	}
 	for _, c := range cases {
@@ -76,6 +77,7 @@ func TestEncodeServerMessages(t *testing.T) {
 		{PeerJoined{ID: "p2", Name: "bob", Role: "user", Gravatar: "84059b07d4be67b806386c0aad8070a23f18836bbaae342275dc0a83414c32ee"}, "peer-joined", []string{`"gravatar":"84059b07`}},
 		{PeerLeft{ID: "p2"}, "peer-left", nil},
 		{PeerMediaState{ID: "p2", Mic: false, Camera: true}, "peer-media-state", []string{`"id":"p2"`, `"mic":false`, `"camera":true`}},
+		{PeerRenamed{ID: "p2", Name: "bob"}, "peer-renamed", []string{`"id":"p2"`, `"name":"bob"`}},
 		{Offer{SDP: "v=0"}, "offer", []string{`"sdp":"v=0"`}},
 		{Tracks{Tracks: []TrackInfo{{Mid: "0", ParticipantID: "p2", Kind: "camera"}}}, "tracks", []string{`"participantId":"p2"`}},
 		{ChatEvent{From: "alice", Text: "hi", TS: 1753000000}, "chat", []string{`"ts":1753000000`}},
