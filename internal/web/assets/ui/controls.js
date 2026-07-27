@@ -188,13 +188,9 @@ export class Controls {
         this.cameraMenu.hidden = true;
         this.cameraArrow.setAttribute("aria-expanded", "false");
       }
-      if (this.colsMenu && !this.colsMenu.hidden && this.colsWrap && !this.colsWrap.contains(e.target)) {
-        this.colsMenu.hidden = true;
-        this.colsBtn.setAttribute("aria-expanded", "false");
-      }
-      if (this.qualityMenu && !this.qualityMenu.hidden && this.qualityWrap && !this.qualityWrap.contains(e.target)) {
-        this.qualityMenu.hidden = true;
-        this.qualityBtn.setAttribute("aria-expanded", "false");
+      if (this.settingsMenu && !this.settingsMenu.hidden && this.settingsWrap && !this.settingsWrap.contains(e.target)) {
+        this.settingsMenu.hidden = true;
+        this.settingsBtn.setAttribute("aria-expanded", "false");
       }
     };
     document.addEventListener("pointerdown", this._onDocPointer);
@@ -302,21 +298,15 @@ export class Controls {
     // enables it), and disabled while the large worklet loads on first enable.
     this.nsBtn = el("button", { type: "button", class: "ctl ns", title: "Microphone noise suppression", onClick: () => this._onNsToggle() });
 
-    // Camera-grid columns: Auto or a fixed 2/3/4, chosen from a small menu.
-    this.colsBtn = el(
-      "button",
-      { type: "button", class: "ctl cols icon", title: "Camera columns", "aria-label": "Camera columns", "aria-haspopup": "menu", "aria-expanded": "false", onClick: () => this._toggleColsMenu() },
-      el("span", { class: "glyph", text: "▦" }), // ▦
-    );
-    this.colsMenu = el(
+    // Camera columns as an inline segmented group (reuses _pickCols/_markColsActive),
+    // placed into the ☰ menu below.
+    this.colsSeg = el(
       "div",
-      { class: "share-menu cols-menu", hidden: true },
+      { class: "seg cols-seg" },
       ...COLS_OPTIONS.map((opt) =>
         el("button", { type: "button", class: "share-item cols-item", "data-cols": String(opt.value ?? "auto"), onClick: () => this._pickCols(opt.value) }, opt.label),
       ),
     );
-    this.colsWrap = el("div", { class: "share-wrap" }, this.colsBtn, this.colsMenu);
-    this._markColsActive();
 
     this.hideSelfBtn = el("button", {
       type: "button", class: "ctl hide-self icon",
@@ -363,6 +353,24 @@ export class Controls {
     this.lowBwBtn = el("button", { type: "button", class: "ctl lowbw", onClick: () => this._toggleLowBandwidth() });
     this._setLowBwButton();
 
+    // ☰ settings menu: houses the low-frequency controls so the bar stays lean. Built
+    // here, after nsBtn/hideSelfBtn/lowBwBtn/colsSeg all exist.
+    this.settingsBtn = el(
+      "button",
+      { type: "button", class: "ctl settings icon", title: "Settings", "aria-label": "Settings", "aria-haspopup": "menu", "aria-expanded": "false", onClick: () => this._toggleSettingsMenu() },
+      el("span", { class: "glyph", text: "☰" }),
+    );
+    this.settingsMenu = el(
+      "div",
+      { class: "share-menu settings-menu", hidden: true },
+      this._settingsRow("Hide self", this.hideSelfBtn),
+      this._settingsRow("Noise suppression", this.nsBtn),
+      this._settingsRow("Data saver", this.lowBwBtn),
+      this._settingsRow("Columns", this.colsSeg),
+    );
+    this.settingsWrap = el("div", { class: "share-wrap" }, this.settingsBtn, this.settingsMenu);
+    this._markColsActive();
+
     const leaveBtn = el("button", { type: "button", class: "ctl leave", onClick: () => this.onLeave() }, "Leave");
 
     // A mic/camera button is meaningless with no such track; disable it up front.
@@ -380,15 +388,9 @@ export class Controls {
 
     // Lock indicator (everyone) + lock toggle (op only).
     this.lockStatus = el("span", { class: "lock-status", hidden: true, text: "Room locked" });
-    const children = [this.micWrap, this.cameraWrap, this.deafenBtn, this.shareWrap, this.nsBtn, this.colsWrap, this.hideSelfBtn, this.lowBwBtn, this.countdownBtn, this.chatBtn];
-    if (this.isOp) {
-      this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
-      this._setLockButton(false);
-      children.push(this.lockBtn, this._buildQualityControl());
-    }
-    children.push(this.lockStatus, leaveBtn);
-
+    const children = [this.micWrap, this.cameraWrap, this.deafenBtn, this.shareWrap, this.countdownBtn, this.chatBtn, this.settingsWrap, this.lockStatus, leaveBtn];
     this.el = el("div", { class: "controls" }, ...children);
+    if (this.isOp) this._ensureOpSettingsRows(); // append Lock + Quality rows to the ☰ menu
   }
 
   // --- local controls ---
@@ -537,23 +539,28 @@ export class Controls {
     if (this.shareMenu) this.shareMenu.hidden = true;
     if (this.micMenu) this.micMenu.hidden = true;
     if (this.cameraMenu) this.cameraMenu.hidden = true;
-    if (this.colsMenu) this.colsMenu.hidden = true;
-    if (this.qualityMenu) this.qualityMenu.hidden = true;
+    if (this.settingsMenu) this.settingsMenu.hidden = true;
     if (this.micArrow) this.micArrow.setAttribute("aria-expanded", "false");
     if (this.cameraArrow) this.cameraArrow.setAttribute("aria-expanded", "false");
-    if (this.colsBtn) this.colsBtn.setAttribute("aria-expanded", "false");
-    if (this.qualityBtn) this.qualityBtn.setAttribute("aria-expanded", "false");
+    if (this.settingsBtn) this.settingsBtn.setAttribute("aria-expanded", "false");
+  }
+
+  // A labelled settings-menu row: a text label plus its control (a toggle button, a
+  // segmented group, or the quality selects).
+  _settingsRow(label, control) {
+    return el("div", { class: "settings-item" }, el("span", { class: "si-label", text: label }), control);
+  }
+
+  _toggleSettingsMenu() {
+    const open = this.settingsMenu.hidden;
+    this._closeMenus();
+    if (open) {
+      this.settingsMenu.hidden = false;
+      this.settingsBtn.setAttribute("aria-expanded", "true");
+    }
   }
 
   // Camera-grid column picker.
-  _toggleColsMenu() {
-    const open = this.colsMenu.hidden;
-    this._closeMenus();
-    if (open) {
-      this.colsMenu.hidden = false;
-      this.colsBtn.setAttribute("aria-expanded", "true");
-    }
-  }
   _pickCols(value) {
     this._closeMenus();
     this._cols = value === 2 || value === 3 || value === 4 ? value : null;
@@ -562,9 +569,9 @@ export class Controls {
     this._markColsActive();
   }
   _markColsActive() {
-    if (!this.colsMenu) return;
+    if (!this.colsSeg) return;
     const key = this._cols == null ? "auto" : String(this._cols);
-    for (const item of this.colsMenu.querySelectorAll(".cols-item")) {
+    for (const item of this.colsSeg.querySelectorAll(".cols-item")) {
       item.classList.toggle("active", item.getAttribute("data-cols") === key);
     }
   }
@@ -950,47 +957,40 @@ export class Controls {
   becomeOp() {
     if (this.isOp) return;
     this.isOp = true;
-    if (!this.lockBtn) {
-      this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
-      this._setLockButton(this.locked);
-      this.el.insertBefore(this.lockBtn, this.lockStatus); // lock sits just before the lock indicator + Leave
-    }
-    if (!this.qualityWrap) this.el.insertBefore(this._buildQualityControl(), this.lockStatus);
+    this._ensureOpSettingsRows();
     if (this.grid) this.grid.addOpControls();
   }
 
-  // Op-only session video-quality control: a button opening a menu with independent
-  // Camera and Screen tier dropdowns. Changing one sends set-quality; the server relays
-  // it to everyone (setQualityState reflects the authoritative value back).
+  // Add the op-only Lock + Quality rows to the ☰ menu, once. Called from _build (if the
+  // join role is op) and from becomeOp (mid-call promotion).
+  _ensureOpSettingsRows() {
+    if (!this.lockBtn) {
+      this.lockBtn = el("button", { type: "button", class: "ctl lock", onClick: () => this._toggleLock() });
+      this._setLockButton(!!this.locked);
+      this.settingsMenu.append(this._settingsRow("Lock room", this.lockBtn));
+    }
+    if (!this.qualityRow) {
+      this.qualityRow = this._settingsRow("Quality", this._buildQualityControl());
+      this.settingsMenu.append(this.qualityRow);
+    }
+  }
+
+  // Op-only session video-quality control: independent Camera and Screen tier
+  // dropdowns, inlined into a ☰ menu row. Changing one sends set-quality; the server
+  // relays it to everyone (setQualityState reflects the authoritative value back).
   _buildQualityControl() {
     this.qCameraSelect = el("select", { class: "device", "aria-label": "Camera quality", onChange: () => this._send("set-quality", { target: "camera", tier: this.qCameraSelect.value }) });
     this.qScreenSelect = el("select", { class: "device", "aria-label": "Screenshare quality", onChange: () => this._send("set-quality", { target: "screen", tier: this.qScreenSelect.value }) });
     for (const sel of [this.qCameraSelect, this.qScreenSelect]) {
       for (const t of QUALITY_TIERS) sel.append(el("option", { value: t.id, text: t.label }));
     }
-    this.qualityBtn = el(
-      "button",
-      { type: "button", class: "ctl quality icon", title: "Session video quality (op)", "aria-label": "Session video quality", "aria-haspopup": "menu", "aria-expanded": "false", onClick: () => this._toggleQualityMenu() },
-      el("span", { class: "glyph", text: "🎚️" }),
-    );
-    this.qualityMenu = el(
-      "div",
-      { class: "device-menu quality-menu", hidden: true },
-      el("label", { class: "field" }, el("span", { text: "Camera quality" }), this.qCameraSelect),
-      el("label", { class: "field" }, el("span", { text: "Screen quality" }), this.qScreenSelect),
-    );
-    this.qualityWrap = el("div", { class: "share-wrap" }, this.qualityBtn, this.qualityMenu);
     this.setQualityState(this._qCam, this._qScr); // reflect whatever we already know
-    return this.qualityWrap;
-  }
-
-  _toggleQualityMenu() {
-    const open = this.qualityMenu.hidden;
-    this._closeMenus();
-    if (open) {
-      this.qualityMenu.hidden = false;
-      this.qualityBtn.setAttribute("aria-expanded", "true");
-    }
+    return el(
+      "div",
+      { class: "quality-inline" },
+      el("label", { class: "field" }, el("span", { text: "Cam" }), this.qCameraSelect),
+      el("label", { class: "field" }, el("span", { text: "Screen" }), this.qScreenSelect),
+    );
   }
 
   // Reflect the authoritative session caps in the op dropdowns. Called for everyone (a

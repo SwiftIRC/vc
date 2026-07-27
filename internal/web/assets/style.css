@@ -815,8 +815,8 @@ body.ui-idle .controls {
   background: rgba(255, 255, 255, 0.16);
   font-weight: 600;
 }
-/* The columns menu is a short list of numbers — center them for a tidier look. */
-.cols-menu .cols-item {
+/* The columns segmented control is a short list of numbers — center them for a tidier look. */
+.cols-seg .cols-item {
   text-align: center;
 }
 
@@ -986,3 +986,19 @@ body.ui-idle .controls {
     width: 100%;
   }
 }
+
+/* In-call ☰ settings menu: a vertical list of labelled rows inside the shared
+   .share-menu popover. Each row is "label … control" (a toggle button, a segmented
+   group, or the quality selects). */
+.settings-menu { min-width: 240px; }
+.settings-menu .settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+}
+.settings-menu .si-label { font-size: 13px; white-space: nowrap; }
+.settings-menu .seg { display: flex; gap: 4px; }
+.settings-menu .quality-inline { display: flex; gap: 8px; align-items: center; }
+.settings-menu .quality-inline .field { margin: 0; }
