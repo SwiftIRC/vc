@@ -360,9 +360,19 @@ export class Controls {
       { type: "button", class: "ctl settings icon", title: "Settings", "aria-label": "Settings", "aria-haspopup": "menu", "aria-expanded": "false", onClick: () => this._toggleSettingsMenu() },
       el("span", { class: "glyph", text: "☰" }),
     );
+    // Rename: change your own display name. Enter submits; Esc reverts + closes.
+    this.renameInput = el("input", {
+      class: "rename-input device", type: "text", maxlength: "24",
+      "aria-label": "Your display name",
+      onKeydown: (e) => {
+        if (e.key === "Enter") { e.preventDefault(); this._submitRename(); }
+        else if (e.key === "Escape") { e.preventDefault(); this._closeMenus(); }
+      },
+    });
     this.settingsMenu = el(
       "div",
       { class: "share-menu settings-menu", hidden: true },
+      this._settingsRow("Name", this.renameInput),
       this._settingsRow("Hide self", this.hideSelfBtn),
       this._settingsRow("Noise suppression", this.nsBtn),
       this._settingsRow("Data saver", this.lowBwBtn),
@@ -557,7 +567,18 @@ export class Controls {
     if (open) {
       this.settingsMenu.hidden = false;
       this.settingsBtn.setAttribute("aria-expanded", "true");
+      if (this.renameInput) this.renameInput.value = (this.grid && this.grid.selfName) || "";
     }
+  }
+
+  // Send a rename if the trimmed input is non-empty and actually different from the
+  // current self name; the server sanitizes authoritatively and the resulting
+  // peer-renamed updates the tile, so no optimistic local edit is needed.
+  _submitRename() {
+    const name = this.renameInput.value.trim();
+    const current = (this.grid && this.grid.selfName) || "";
+    if (name && name !== current) this._send("rename", { name });
+    this._closeMenus();
   }
 
   // Camera-grid column picker.
