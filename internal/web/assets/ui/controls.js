@@ -749,12 +749,18 @@ export class Controls {
     }
   }
 
-  // The denoise BUTTON handler: toggle, then persist the settled state. Kept separate
-  // from _toggleNoiseSuppression so the default-on path (and a worklet-load failure)
-  // never writes a preference — only an explicit user click does.
+  // The denoise BUTTON handler: toggle, then persist. Kept separate from
+  // _toggleNoiseSuppression so the default-on path never writes a preference — only an
+  // explicit user click does.
+  //
+  // Persist ONLY when the click achieved what the user asked for. A failed enable (the
+  // ~2MB worklet didn't load) settles back on OFF, and writing that would record
+  // `ns: false` — read back forever after as "the user turned denoise off", suppressing
+  // the default-on for every later call long after the transient failure is gone.
   async _onNsToggle() {
+    const target = !this.nsOn;
     await this._toggleNoiseSuppression();
-    saveMediaPrefs({ ns: this.nsOn });
+    if (this.nsOn === target) saveMediaPrefs({ ns: this.nsOn });
   }
 
   async _toggleNoiseSuppression() {
