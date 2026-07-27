@@ -21,7 +21,7 @@ import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
 import { parseToken, parseInvite } from "./lib/protocol.js";
-import { loadLayoutPrefs, saveLayoutPrefs } from "./lib/prefs.js";
+import { loadLayoutPrefs, saveLayoutPrefs, saveName } from "./lib/prefs.js";
 import { playSound } from "./lib/sounds.js";
 import { Presence } from "./lib/presence.js";
 import { ScreenWakeLock } from "./lib/wakelock.js";
@@ -391,6 +391,15 @@ function renderInCall(msg) {
   });
   // Authoritative per-peer mic/camera state: drives the remote mute indicators.
   signaling.on("peer-media-state", (m) => grid.setPeerMedia(m.id, { mic: m.mic, camera: m.camera }));
+  signaling.on("peer-renamed", (m) => {
+    if (!grid || !m) return;
+    grid.setPeerName(m.id, m.name);
+    if (m.id === grid.selfId) {
+      selfName = m.name;
+      if (pendingJoin) pendingJoin.name = m.name; // so a reconnect re-sends the new name
+      saveName(m.name);                            // persist for the next visit
+    }
+  });
   signaling.on("muted", (m) => controls.onMuted(m.kind));
   signaling.on("room-locked", () => controls.onLock(true));
   signaling.on("room-unlocked", () => controls.onLock(false));

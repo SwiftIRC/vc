@@ -482,6 +482,16 @@ export class Grid {
     if (tile) this._setRole(tile, role);
   }
 
+  // Update a participant's display name from a peer-renamed broadcast. Works for self
+  // too — keeps this.selfName in sync so the self label, the "(name) (screen)" tile,
+  // and the reconnect join frame all reflect the new name. _setName handles the "(you)"
+  // suffix and the screen tile via the tile's data-id.
+  setPeerName(id, name) {
+    if (id === this.selfId) this.selfName = name;
+    const tile = this.tiles.get(id);
+    if (tile) this._setName(tile, name);
+  }
+
   // The local participant just became an op: retrofit op-action buttons onto every
   // existing remote tile / screen tile. New tiles get them at build time, since
   // opActionsFor / screenOpActionsFor now return markup (controls.isOp flipped true).

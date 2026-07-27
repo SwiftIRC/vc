@@ -9,7 +9,7 @@
 // This module owns no Signaling/Peer state: app.js constructs Media and passes
 // it in so the very stream previewed here is the one published once in-call.
 
-import { loadMediaPrefs, saveMediaPrefs } from "../lib/prefs.js";
+import { loadMediaPrefs, saveMediaPrefs, loadName, saveName } from "../lib/prefs.js";
 import { applyAvatar, gravatarHash } from "../lib/avatar.js";
 
 const POLL_INTERVAL_MS = 3000;
@@ -60,25 +60,6 @@ function el(tag, attrs = {}, ...kids) {
   }
   for (const kid of kids) if (kid != null) node.append(kid);
   return node;
-}
-
-const NAME_KEY = "swiftirc-vc-name";
-
-// loadSavedName / saveName persist the typed display name across visits.
-// localStorage can throw (private mode, disabled storage), so guard it.
-function loadSavedName() {
-  try {
-    return localStorage.getItem(NAME_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-function saveName(name) {
-  try {
-    if (name) localStorage.setItem(NAME_KEY, name);
-  } catch {
-    /* storage unavailable — ignore */
-  }
 }
 
 const EMAIL_KEY = "swiftirc-vc-email";
@@ -213,7 +194,7 @@ export class Prejoin {
     } else {
       // Prefill the display name from last time (saved on join). An invite-link
       // nick always wins over this.
-      this.nameInput.value = loadSavedName();
+      this.nameInput.value = loadName();
     }
 
     this.emailInput = el("input", {

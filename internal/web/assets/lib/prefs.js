@@ -49,3 +49,21 @@ export function saveLayoutPrefs(update) {
     /* storage unavailable — ignore */
   }
 }
+
+// The typed display name, persisted across visits (shared by the lobby and the in-call
+// rename). localStorage can throw (private mode / storage off), so guard it.
+const NAME_KEY = "swiftirc-vc-name";
+export function loadName() {
+  try {
+    return localStorage.getItem(NAME_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+export function saveName(name) {
+  try {
+    if (name) localStorage.setItem(NAME_KEY, name);
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
