@@ -990,7 +990,16 @@ body.ui-idle .controls {
 /* In-call ☰ settings menu: a vertical list of labelled rows inside the shared
    .share-menu popover. Each row is "label … control" (a toggle button, a segmented
    group, or the quality selects). */
-.settings-menu { min-width: 240px; }
+.settings-menu {
+  min-width: 240px;
+  /* The ☰ button sits near the right end of the control bar; the base .share-menu rule
+     anchors left:0 and grows rightward, so this wider (240px) menu ran off the right edge
+     of the screen. Anchor to the button's RIGHT edge instead (grow leftward), and cap the
+     width so it can't overflow on a narrow viewport either. */
+  left: auto;
+  right: 0;
+  max-width: calc(100vw - 1rem);
+}
 .settings-menu .settings-item {
   display: flex;
   align-items: center;
