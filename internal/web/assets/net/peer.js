@@ -125,6 +125,10 @@ export class Peer extends EventTarget {
       ["tracks", (msg) => this._onTracks(msg)],
     ];
     for (const [type, fn] of this._sigHandlers) signaling.on(type, fn);
+
+    // TEMP DEBUG (see TRACK_DEBUG): sample inbound video decode stats every 4s so a
+    // black-camera occurrence is captured in the console. Cleared in close().
+    this._statsTimer = TRACK_DEBUG ? setInterval(() => this._dumpStats(), 4000) : null;
   }
 
   // Add the initial local tracks and send the first offer. localTracks is an
@@ -193,6 +197,10 @@ export class Peer extends EventTarget {
     if (this._iceGraceTimer) {
       clearTimeout(this._iceGraceTimer);
       this._iceGraceTimer = null;
+    }
+    if (this._statsTimer) {
+      clearInterval(this._statsTimer);
+      this._statsTimer = null;
     }
     this.pc.close();
   }
@@ -468,6 +476,35 @@ export class Peer extends EventTarget {
     if (mediaNoLabel.length) line += ` !! UNPAIRED media-without-label mids=[${mediaNoLabel.join(",")}]`;
     if (labelNoMedia.length) line += ` !! UNPAIRED label-without-media mids=[${labelNoMedia.join(",")}]`;
     console.info(line);
+  }
+
+  // TEMP DEBUG (see TRACK_DEBUG): periodically dump inbound VIDEO decode stats so a
+  // black-camera-on-join occurrence is captured. Read-only (getStats). Reading the fields:
+  //   recv climbing but dec/key staying 0 -> no decodable keyframe reached this receiver
+  //   high lost + climbing pli/nack       -> keyframe packets lost on the link
+  //   dec climbing + nonzero size but tile black -> client render/element stall
+  async _dumpStats() {
+    if (!TRACK_DEBUG || !this.pc || !this._incoming) return;
+    if (this.pc.connectionState === "closed") return;
+    let stats;
+    try {
+      stats = await this.pc.getStats();
+    } catch {
+      return;
+    }
+    const trackToMid = new Map();
+    for (const [mid, rec] of this._incoming) if (rec && rec.track) trackToMid.set(rec.track.id, mid);
+    const lines = [];
+    stats.forEach((r) => {
+      if (r.type !== "inbound-rtp" || r.kind !== "video") return;
+      const mid = trackToMid.get(r.trackIdentifier);
+      const info = mid != null && this._trackInfo ? this._trackInfo.get(mid) : null;
+      const who = info ? `${info.kind}@${info.participantId}` : `ssrc=${r.ssrc}`;
+      lines.push(
+        `${who} mid=${mid ?? "?"} recv=${r.framesReceived ?? 0} dec=${r.framesDecoded ?? 0} key=${r.keyFramesDecoded ?? 0} drop=${r.framesDropped ?? 0} pli=${r.pliCount ?? 0} nack=${r.nackCount ?? 0} lost=${r.packetsLost ?? 0} bytes=${r.bytesReceived ?? 0} ${r.frameWidth ?? 0}x${r.frameHeight ?? 0} fps=${r.framesPerSecond ?? 0}`,
+      );
+    });
+    if (lines.length) console.info("[track-debug stats]\n  " + lines.join("\n  "));
   }
 
   _onStreamGone(mid) {
