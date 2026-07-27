@@ -33,16 +33,21 @@ export function playSound(name) {
 
 // Unlock an <audio> element for later programmatic play on iOS Safari, which blocks
 // play() outside a user gesture until the element has been played once within one.
-// MUST be called from a real user-gesture handler. Silent: primes muted, then pauses
-// and resets — no sound on any platform. Best-effort; swallows rejection.
+// MUST be called from a real user-gesture handler. Silent on every platform.
+// Best-effort; swallows rejection.
+//
+// The unlock is granted when play() is CALLED inside the gesture, so we pause in the
+// SAME turn and never let playback begin. Waiting for the play() promise would not do:
+// it only settles once audio is already rendering, which leaves silence resting purely
+// on `muted` — and WebKit ignores a `muted` set on a `new Audio(src)` that hasn't
+// loaded yet, so the chime and the countdown leaked out on the user's first click.
 export function primeAudio(el) {
   // Skip a null element, and one that's ALREADY playing: a playing element is already
   // unlocked, and priming it would mute/pause/rewind a chime or countdown that's mid-play
   // for a real reason (e.g. the user's first gesture landing during the countdown).
   if (!el || !el.paused) return;
-  el.muted = true;
-  const done = () => {
-    el.pause();
+  el.muted = true; // belt and braces for a browser that starts faster than we can pause
+  const restore = () => {
     try {
       el.currentTime = 0;
     } catch {
@@ -54,11 +59,15 @@ export function primeAudio(el) {
   try {
     p = el.play();
   } catch {
-    el.muted = false; // the rare synchronous throw — leave nothing muted
+    restore(); // the rare synchronous throw — leave nothing muted
     return;
   }
-  if (p && typeof p.then === "function") p.then(done).catch(() => { el.muted = false; });
-  else done();
+  el.pause();
+  // play() now rejects with AbortError (or resolves, if a browser beat us to it); either
+  // way the element is paused. Unmute only once it settles — doing it sooner could
+  // uncover a play that hasn't observed the pause yet.
+  if (p && typeof p.then === "function") p.then(restore, restore);
+  else restore();
 }
 
 // Prime every chime element on a user gesture so iOS lets the later network-triggered
