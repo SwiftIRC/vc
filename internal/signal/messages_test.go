@@ -139,3 +139,89 @@ func TestGravatarOmittedWhenEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodePollMessages(t *testing.T) {
+	v, err := Decode([]byte(`{"type":"create-poll","question":"Ship it?","options":["Yes","No"]}`))
+	if err != nil {
+		t.Fatalf("decode create-poll: %v", err)
+	}
+	cp, ok := v.(*CreatePoll)
+	if !ok {
+		t.Fatalf("got %T, want *CreatePoll", v)
+	}
+	if cp.Question != "Ship it?" || len(cp.Options) != 2 || cp.Options[1] != "No" {
+		t.Errorf("create-poll decoded as %+v", cp)
+	}
+
+	v, err = Decode([]byte(`{"type":"vote","pollId":"3","choice":1}`))
+	if err != nil {
+		t.Fatalf("decode vote: %v", err)
+	}
+	vt, ok := v.(*Vote)
+	if !ok {
+		t.Fatalf("got %T, want *Vote", v)
+	}
+	if vt.PollID != "3" || vt.Choice != 1 {
+		t.Errorf("vote decoded as %+v", vt)
+	}
+
+	v, err = Decode([]byte(`{"type":"close-poll","pollId":"3"}`))
+	if err != nil {
+		t.Fatalf("decode close-poll: %v", err)
+	}
+	if cl, ok := v.(*ClosePoll); !ok || cl.PollID != "3" {
+		t.Errorf("close-poll decoded as %T %+v", v, v)
+	}
+}
+
+func TestEncodePollEvent(t *testing.T) {
+	raw, err := Encode(PollEvent{
+		Action: "update", ID: "1", Question: "Ship it?",
+		Options: []string{"Yes", "No"}, Tallies: []int{2, 1}, By: "alice", Open: true,
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["type"] != "poll" {
+		t.Errorf("type = %v, want poll", got["type"])
+	}
+	// The broadcast must carry no per-recipient field: yourVote belongs to the join
+	// snapshot only, or every fan-out would need a per-recipient send loop.
+	if _, bad := got["yourVote"]; bad {
+		t.Error("PollEvent must not carry yourVote")
+	}
+}
+
+func TestJoinedCarriesPollSnapshot(t *testing.T) {
+	choice := 1
+	raw, err := Encode(Joined{
+		SelfID: "abc", Role: "op",
+		Poll: &PollSnapshot{ID: "1", Question: "Ship it?", Options: []string{"Yes", "No"},
+			Tallies: []int{2, 1}, By: "alice", Open: true, YourVote: &choice},
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var got struct {
+		Poll *PollSnapshot `json:"poll"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Poll == nil || got.Poll.YourVote == nil || *got.Poll.YourVote != 1 {
+		t.Fatalf("poll snapshot round-trip failed: %+v", got.Poll)
+	}
+
+	// Omitted entirely when there is no poll, so existing clients see no change.
+	raw, err = Encode(Joined{SelfID: "abc", Role: "op"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "poll") {
+		t.Errorf("Joined with no poll should omit the field: %s", raw)
+	}
+}

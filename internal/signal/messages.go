@@ -106,6 +106,27 @@ type MediaState struct {
 type Rename struct {
 	Name string `json:"name"`
 }
+
+// ---- polls ----
+
+// CreatePoll opens a poll, replacing any existing one. Op-gated.
+type CreatePoll struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+}
+
+// Vote casts or changes this participant's vote. PollID keeps a client whose card is
+// out of date from voting on a poll that has since been replaced.
+type Vote struct {
+	PollID string `json:"pollId"`
+	Choice int    `json:"choice"` // index into the poll's Options
+}
+
+// ClosePoll freezes the tallies. Op-gated.
+type ClosePoll struct {
+	PollID string `json:"pollId"`
+}
+
 type Leave struct{}
 
 // ---- server → client ----
@@ -124,11 +145,12 @@ type PeerInfo struct {
 	Gravatar string `json:"gravatar,omitempty"` // SHA-256 email hash for the peer's Gravatar; "" if none
 }
 type Joined struct {
-	SelfID     string     `json:"selfId"`
-	Role       string     `json:"role"`
-	Peers      []PeerInfo `json:"peers"`
-	Quality    Quality    `json:"quality"`           // current session video caps, so a late joiner applies them
-	RoomAgeSec int64      `json:"roomAge,omitempty"` // seconds the room has existed, as of this join
+	SelfID     string        `json:"selfId"`
+	Role       string        `json:"role"`
+	Peers      []PeerInfo    `json:"peers"`
+	Quality    Quality       `json:"quality"`           // current session video caps, so a late joiner applies them
+	RoomAgeSec int64         `json:"roomAge,omitempty"` // seconds the room has existed, as of this join
+	Poll       *PollSnapshot `json:"poll,omitempty"`    // the room's active poll, or absent
 }
 
 // Quality is the session's outbound-video caps: each field is a tier id the client
@@ -201,6 +223,34 @@ type CountdownEvent struct {
 	Action string `json:"action"` // "start" | "stop"
 	By     string `json:"by"`
 }
+
+// PollEvent is the whole poll, broadcast on open, on every vote, and on close.
+//
+// It deliberately carries NO per-recipient data. A client knows its own vote because
+// it cast it, and a reconnecting one gets it back from the Joined snapshot — putting
+// yourVote here would force a per-recipient send loop in place of Broadcast.
+type PollEvent struct {
+	Action   string   `json:"action"` // "open" | "update" | "close"
+	ID       string   `json:"id"`
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+	Tallies  []int    `json:"tallies"` // parallel to Options
+	By       string   `json:"by"`      // creator's display name
+	Open     bool     `json:"open"`
+}
+
+// PollSnapshot is the active poll as a JOINER sees it: PollEvent's fields plus that
+// joiner's own vote, which the broadcast omits. Carried in Joined.
+type PollSnapshot struct {
+	ID       string   `json:"id"`
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+	Tallies  []int    `json:"tallies"`
+	By       string   `json:"by"`
+	Open     bool     `json:"open"`
+	YourVote *int     `json:"yourVote,omitempty"` // nil = this joiner has not voted
+}
+
 type Kicked struct {
 	By string `json:"by"`
 }
@@ -261,6 +311,12 @@ func Decode(data []byte) (any, error) {
 		v = &MediaState{}
 	case "rename":
 		v = &Rename{}
+	case "create-poll":
+		v = &CreatePoll{}
+	case "vote":
+		v = &Vote{}
+	case "close-poll":
+		v = &ClosePoll{}
 	case "leave":
 		v = &Leave{}
 	default:
@@ -318,6 +374,8 @@ func serverTypeName(v any) (string, error) {
 		return "moderation", nil
 	case CountdownEvent, *CountdownEvent:
 		return "countdown", nil
+	case PollEvent, *PollEvent:
+		return "poll", nil
 	case Kicked, *Kicked:
 		return "kicked", nil
 	case Banned, *Banned:
