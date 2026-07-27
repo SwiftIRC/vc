@@ -1,6 +1,8 @@
 package room
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/ryanwohara/webrtc-chat/internal/signal"
@@ -64,4 +66,36 @@ func TestRenameNoOpOnUnchangedEmptyMissing(t *testing.T) {
 	if got := countRenamed(ac); got != before {
 		t.Errorf("no-op renames broadcast %d PeerRenamed, want 0", got-before)
 	}
+}
+
+// TestRenameRaceWithModeration exercises Rename running concurrently with a
+// moderation action that reads both actor and target names (MutePeer). Rename
+// mutates Participant.Name under r.mu, but requireOp/target used to return the
+// pointer and let callers read .Name after the lock was released — a data race.
+// Run with -race: it must fail pre-fix and pass post-fix.
+func TestRenameRaceWithModeration(t *testing.T) {
+	r := New(Config{Slug: "s", Adhoc: true})
+	op, _ := member("op", "opname", RoleOp)
+	victim, _ := member("v", "victim", RoleUser)
+	if err := r.Join(op, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Join(victim, ""); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			r.Rename("v", fmt.Sprintf("v%d", i))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			_ = r.MutePeer("op", "v", "mic")
+		}
+	}()
+	wg.Wait()
 }

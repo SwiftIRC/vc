@@ -363,46 +363,52 @@ func (r *Room) Broadcast(v any, exceptID string) {
 	}
 }
 
-// requireOp returns the actor if present and op. Callers hold no lock.
-func (r *Room) requireOp(actorID string) (*Participant, error) {
+// requireOp returns the actor if present and op, along with its name snapshotted
+// under the lock. Callers hold no lock. Name must be captured here rather than read
+// from the returned pointer afterward: Rename mutates Participant.Name under r.mu,
+// and an unlocked read of it after this call returns would race.
+func (r *Room) requireOp(actorID string) (*Participant, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	actor, ok := r.parts[actorID]
 	if !ok {
-		return nil, ErrNoSuchPeer
+		return nil, "", ErrNoSuchPeer
 	}
 	if actor.Role != RoleOp {
-		return nil, ErrNotOp
+		return nil, "", ErrNotOp
 	}
-	return actor, nil
+	return actor, actor.Name, nil
 }
 
-func (r *Room) target(id string) (*Participant, error) {
+// target returns the participant if present, along with its name snapshotted under
+// the lock (see requireOp for why: Rename mutates Name under r.mu, so it must not be
+// read from the pointer after the lock is released).
+func (r *Room) target(id string) (*Participant, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p, ok := r.parts[id]
 	if !ok {
-		return nil, ErrNoSuchPeer
+		return nil, "", ErrNoSuchPeer
 	}
-	return p, nil
+	return p, p.Name, nil
 }
 
 func (r *Room) Kick(actorID, targetID string) error {
-	actor, err := r.requireOp(actorID)
+	_, actorName, err := r.requireOp(actorID)
 	if err != nil {
 		return err
 	}
-	tgt, err := r.target(targetID)
+	tgt, tgtName, err := r.target(targetID)
 	if err != nil {
 		return err
 	}
-	tgt.Conn.Send(signal.Kicked{By: actor.Name})
+	tgt.Conn.Send(signal.Kicked{By: actorName})
 	// Do not close the socket here: closing cancels the target's read context,
 	// which hard-closes the connection and would race (drop) the frame just
 	// sent. The client closes itself on "kicked"; the server reaps on EOF or
 	// ping-eviction.
 	r.Leave(targetID) // broadcasts PeerLeft
-	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "kick", Target: tgt.Name}, "")
+	r.Broadcast(signal.Moderation{Actor: actorName, Action: "kick", Target: tgtName}, "")
 	// Frame delivered; now schedule a bounded force-close so a live but
 	// uncooperative client is still evicted rather than lingering indefinitely.
 	tgt.Conn.CloseAfter(evictGrace)
@@ -410,11 +416,11 @@ func (r *Room) Kick(actorID, targetID string) error {
 }
 
 func (r *Room) Ban(actorID, targetID string) error {
-	actor, err := r.requireOp(actorID)
+	_, actorName, err := r.requireOp(actorID)
 	if err != nil {
 		return err
 	}
-	tgt, err := r.target(targetID)
+	tgt, tgtName, err := r.target(targetID)
 	if err != nil {
 		return err
 	}
@@ -425,11 +431,11 @@ func (r *Room) Ban(actorID, targetID string) error {
 		r.bannedIPs[tgt.IP] = struct{}{}
 	}
 	r.mu.Unlock()
-	tgt.Conn.Send(signal.Banned{By: actor.Name})
+	tgt.Conn.Send(signal.Banned{By: actorName})
 	// Same as Kick: deliver the frame, don't close. The ban is recorded above,
 	// so any rejoin attempt is refused; the client closes itself on "banned".
 	r.Leave(targetID)
-	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "ban", Target: tgt.Name}, "")
+	r.Broadcast(signal.Moderation{Actor: actorName, Action: "ban", Target: tgtName}, "")
 	// Frame delivered; schedule a bounded force-close (same as Kick) so an
 	// uncooperative client is evicted deterministically.
 	tgt.Conn.CloseAfter(evictGrace)
@@ -442,11 +448,11 @@ func (r *Room) Ban(actorID, targetID string) error {
 // — and adds a moderation feed entry. The role is stored so late joiners' rosters
 // show the new op too.
 func (r *Room) GrantOp(actorID, targetID string) error {
-	actor, err := r.requireOp(actorID)
+	_, actorName, err := r.requireOp(actorID)
 	if err != nil {
 		return err
 	}
-	tgt, err := r.target(targetID)
+	tgt, tgtName, err := r.target(targetID)
 	if err != nil {
 		return err
 	}
@@ -459,7 +465,7 @@ func (r *Room) GrantOp(actorID, targetID string) error {
 	r.rememberOp(tgt) // survive this participant's future reconnects (by account and/or ref)
 	r.mu.Unlock()
 	r.Broadcast(signal.RoleChange{ID: tgt.ID, Role: string(RoleOp)}, "")
-	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "op", Target: tgt.Name}, "")
+	r.Broadcast(signal.Moderation{Actor: actorName, Action: "op", Target: tgtName}, "")
 	return nil
 }
 
@@ -474,7 +480,7 @@ var validQualityTiers = map[string]bool{
 // and, via Joined, future — applies it to its own senders. Invalid input from an op is
 // ignored (not an error) so a UI glitch can't disrupt the session; a non-op is rejected.
 func (r *Room) SetQuality(actorID, target, tier string) error {
-	actor, err := r.requireOp(actorID)
+	_, actorName, err := r.requireOp(actorID)
 	if err != nil {
 		return err
 	}
@@ -493,7 +499,7 @@ func (r *Room) SetQuality(actorID, target, tier string) error {
 	q := signal.Quality{Camera: r.qualityCamera, Screen: r.qualityScreen}
 	r.mu.Unlock()
 	r.Broadcast(q, "")
-	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "quality", Target: target, Kind: tier}, "")
+	r.Broadcast(signal.Moderation{Actor: actorName, Action: "quality", Target: target, Kind: tier}, "")
 	return nil
 }
 
@@ -504,22 +510,22 @@ func (r *Room) MutePeer(actorID, targetID, kind string) error {
 	if kind != "mic" && kind != "camera" && kind != "screen" {
 		return errors.New("room: bad kind")
 	}
-	actor, err := r.requireOp(actorID)
+	_, actorName, err := r.requireOp(actorID)
 	if err != nil {
 		return err
 	}
-	tgt, err := r.target(targetID)
+	tgt, tgtName, err := r.target(targetID)
 	if err != nil {
 		return err
 	}
 	tgt.Conn.Send(signal.Muted{Kind: kind})
-	r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "mute", Target: tgt.Name, Kind: kind}, "")
+	r.Broadcast(signal.Moderation{Actor: actorName, Action: "mute", Target: tgtName, Kind: kind}, "")
 	return nil
 }
 
 // SetLock sets (non-empty) or clears (empty) the room password. Op-only.
 func (r *Room) SetLock(actorID, password string) error {
-	actor, err := r.requireOp(actorID)
+	_, actorName, err := r.requireOp(actorID)
 	if err != nil {
 		return err
 	}
@@ -530,10 +536,10 @@ func (r *Room) SetLock(actorID, password string) error {
 	r.mu.Unlock()
 	if locked {
 		r.Broadcast(signal.RoomLocked{}, "")
-		r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "lock"}, "")
+		r.Broadcast(signal.Moderation{Actor: actorName, Action: "lock"}, "")
 	} else {
 		r.Broadcast(signal.RoomUnlocked{}, "")
-		r.Broadcast(signal.Moderation{Actor: actor.Name, Action: "unlock"}, "")
+		r.Broadcast(signal.Moderation{Actor: actorName, Action: "unlock"}, "")
 	}
 	return nil
 }
