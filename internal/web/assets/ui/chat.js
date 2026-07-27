@@ -131,6 +131,22 @@ export class Chat {
     // Hidden by default; the control bar's Chat toggle reveals it (setVisible).
     this.visible = false;
     this.el.hidden = true;
+
+    // Escape closes the panel. Bound to the window, not the panel, so it still works
+    // after clicking away to a tile — but three things can legitimately own the key
+    // first, and each is deferred to:
+    //   - the panel is already closed: nothing to do;
+    //   - something nearer the target handled it (the ☰ rename box preventDefaults its
+    //     own Escape), so the key was not meant for us;
+    //   - a modal <dialog> is up (the kick/ban confirm): it cancels itself natively, and
+    //     the chat must not close out from behind it.
+    this._onKeyDown = (e) => {
+      if (e.key !== "Escape" || !this.visible || e.defaultPrevented) return;
+      if (document.querySelector("dialog[open]")) return;
+      e.preventDefault();
+      this._close();
+    };
+    window.addEventListener("keydown", this._onKeyDown);
   }
 
   // Show or hide the panel. controls.js owns the toggle; focus the compose box on
@@ -216,8 +232,10 @@ export class Chat {
   }
 
   // Detach from the DOM and drop references. app.js stops the socket separately;
-  // there is nothing else to unwind here.
+  // the window-level Escape listener is ours, so it comes off here — otherwise a
+  // leave/rejoin would stack a listener per call, each holding a dead panel.
   destroy() {
+    window.removeEventListener("keydown", this._onKeyDown);
     this.signaling = null;
     this.onClose = null;
     if (this.el) this.el.replaceChildren();

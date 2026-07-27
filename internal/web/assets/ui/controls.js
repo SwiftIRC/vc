@@ -229,9 +229,15 @@ export class Controls {
   // toggle button can never disagree with what's on screen. Idempotent.
   closeChat() {
     if (!this.chat || !this.chatOpen) return;
+    // Hiding the panel takes whatever was focused inside it (the compose box, the ✕)
+    // out of the page, which drops keyboard focus to <body> — so Tab would restart from
+    // the top of the document. Hand focus to the toggle instead: it is where the panel
+    // came from, and Enter there reopens it.
+    const refocus = this.chat.el && this.chat.el.contains(document.activeElement);
     this.chatOpen = false;
     this.chat.setVisible(false);
     this._setChatButton();
+    if (refocus) this.chatBtn.focus();
   }
 
   // Called by app.js on every inbound chat frame. While the panel is closed this
