@@ -314,3 +314,40 @@ func TestCreatePollTrimsText(t *testing.T) {
 		t.Fatalf("stored poll = %+v", r.poll)
 	}
 }
+
+// A late joiner must receive the active poll in its Joined frame, or it sees nothing
+// until the next vote happens to arrive.
+func TestJoinedCarriesTheActivePoll(t *testing.T) {
+	r, _, _, _, _ := modRoom(t)
+	if err := r.CreatePoll("p1", "Ship it?", []string{"Yes", "No"}); err != nil {
+		t.Fatal(err)
+	}
+	_, lc := joinWithRef(t, r, "p3", "late", "ref-late")
+
+	joined, ok := lc.msgs[0].(signal.Joined)
+	if !ok {
+		t.Fatalf("late joiner msg[0] = %T, want signal.Joined", lc.msgs[0])
+	}
+	if joined.Poll == nil {
+		t.Fatal("Joined carried no poll")
+	}
+	if joined.Poll.Question != "Ship it?" || !joined.Poll.Open {
+		t.Fatalf("Joined poll = %+v", joined.Poll)
+	}
+	if joined.Poll.YourVote != nil {
+		t.Errorf("a fresh joiner should have no vote, got %d", *joined.Poll.YourVote)
+	}
+}
+
+// And no poll means no field, so nothing changes for a room that never had one.
+func TestJoinedOmitsPollWhenThereIsNone(t *testing.T) {
+	r, _, _, _, _ := modRoom(t)
+	_, lc := joinWithRef(t, r, "p3", "late", "ref-late")
+	joined, ok := lc.msgs[0].(signal.Joined)
+	if !ok {
+		t.Fatalf("msg[0] = %T, want signal.Joined", lc.msgs[0])
+	}
+	if joined.Poll != nil {
+		t.Fatalf("Joined carried a poll in a room with none: %+v", joined.Poll)
+	}
+}

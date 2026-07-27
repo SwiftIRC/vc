@@ -218,11 +218,12 @@ func (r *Room) Join(p *Participant, password string) error {
 	}
 	replay := append([]signal.ChatEvent(nil), r.chat...)
 	quality := signal.Quality{Camera: r.qualityCamera, Screen: r.qualityScreen}
+	pollSnap := r.pollSnapshot(p)
 	r.parts[p.ID] = p
 	r.emptySince = time.Time{}
 	r.mu.Unlock()
 
-	p.Conn.Send(signal.Joined{SelfID: p.ID, Role: string(p.Role), Peers: roster, Quality: quality, RoomAgeSec: int64(r.cfg.Now().Sub(r.startedAt).Seconds())})
+	p.Conn.Send(signal.Joined{SelfID: p.ID, Role: string(p.Role), Peers: roster, Quality: quality, RoomAgeSec: int64(r.cfg.Now().Sub(r.startedAt).Seconds()), Poll: pollSnap})
 	for _, ce := range replay {
 		p.Conn.Send(ce)
 	}
