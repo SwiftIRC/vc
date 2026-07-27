@@ -308,7 +308,9 @@ function renderInCall(msg) {
     screenOpActionsFor: (p) => controls.screenOpActionsFor(p),
   });
   controls.attachGrid(grid); // toggles refresh the self tile's indicators
-  chat = new Chat({ signaling });
+  // The panel's ✕ closes through controls, which owns the open/closed state that the
+  // toggle button and unread badge follow.
+  chat = new Chat({ signaling, onClose: () => controls.closeChat() });
   controls.attachChat(chat); // chat starts hidden; the control-bar toggle reveals it
 
   statusEl = el("span", { class: "call-status", role: "status", hidden: true });

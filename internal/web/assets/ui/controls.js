@@ -224,6 +224,16 @@ export class Controls {
     this._setChatButton();
   }
 
+  // Close the panel from outside the control bar — the chat pane's own ✕ routes here
+  // rather than hiding itself, so this stays the single owner of chatOpen and the
+  // toggle button can never disagree with what's on screen. Idempotent.
+  closeChat() {
+    if (!this.chat || !this.chatOpen) return;
+    this.chatOpen = false;
+    this.chat.setVisible(false);
+    this._setChatButton();
+  }
+
   // Called by app.js on every inbound chat frame. While the panel is closed this
   // bumps an unread badge so new messages don't go unnoticed.
   notifyChatActivity() {

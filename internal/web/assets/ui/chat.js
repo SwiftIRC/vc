@@ -83,15 +83,30 @@ function moderationText({ actor, action, target, kind } = {}) {
 }
 
 export class Chat {
-  // { signaling }. app.js routes inbound `chat` -> onChat and `moderation` ->
+  // { signaling, onClose }. app.js routes inbound `chat` -> onChat and `moderation` ->
   // onModeration; sending goes back out through the same signaling socket.
-  constructor({ signaling } = {}) {
+  //
+  // onClose is invoked by the panel's own ✕. controls.js owns whether the panel is
+  // open (its toggle button's pressed state and the unread badge hang off that), so
+  // the ✕ asks it to close rather than hiding the panel behind its back — otherwise
+  // the button would still read "open" and the next click would appear to do nothing.
+  constructor({ signaling, onClose } = {}) {
     this.signaling = signaling || null;
+    this.onClose = typeof onClose === "function" ? onClose : null;
     this._build();
   }
 
   _build() {
     this.log = el("div", { class: "chat-log", role: "log", "aria-live": "polite", "aria-label": "Chat and moderation feed" });
+
+    // ✕ closes the panel. The glyph is decorative — aria-hidden keeps a screen reader
+    // on the button's own label instead of reading "multiplication sign".
+    this.closeBtn = el(
+      "button",
+      { class: "chat-close", type: "button", title: "Close chat", "aria-label": "Close chat", onClick: () => this._close() },
+      el("span", { "aria-hidden": "true", text: "×" }),
+    );
+    this.header = el("div", { class: "chat-header" }, el("h2", { class: "chat-title", text: "Chat" }), this.closeBtn);
 
     this.input = el("input", {
       class: "chat-input",
@@ -111,7 +126,7 @@ export class Chat {
       sendBtn,
     );
 
-    this.el = el("div", { class: "chat" }, el("h2", { class: "chat-title", text: "Chat" }), this.log, this.form);
+    this.el = el("div", { class: "chat" }, this.header, this.log, this.form);
 
     // Hidden by default; the control bar's Chat toggle reveals it (setVisible).
     this.visible = false;
@@ -124,6 +139,13 @@ export class Chat {
     this.visible = !!visible;
     this.el.hidden = !this.visible;
     if (this.visible) this.input.focus();
+  }
+
+  // The ✕ handler: hand the close to whoever owns the open/closed state, and fall back
+  // to hiding ourselves when the panel is used standalone (no owner attached).
+  _close() {
+    if (this.onClose) this.onClose();
+    else this.setVisible(false);
   }
 
   // --- outbound ---
@@ -197,6 +219,7 @@ export class Chat {
   // there is nothing else to unwind here.
   destroy() {
     this.signaling = null;
+    this.onClose = null;
     if (this.el) this.el.replaceChildren();
   }
 }

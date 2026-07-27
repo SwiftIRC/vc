@@ -898,10 +898,42 @@ body.ui-idle .controls {
   border-radius: 0;
 }
 
+/* Title row: heading left, close ✕ hard right. */
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .chat-title {
   margin: 0;
   color: var(--fg);
   font-size: 0.95rem;
+}
+
+/* Close ✕. Sized past the glyph so it stays a comfortable tap target on a phone. */
+.chat-close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-close:hover,
+.chat-close:focus-visible {
+  background: var(--border);
+  color: var(--fg);
 }
 
 .chat-log {
