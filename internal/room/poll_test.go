@@ -66,6 +66,9 @@ func TestCreatePollBroadcastsToAll(t *testing.T) {
 			t.Errorf("%s got tallies %v, want zeroed", who, ev.Tallies)
 		}
 	}
+	if m, ok := lastModeration(ac); !ok || m.Actor != "alice" || m.Action != "poll-open" {
+		t.Errorf("moderation feed = %+v ok=%v, want actor=alice action=poll-open", m, ok)
+	}
 }
 
 func TestVoteCountsAndChanges(t *testing.T) {
@@ -118,6 +121,39 @@ func TestVoteRefusals(t *testing.T) {
 	}
 	if err := r.Vote("p2", id, 0); !errors.Is(err, ErrPollClosed) {
 		t.Fatalf("vote on closed poll = %v, want ErrPollClosed", err)
+	}
+}
+
+// Mirrors TestVoteRefusals: ClosePoll's own no-poll/stale-id/already-closed guards,
+// which TestOnlyOpCanCreateOrClosePoll never exercises (it only checks the op gate).
+// Also pins the close broadcast itself — action must be "close" with open=false (a
+// client keys off action === "close" to freeze the card) — and the moderation-feed
+// entry, so a dropped or renamed line fails here rather than shipping silently.
+func TestClosePollRefusals(t *testing.T) {
+	r, _, ac, _, _ := modRoom(t)
+
+	if err := r.ClosePoll("p1", "1"); !errors.Is(err, ErrNoPoll) {
+		t.Fatalf("close with no poll = %v, want ErrNoPoll", err)
+	}
+	if err := r.CreatePoll("p1", "Ship it?", []string{"Yes", "No"}); err != nil {
+		t.Fatal(err)
+	}
+	id := r.poll.ID
+
+	if err := r.ClosePoll("p1", "not-"+id); !errors.Is(err, ErrStalePoll) {
+		t.Fatalf("stale id = %v, want ErrStalePoll", err)
+	}
+	if err := r.ClosePoll("p1", id); err != nil {
+		t.Fatal(err)
+	}
+	if ev, ok := lastPoll(ac); !ok || ev.Action != "close" || ev.Open {
+		t.Errorf("close broadcast = %+v ok=%v, want action=close open=false", ev, ok)
+	}
+	if m, ok := lastModeration(ac); !ok || m.Actor != "alice" || m.Action != "poll-close" {
+		t.Errorf("moderation feed = %+v ok=%v, want actor=alice action=poll-close", m, ok)
+	}
+	if err := r.ClosePoll("p1", id); !errors.Is(err, ErrPollClosed) {
+		t.Fatalf("close on already-closed poll = %v, want ErrPollClosed", err)
 	}
 }
 
