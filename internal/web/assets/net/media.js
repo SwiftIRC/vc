@@ -19,9 +19,13 @@
 //   "screen-start" {track}       screen share began
 //   "screen-stop"  {}            screen share ended (stopScreen or browser UI)
 //   "error"        {error, phase} a capture call failed; also rejected to caller
-//   "background-changed" {effectId, reverted}  the background effect changed;
-//                                reverted=true means the frame-rate watchdog
-//                                dropped it rather than the user choosing
+//   "background-changed" {effectId, reverted, reason}  the background effect
+//                                changed; reason is "user" (an explicit user
+//                                choice), "failed" (the pipeline could not
+//                                start), or "slow" (the frame-rate watchdog
+//                                bailed). reverted is true for "failed"/"slow"
+//                                — it is the persist/don't-persist signal;
+//                                reason exists so the UI can show why
 
 import { BackgroundSegmenter } from "../lib/segmenter.js";
 import { resolveEffectId } from "../lib/backgrounds.js";
@@ -58,6 +62,18 @@ export class Media extends EventTarget {
     this._bgEffect = "none";
     this._segmenter = null;
     this._rawCameraTrack = null; // the device track, parked while an effect is on
+    // setBackground, useDevices, and disableCamera can all interleave across the
+    // multi-second MediaPipe load inside a build, and nothing about a Promise
+    // stops that. _bgGeneration is the guard: setBackground bumps it before any
+    // await, and a build only commits if its captured generation still matches
+    // when it resumes — otherwise it quietly discards itself. This mirrors the
+    // epoch counter already inside BackgroundSegmenter itself (segmenter.js's
+    // own `_generation`), one level up.
+    this._bgGeneration = 0;
+    this._bgPending = null; // the segmenter currently mid-build (pre-commit), or
+    // null when idle. Exists so setBackground("none") can cancel an in-flight
+    // build instead of no-op'ing — _bgEffect alone can't tell "at rest" from
+    // "mid-build", since it only updates on commit.
   }
 
   // Current local tracks, or null when not captured / removed. Getters read the
@@ -156,15 +172,32 @@ export class Media extends EventTarget {
     const rebuildBg = !!cameraId && this._bgEffect !== "none";
     const wantedBg = this._bgEffect;
     if (rebuildBg) {
-      this._teardownBackground();
+      // Tear down quietly and announce camera-off ourselves. The natural raw
+      // announcement (from this teardown, or from the device swap below) would
+      // show remote peers the very room this effect exists to hide, for as long
+      // as device acquisition and the model reload take (I6) — briefly showing
+      // nothing is strictly better than briefly showing the room.
+      this._teardownBackground({ emit: false });
       this._bgEffect = "none";
+      this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: null } }));
     }
     const wasMuted = rebuildNs && this._processedTrack ? !this._processedTrack.enabled : false;
-    const fresh = await this._getUserMedia(constraints);
+    let fresh;
+    try {
+      fresh = await this._getUserMedia(constraints);
+    } catch (error) {
+      // I4: a failed device switch must not silently drop the effect with no
+      // event — without this the picker keeps showing the old chip selected
+      // while the room is, in fact, unblurred (or off, per the emit above).
+      if (rebuildBg) this._emitBackground("none", "failed");
+      throw error;
+    }
     // _adopt swaps the raw device tracks and emits camera-track; it emits mic-track too
     // UNLESS NS is on, in which case _swapTrack stays silent and we publish the freshly
     // processed track below (the raw device track must never be the published one).
-    this._adopt(fresh);
+    // holdVideo withholds THIS raw announcement too, for the same I6 reason as above:
+    // the effect is about to be rebuilt on the new device a moment later.
+    this._adopt(fresh, { holdVideo: rebuildBg });
     if (rebuildNs) {
       const raw = (this.stream && this.stream.getAudioTracks()[0]) || null;
       if (raw) {
@@ -247,14 +280,16 @@ export class Media extends EventTarget {
   // if acquisition fails, leaving the camera off. A no-op returning the current track
   // when already on. `deviceId` optionally pins a specific camera.
   //
-  // A background effect chosen while the camera was off is applied here, so the
-  // camera never comes back showing a room the user had already hidden.
+  // A background effect chosen while the camera was off is applied here. Remote
+  // peers see camera-off, not the raw room, until the rebuilt composite is ready
+  // (holdVideo, I6) — the raw camera is never announced to them at all in that case.
   async enableCamera(deviceId = this._cameraId) {
     if (this.cameraTrack) return this.cameraTrack;
     const video = deviceId ? { deviceId: { exact: deviceId } } : true;
     const fresh = await this._getUserMedia({ video });
-    this._adopt(fresh); // swaps the new video track into `stream`, emits "camera-track"
-    if (this._bgEffect !== "none") {
+    const pendingEffect = this._bgEffect !== "none";
+    this._adopt(fresh, { holdVideo: pendingEffect }); // swaps the new video track into `stream`
+    if (pendingEffect) {
       const wanted = this._bgEffect;
       this._bgEffect = "none"; // so setBackground sees a real transition
       await this.setBackground(wanted);
@@ -488,20 +523,34 @@ export class Media extends EventTarget {
   //
   // With the camera off there is nothing to process: the choice is recorded and
   // applied by enableCamera() when the device comes back.
+  //
+  // setBackground/useDevices/disableCamera can all interleave across the
+  // multi-second MediaPipe load a build goes through. _bgGeneration is bumped
+  // here, before any await, and is the single mechanism that keeps that race
+  // from corrupting state: a build started by an earlier call finds its
+  // captured generation stale when it resumes and quietly abandons itself
+  // instead of committing on top of (or being torn down by) whatever a later
+  // call already did. See _buildBackground.
   async setBackground(effectId) {
     const wanted = resolveEffectId(effectId);
-    if (wanted === this._bgEffect) return this._bgEffect;
+    // A no-op only AT REST. While a build is in flight (_bgPending), _bgEffect
+    // still reads as the PRE-build value, so this guard must not swallow a
+    // request that is actually asking to cancel that build (I7) — e.g. picking
+    // "blur", then clicking back to "none" before the model finishes loading.
+    if (wanted === this._bgEffect && !this._bgPending) return this._bgEffect;
+
+    const gen = ++this._bgGeneration; // supersede/cancel anything already in flight
 
     if (!this.cameraTrack && !this._rawCameraTrack) {
       this._bgEffect = wanted; // remembered; enableCamera applies it
-      this._emitBackground(wanted, false);
+      this._emitBackground(wanted, "user");
       return wanted;
     }
 
     if (wanted === "none") {
       this._teardownBackground();
       this._bgEffect = "none";
-      this._emitBackground("none", false);
+      this._emitBackground("none", "user");
       return "none";
     }
 
@@ -509,53 +558,105 @@ export class Media extends EventTarget {
     if (this._segmenter) {
       this._segmenter.setEffect(wanted);
       this._bgEffect = wanted;
-      this._emitBackground(wanted, false);
+      this._emitBackground(wanted, "user");
       return wanted;
     }
 
     try {
-      await this._buildBackground(wanted);
+      const committed = await this._buildBackground(wanted, gen);
+      // Superseded or abandoned mid-build: _buildBackground already left
+      // everything untouched (or another call already reflects the truth).
+      // Nothing to report — reporting here could clobber a winner's outcome.
+      if (!committed) return this._bgEffect;
       this._bgEffect = wanted;
-      this._emitBackground(wanted, false);
+      this._emitBackground(wanted, "user");
       return wanted;
     } catch (error) {
+      if (gen !== this._bgGeneration) return this._bgEffect; // superseded; not our call to report
       // Leave the raw camera streaming — the user must never be left with a dead
       // video track because an effect failed to load.
       this._teardownBackground();
       this._bgEffect = "none";
+      // The raw track's announcement may have been withheld by a caller (see
+      // enableCamera/useDevices' `holdVideo`) on the assumption the composite
+      // would replace it a moment later. It didn't: announce the raw track now
+      // so remote peers learn about it at all, rather than being stuck on the
+      // {track:null} substitute forever.
+      const raw = this.cameraTrack;
+      if (raw) this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: raw } }));
       this._emitError(error, "background");
-      this._emitBackground("none", false);
+      this._emitBackground("none", "failed");
       return "none";
     }
   }
 
   // Build the pipeline on the current device track and swap the composited track
-  // into `stream`. Throws with the raw camera left untouched if anything fails.
-  async _buildBackground(effectId) {
+  // into `stream`. Resolves `true` on a real commit; `false` if the attempt was
+  // abandoned WITHOUT touching `stream`/`_segmenter`/`_rawCameraTrack` — either
+  // superseded by a newer setBackground() call, or the device track died mid-load
+  // (disableCamera, a device switch, or stop() all stop tracks without bumping
+  // `_bgGeneration`; the readyState check below catches those). Throws, with
+  // nothing committed, only on a genuine pipeline failure.
+  async _buildBackground(effectId, gen) {
     const raw = this._rawCameraTrack || this.cameraTrack;
     if (!raw) throw new Error("no camera to process");
 
-    const segmenter = new BackgroundSegmenter({ onBail: () => this._onBackgroundBail() });
-    const processed = await segmenter.start(raw, effectId);
+    const segmenter = new BackgroundSegmenter({ onBail: () => this._onBackgroundBail(segmenter) });
+    this._bgPending = segmenter; // a build is now in flight; see setBackground's no-op guard
+    let processed;
+    try {
+      processed = await segmenter.start(raw, effectId);
+    } finally {
+      // Only clear if we're still the current pending build: a newer build may
+      // have already overwritten this with its OWN segmenter while we were
+      // still awaiting (see setBackground), and that marker is not ours to touch.
+      if (this._bgPending === segmenter) this._bgPending = null;
+    }
+
+    // Superseded while we were awaiting — a newer setBackground() call already
+    // owns (or is about to own) `stream`/`_segmenter`/`_rawCameraTrack`.
+    // Touching any of them here would clobber whatever it already did.
+    if (gen !== this._bgGeneration) {
+      segmenter.stop();
+      return false;
+    }
+    // The device this pipeline was built on may have been stopped while we
+    // waited (C3): disableCamera(), a device switch's _swapTrack, and stop()'s
+    // full-stream teardown all stop tracks without touching _bgGeneration.
+    // Committing on a dead device would resurrect an effect the user already
+    // turned off and republish a stale frame to remote peers.
+    if (raw.readyState !== "live") {
+      segmenter.stop();
+      return false;
+    }
     if (!processed) {
       segmenter.stop();
       throw new Error("background pipeline produced no track");
     }
+
     this._segmenter = segmenter;
     this._rawCameraTrack = raw;
-    processed.enabled = raw.enabled; // carry the mute state onto the published track
+    // Mirror the noise-suppression graph: capture the pre-existing mute state
+    // for the published track, THEN force the raw device track fully enabled
+    // so the compositor is never starved — a soft-muted camera must not starve
+    // the segmenter, or a later unmute would still publish nothing.
+    processed.enabled = raw.enabled;
+    raw.enabled = true;
     // Swap directly rather than via _swapTrack: that helper STOPS the outgoing
     // track, which here is the raw device feeding the pipeline.
     const current = this.stream.getVideoTracks()[0] || null;
     if (current && current !== processed) this.stream.removeTrack(current);
     this.stream.addTrack(processed);
     this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: processed } }));
+    return true;
   }
 
   // Tear the pipeline down and put the raw device track back in `stream`. Safe to
   // call when no effect is running. Emits "camera-track" only when the published
-  // track actually changed.
-  _teardownBackground() {
+  // track actually changed, unless `emit` is false. `{emit:false}` is for callers
+  // that perform this same teardown quietly and issue their own event for
+  // whatever replaces it — see _swapTrack (C1) and useDevices (I6).
+  _teardownBackground({ emit = true } = {}) {
     const segmenter = this._segmenter;
     const raw = this._rawCameraTrack;
     this._segmenter = null;
@@ -569,26 +670,37 @@ export class Media extends EventTarget {
     if (raw && raw.readyState === "live") {
       if (processed) raw.enabled = processed.enabled; // carry the mute state back
       this.stream.addTrack(raw);
-      this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: raw } }));
+      if (emit) this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: raw } }));
     } else {
       // The device went away while the effect was running (unplugged, or a
       // disableCamera race). Report camera-off rather than a dead track.
-      this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: null } }));
+      if (emit) this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: null } }));
     }
   }
 
   // The frame-rate watchdog gave up. Revert to the raw camera and tell the UI it
   // was automatic, so the picker can show a notice AND — importantly — not
-  // persist "none" as though the user had chosen it.
-  _onBackgroundBail() {
-    if (!this._segmenter) return; // already torn down
+  // persist "none" as though the user had chosen it. `segmenter` identifies WHICH
+  // pipeline bailed (C2): a build that lost the generation race can still be
+  // running its own watchdog after losing, and its bail must not tear down
+  // whatever pipeline actually won — only the CURRENT `_segmenter` may act.
+  _onBackgroundBail(segmenter) {
+    if (segmenter !== this._segmenter) return; // an orphaned/superseded build; not the live one
     this._teardownBackground();
     this._bgEffect = "none";
-    this._emitBackground("none", true);
+    this._emitBackground("none", "slow");
   }
 
-  _emitBackground(effectId, reverted) {
-    this.dispatchEvent(new CustomEvent("background-changed", { detail: { effectId, reverted } }));
+  // reason is "user" (an explicit user choice), "failed" (the pipeline could not
+  // start), or "slow" (the watchdog bailed). reverted, derived from it, is the
+  // persist/don't-persist signal Task 8 reads; reason exists so the picker can
+  // show why. Note for Task 8: an effect chosen while the camera is off emits
+  // this event TWICE — once recording the choice (setBackground's no-camera
+  // branch), once when enableCamera actually applies it. Both carry reason
+  // "user" and the same effectId; harmless, but don't be surprised by it.
+  _emitBackground(effectId, reason) {
+    const reverted = reason !== "user";
+    this.dispatchEvent(new CustomEvent("background-changed", { detail: { effectId, reverted, reason } }));
   }
 
   // --- internals ---
@@ -604,26 +716,37 @@ export class Media extends EventTarget {
 
   // Move each track of `fresh` into the owned `stream`, replacing the same-kind
   // track already present. `fresh` may carry only some kinds (a partial device
-  // switch); untouched kinds are left streaming.
-  _adopt(fresh) {
+  // switch); untouched kinds are left streaming. `holdVideo` withholds the raw
+  // video track's "camera-track" announcement (substituting {track:null}) when a
+  // background rebuild is about to replace it a moment later — see enableCamera,
+  // useDevices, and I6.
+  _adopt(fresh, { holdVideo = false } = {}) {
     if (!this.stream) this.stream = new MediaStream();
     const video = fresh.getVideoTracks()[0] || null;
     const audio = fresh.getAudioTracks()[0] || null;
-    if (video) this._swapTrack("video", video);
+    if (video) this._swapTrack("video", video, { holdVideo });
     if (audio) this._swapTrack("audio", audio);
   }
 
   // Replace the current `kind` ("video"/"audio") track in `stream` with `next`,
   // preserving the old track's mute (enabled) state, stopping and removing the
   // old track so its device is freed, and emitting the matching change event.
-  _swapTrack(kind, next) {
+  // `holdVideo` (video only) emits {track:null} instead of `next` — see _adopt.
+  _swapTrack(kind, next, { holdVideo = false } = {}) {
     const isVideo = kind === "video";
+    // A background effect keeps the true device track PARKED outside `stream`
+    // (see the constructor comment) while the COMPOSITED track sits in `stream`
+    // as `prev`. Swapping `prev` for `next` below, on its own, would silently
+    // ORPHAN the parked track: still live, still capturing, with nothing left
+    // holding a reference to stop it — two cameras "on", only one of them
+    // visible anywhere, and a later disableCamera() would stop the wrong one
+    // (C1). Tearing the pipeline down first — quietly, since this method emits
+    // its own event below — folds the parked track back into `stream` as
+    // `prev`, so the ordinary swap logic beneath stops it like any other
+    // replaced track. No effect running means this is a no-op.
+    if (isVideo && this._segmenter) this._teardownBackground({ emit: false });
     const prev = (isVideo ? this.stream.getVideoTracks() : this.stream.getAudioTracks())[0] || null;
     if (prev === next) return;
-    // The parked raw camera track is NOT in `stream` while an effect runs, so it
-    // can never be `prev` here. The background paths swap tracks themselves for
-    // exactly this reason: this helper stops whatever it replaces, which would
-    // kill the device feeding the compositor.
     if (prev) {
       if (next) next.enabled = prev.enabled;
       this.stream.removeTrack(prev);
@@ -640,7 +763,8 @@ export class Media extends EventTarget {
     // so this only suppresses the emit during an in-call mic switch.)
     if (!isVideo && this._nsOn) return;
     const event = isVideo ? "camera-track" : "mic-track";
-    this.dispatchEvent(new CustomEvent(event, { detail: { track: next } }));
+    const track = isVideo && holdVideo ? null : next;
+    this.dispatchEvent(new CustomEvent(event, { detail: { track } }));
   }
 
   _toggle(track) {
