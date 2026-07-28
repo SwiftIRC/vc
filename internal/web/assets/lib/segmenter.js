@@ -74,6 +74,7 @@ export class BackgroundSegmenter {
     this._firstFrameAt = null;
     this._bailed = false; // latches onBail() to at most one call per armed guard
     this._stopped = false;
+    this._generation = 0; // bumped by start() and stop(); see the comment in start()
   }
 
   get track() {
@@ -85,6 +86,18 @@ export class BackgroundSegmenter {
   // nothing running — the caller keeps publishing the raw track.
   async start(rawTrack, effectId) {
     if (!rawTrack) throw new Error("no camera track to process");
+    // NEW-1: an epoch, not a boolean, for the resume checkpoints below. A
+    // checkpoint captured by an in-flight start() needs to know whether THIS
+    // call was invalidated — by its own stop(), or by a newer start()
+    // superseding it — not just whether the instance is *currently* stopped.
+    // A boolean can't express that: this call resetting _stopped = false
+    // (see I3, below) would make an EARLIER, still-suspended start() read
+    // "not stopped" and resurrect after its own stop() had already torn it
+    // down. stop() also bumps this (see stop()), so a plain
+    // start()-then-stop() with no restart is still caught even though
+    // _generation doesn't change again after that.
+    this._generation += 1;
+    const gen = this._generation;
     // I3: stop() is sticky by design (a load that finishes after cancellation
     // must not resurrect a torn-down instance), but that also makes a
     // *finished* stop() permanent unless cleared here — and
@@ -95,13 +108,14 @@ export class BackgroundSegmenter {
 
     try {
       const { vision, fileset } = await loadVision();
-      if (this._stopped) return null; // stopped while the runtime was loading
+      if (gen !== this._generation) return null; // superseded while the runtime was loading
 
       // C1: assign to a local first. this._segmenter must stay null until we
-      // know stop() didn't land during this await — otherwise a stop() that
-      // fires mid-load finds this._segmenter still null (its teardown becomes
-      // a no-op), and the segmenter that resolves a moment later is leaked:
-      // live WASM heap plus a WebGL context that nothing ever closes.
+      // know this start() wasn't superseded during this await — otherwise a
+      // stop() (or a newer start()) that lands mid-load finds this._segmenter
+      // still null (its teardown becomes a no-op), and the segmenter that
+      // resolves a moment later is leaked: live WASM heap plus a WebGL
+      // context that nothing ever closes.
       const segmenter = await vision.ImageSegmenter.createFromOptions(fileset, {
         baseOptions: {
           modelAssetPath: MODEL_PATH,
@@ -123,7 +137,7 @@ export class BackgroundSegmenter {
           outputCategoryMask: false,
         });
       });
-      if (this._stopped) {
+      if (gen !== this._generation) {
         try {
           segmenter.close();
         } catch {
@@ -134,7 +148,7 @@ export class BackgroundSegmenter {
       this._segmenter = segmenter;
 
       await this._startVideo(rawTrack);
-      if (this._stopped) return null;
+      if (gen !== this._generation) return null;
 
       this._buildCanvases();
       this._stream = this._out.captureStream(OUTPUT_FPS);
@@ -179,12 +193,24 @@ export class BackgroundSegmenter {
     this._paintedFor = null;
     this._guard.reset();
     this._bailed = false; // a fresh effect deserves a fresh chance to bail (or not)
+    // NEW-2: if no frame has landed yet (still mid warm-up on the previous
+    // effect), restart the wall clock the "zero frames ever" fallback in
+    // _tickGuard measures against too. Without this, an early switch keeps
+    // counting against the ORIGINAL effect's start time, so _tickGuard sees
+    // grace+window already elapsed and fires a premature — and, since the
+    // guard was just reset, a DUPLICATE — bail almost immediately after the
+    // switch, before the new effect had any real chance to render.
+    if (this._firstFrameAt === null) this._pipelineStartedAt = performance.now();
   }
 
   // Idempotent teardown. Stops the composited track (not the raw one — the caller
   // owns that), cancels both loops, and releases the model.
   stop() {
     this._stopped = true;
+    // NEW-1: bump the epoch so any start() still awaiting a checkpoint knows
+    // it is stale even if no later start() ever runs. See the generation
+    // comment at the top of start().
+    this._generation += 1;
     if (this._cancelFrame) {
       this._cancelFrame();
       this._cancelFrame = null;
@@ -299,27 +325,31 @@ export class BackgroundSegmenter {
   _onFrame() {
     if (this._stopped) return;
     try {
-      this._renderFrame();
-      // I1: push() (and the "we have ever rendered" marker below) stay gated
-      // behind a successful render on purpose — a throw means nothing was
-      // actually composited to the output canvas, and counting it as a
-      // delivered frame would be dishonest telemetry. A PERSISTENT failure
-      // (throws on every call, so this line never runs) is instead caught by
+      // I1/NEW-3: push() (and the "we have ever rendered" marker below) stay
+      // gated behind an ACTUAL composite on purpose — a throw, a missing
+      // video/segmenter/videoWidth, or an empty mask result all mean nothing
+      // was drawn to the output canvas, and counting any of them as a
+      // delivered frame would be dishonest telemetry that reports a
+      // never-painted canvas as healthy. A PERSISTENT failure to composite
+      // (every call takes one of these no-draw paths) is instead caught by
       // the wall-clock fallback in _tickGuard, which does not depend on
       // push() ever having been called.
-      const now = performance.now();
-      this._guard.push(now);
-      if (this._firstFrameAt === null) this._firstFrameAt = now;
+      if (this._renderFrame()) {
+        const now = performance.now();
+        this._guard.push(now);
+        if (this._firstFrameAt === null) this._firstFrameAt = now;
+      }
     } catch (err) {
       console.error("segmenter: frame failed", err);
     }
     this._scheduleFrame();
   }
 
+  // Returns true only if a frame was actually composited to _out.
   _renderFrame() {
     const video = this._video;
     const seg = this._segmenter;
-    if (!video || !seg || !video.videoWidth) return;
+    if (!video || !seg || !video.videoWidth) return false;
 
     // The camera can change resolution mid-call (a device switch, or a browser
     // adapting to bandwidth); follow it rather than compositing at a stale size.
@@ -329,20 +359,23 @@ export class BackgroundSegmenter {
       this._painted = null; // the cached background is now the wrong size
     }
 
+    let composited = false;
     seg.segmentForVideo(video, performance.now(), (result) => {
       try {
-        this._composite(result);
+        composited = this._composite(result);
       } finally {
         // MediaPipe results hold GPU/WASM memory that is not garbage collected.
         // Leaking one per frame exhausts the heap within a minute.
         if (result && typeof result.close === "function") result.close();
       }
     });
+    return composited;
   }
 
+  // Returns true only if a frame was actually composited to _out.
   _composite(result) {
     const masks = result && result.confidenceMasks;
-    if (!masks || !masks.length) return;
+    if (!masks || !masks.length) return false;
     // The selfie segmenter emits person confidence LAST: a single-mask model
     // emits it alone, a two-mask model emits background then person. Taking the
     // last entry is correct for both shapes.
@@ -353,6 +386,7 @@ export class BackgroundSegmenter {
     this._drawBackground(w, h);
     this._drawMaskedPerson(mask, w, h);
     this._outCtx.drawImage(this._scratch, 0, 0);
+    return true;
   }
 
   _drawBackground(w, h) {
