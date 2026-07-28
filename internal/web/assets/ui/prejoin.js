@@ -145,7 +145,6 @@ export class Prejoin {
     // camera off, Media records the choice and applies it on the next enable.
     const background = resolveEffectId(prefs.background);
     if (background !== "none") {
-      this.backgroundPicker.select(background); // reflect it immediately; the build is async
       // Deliberately NOT awaited. mount() gates the mic/camera toggles' first
       // interactive state and the occupancy poll behind this method returning, and
       // a first-use background build loads the ~3.4MB MediaPipe runtime — multiple
@@ -157,10 +156,18 @@ export class Prejoin {
       // (including a watchdog revert) whenever it lands — independently of whether
       // this method, or even this Prejoin instance, is still around by then. Someone
       // will be tempted to put the `await` back for tidiness: don't.
-      this.media.setBackground(background).catch(() => {
-        /* Media emits its own error and degrades to "none"; the picker follows
-           via the background-changed event */
-      });
+      //
+      // restore(), not select()+setBackground(): select() only moves the highlight,
+      // which would leave the chip claiming an effect Media was never actually asked
+      // to run — and if the build is later abandoned mid-flight with no generation
+      // bump (e.g. the user picks a different camera from the lobby dropdown while
+      // this restore is still loading), nothing ever corrects it, so the chip lies
+      // forever. restore() drives the SAME _choose() path a click does, so the
+      // picker shows its pending state and disables itself for the duration —
+      // matching the design spec's promise for every OTHER path into a build — and a
+      // click on another chip during the restore is handled by the picker's own
+      // busy/pending machinery instead of silently racing past it.
+      this.backgroundPicker.restore(background).catch(() => {});
     }
   }
 

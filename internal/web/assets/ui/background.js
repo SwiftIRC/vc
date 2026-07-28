@@ -120,12 +120,23 @@ export class BackgroundPicker {
     this._reflect(this.media ? this.media.backgroundEffect : "none");
   }
 
-  // Set the selection without going through Media — used to restore a saved
-  // preference into the UI before the pipeline has been built. Not a "settled
-  // change" (nothing actually happened), so this only moves the highlight: no
-  // notice, no onChange.
+  // Set the selection without going through Media — moves the highlight only, no
+  // pending state, no notice, no onChange. Safe when nothing needs to actually
+  // start (e.g. reflecting Media's current state on construction), but NOT for
+  // restoring a saved preference that still needs to be built: this leaves the
+  // chip claiming an effect that Media hasn't been asked to run, and if that build
+  // is later abandoned mid-flight with no generation bump (a device switch racing
+  // it), nothing ever corrects the chip. Use restore() for that case instead.
   select(effectId) {
     this._reflect(effectById(effectId).id);
+  }
+
+  // Apply a saved preference through exactly the same path as a click, so the
+  // pending/disabled state and the settle contract are identical. Prefer this over
+  // select() for a restore: select() only moves the highlight, which leaves the chip
+  // claiming an effect that may never actually start.
+  restore(effectId) {
+    return this._choose(effectId);
   }
 
   destroy() {
