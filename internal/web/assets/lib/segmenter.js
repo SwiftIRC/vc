@@ -179,7 +179,14 @@ export class BackgroundSegmenter {
       // contract. Without this, the two reachable rejections (the metadata
       // timeout, and "compositor produced no video track") left a live
       // segmenter and a hidden <video> decoding camera frames forever.
-      this.stop();
+      //
+      // R1: but only tear down if THIS start() is still the current one. A
+      // superseded run (stopped, or replaced by a newer start() that is
+      // already up and running) must not call stop() on its successor just
+      // because its own, now-irrelevant, promise chain finally rejects — the
+      // caller still needs to learn that ITS call to start() failed, so this
+      // still rethrows either way.
+      if (gen === this._generation) this.stop();
       throw err;
     }
   }
@@ -191,16 +198,20 @@ export class BackgroundSegmenter {
     this._effect = effectById(effectId);
     this._painted = null;
     this._paintedFor = null;
-    this._guard.reset();
     this._bailed = false; // a fresh effect deserves a fresh chance to bail (or not)
-    // NEW-2: if no frame has landed yet (still mid warm-up on the previous
-    // effect), restart the wall clock the "zero frames ever" fallback in
-    // _tickGuard measures against too. Without this, an early switch keeps
-    // counting against the ORIGINAL effect's start time, so _tickGuard sees
-    // grace+window already elapsed and fires a premature — and, since the
-    // guard was just reset, a DUPLICATE — bail almost immediately after the
-    // switch, before the new effect had any real chance to render.
-    if (this._firstFrameAt === null) this._pipelineStartedAt = performance.now();
+    // NEW-2/R2: re-arm all three of the guard's clocks together, deliberately
+    // identical to the visibility-wake path in start()'s _onVisibilityChange.
+    // Resetting only _guard and _pipelineStartedAt (leaving a stale non-null
+    // _firstFrameAt from the PREVIOUS effect) routed _tickGuard into the
+    // _guard.check() branch instead of the wall-clock branch — and
+    // _guard.check() can never fire on a guard that was just reset (its
+    // _start stays null until a push() arrives), so a newly-picked effect
+    // that never composites a single frame could never be bailed on at all.
+    // Clearing _firstFrameAt too sends it back through the wall-clock branch
+    // instead, which does not depend on push() ever having been called.
+    this._guard.reset();
+    this._pipelineStartedAt = performance.now();
+    this._firstFrameAt = null;
   }
 
   // Idempotent teardown. Stops the composited track (not the raw one — the caller
