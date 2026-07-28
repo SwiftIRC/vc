@@ -63,7 +63,8 @@ export function paintDusk(ctx, w, h) {
 // fall away at the edges and never compete with the subject.
 export function paintGrid(ctx, w, h) {
   fill(ctx, w, h, "#14161a"); // --bg
-  const pitch = w / 24; // fraction of width, so the pattern reads the same at any size
+  if (w <= 0 || h <= 0) return; // Degenerate frame: skip the dot grid
+  const pitch = Math.max(4, w / 24); // Floor to prevent pathological density at very small widths
   const r = Math.max(0.5, pitch * 0.06);
   ctx.fillStyle = "rgba(76, 141, 255, 0.22)"; // --accent, well faded
   for (let y = pitch / 2; y < h; y += pitch) {

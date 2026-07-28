@@ -105,3 +105,20 @@ test("painters scale to thumbnail size without dividing by zero", () => {
     assert.ok(calls.length > 0, `${e.id} drew nothing at thumbnail size`);
   }
 });
+
+test("painters handle degenerate sizes without infinite loops or unbounded work", () => {
+  // Degenerate canvas dimensions can cause infinite loops (w=0 → pitch=0) or
+  // pathological call counts (w=1 → millions of iterations). Painters must
+  // complete quickly and bound their work even at 0×0, 0×10, 10×0, 1×1.
+  const degenerateSizes = [[0, 0], [0, 10], [10, 0], [1, 1]];
+  for (const e of EFFECTS.filter((x) => x.kind === "paint")) {
+    for (const [w, h] of degenerateSizes) {
+      const { ctx, calls } = fakeCtx(w, h);
+      e.paint(ctx, w, h); // must not throw or hang
+      // Bound work: if a painter makes millions of calls, it will fail here.
+      // For 0×0, expect just a few fill/composite ops. For 1×1 or 10×0,
+      // still bounded (not 1.7 million like pathological gridding).
+      assert.ok(calls.length < 1000, `${e.id} at ${w}×${h} made ${calls.length} calls`);
+    }
+  }
+});
