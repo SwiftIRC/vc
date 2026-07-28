@@ -56,3 +56,12 @@ test("storage that throws never propagates", () => {
   assert.deepEqual(loadMediaPrefs(), {});
   assert.doesNotThrow(() => saveMediaPrefs({ mic: false }));
 });
+
+test("the background choice round-trips alongside the other media prefs", () => {
+  stubStorage();
+  saveMediaPrefs({ mic: true, camera: true, cameraId: "cam-1" });
+  saveMediaPrefs({ background: "aurora" }); // must not disturb the rest
+  assert.deepEqual(loadMediaPrefs(), { mic: true, camera: true, cameraId: "cam-1", background: "aurora" });
+  saveMediaPrefs({ background: "none" });
+  assert.equal(loadMediaPrefs().background, "none");
+});
