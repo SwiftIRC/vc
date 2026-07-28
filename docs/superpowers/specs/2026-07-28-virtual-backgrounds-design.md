@@ -66,9 +66,9 @@ So the user sees their own effect in the lobby preview and the self tile with no
 change to either file. And because `Media.cameraTrack` still returns
 `stream.getVideoTracks()[0]`, the existing listener at `app.js:374` publishes the
 processed track through the `replaceTrack("camera", …)` path it already has — no
-renegotiation, no signaling message, and no change to any Go production file
-(`//go:embed all:assets` picks up the new asset directory on its own). The only
-Go edits are the additive tests below.
+renegotiation and no signaling message. The only Go production change is
+pre-compressed asset serving in `static.go` (see [Assets](#assets));
+`//go:embed all:assets` picks up the new asset directory on its own.
 
 ### Modules
 
@@ -227,9 +227,9 @@ Blur, Blur+, then the five procedural effects. It is mounted in two places:
 
 The MediaPipe bundle is **lazy-loaded on first picker interaction**, not on page
 load. A user who never touches backgrounds pays nothing at runtime beyond the
-larger binary. While the ~3.3 MB is loading, the chosen chip shows a pending
-state and the picker is disabled, mirroring how the noise-suppression button
-handles its ~2 MB worklet load.
+larger binary. While the ~3.4 MB (gzipped) is loading, the chosen chip shows a
+pending state and the picker is disabled, mirroring how the noise-suppression
+button handles its ~2 MB worklet load.
 
 ## Persistence
 
@@ -250,20 +250,54 @@ rather than throwing.
 ## Assets
 
 Vendored under `assets/vendor/mediapipe/`, obtained via `npm pack
-@mediapipe/tasks-vision`:
+@mediapipe/tasks-vision` (measured, version 1.0.0):
 
-- `vision_bundle.mjs` — the ESM entry point
-- `vision_wasm_internal.js` / `.wasm` — SIMD build
-- `vision_wasm_nosimd_internal.js` / `.wasm` — fallback build
-- `selfie_segmenter.tflite` — the model
+| File | Raw | Stored (gzip) |
+|---|---|---|
+| `vision_wasm_internal.wasm` | 11.5 MB | 3.38 MB |
+| `vision_wasm_internal.js` | 323 KB | ~80 KB |
+| `vision_bundle.mjs` | 155 KB | ~40 KB |
+| `selfie_segmenter.tflite` | 250 KB | 212 KB |
+| **Total** | **~12.2 MB** | **~3.7 MB** |
 
-Roughly 3.3 MB total, taking the binary from ~18.7 MB to ~22 MB (about 18%).
+Taking the binary from ~18.7 MB to roughly **22.4 MB (about +20%)**.
 
-No `static.go` change is needed: `//go:embed all:assets` already covers new
-subdirectories, and `http.ServeContent` returns `application/wasm` for `.wasm`
-(verified), so streaming compilation works. `.tflite` has no registered MIME type
-and is sniffed as `application/octet-stream`, which is correct — MediaPipe
-fetches it as an `ArrayBuffer`.
+**SIMD-only.** The `vision_wasm_nosimd_internal.*` fallback build (another
+11.1 MB raw) is deliberately not vendored. WASM SIMD is available in Chrome 91+,
+Firefox 89+, and Safari 16.4+, which covers every browser this app otherwise
+targets; carrying a second copy of the runtime to serve older ones is not worth
+doubling the payload.
+
+**The model is a separate download.** Unlike the legacy package, tasks-vision
+does not bundle a `.tflite`. `selfie_segmenter.tflite` is fetched once from
+Google's model CDN at vendoring time and committed into the tree — it is never
+fetched at runtime, so the deployed binary stays self-contained and no user's
+browser is sent to a Google endpoint.
+
+### Pre-compressed serving
+
+Assets are stored **gzipped** in the embed and served with `Content-Encoding:
+gzip`. This is the difference between +20% and +65% binary growth, and it cuts a
+user's first-load download from 11.5 MB to 3.4 MB. Browsers decompress in the
+stream, so `WebAssembly.instantiateStreaming` still works.
+
+`static.go` gains a small pre-compressed branch: when the requested path has a
+`.gz` sibling in the embed and the request carries `Accept-Encoding: gzip`, serve
+the sibling with the **original** path's `Content-Type` plus `Content-Encoding:
+gzip`. Notes:
+
+- Content type must be derived from the original name, never from `.gz`, or the
+  browser gets `application/gzip` and refuses to compile the module.
+- This path uses `io.Copy` rather than `http.ServeContent`: byte ranges over a
+  content-encoded body are more trouble than they are worth here, so `Accept-Ranges`
+  is not advertised for it.
+- A client that does not send `Accept-Encoding: gzip` falls through to the
+  existing uncompressed path, so behaviour is unchanged when the `.gz` is absent
+  or unwanted.
+- `http.ServeContent` already returns `application/wasm` for `.wasm` (verified),
+  and `.tflite` has no registered MIME type so it is sniffed as
+  `application/octet-stream` — correct, since MediaPipe fetches it as an
+  `ArrayBuffer`.
 
 ## Testing
 
@@ -283,8 +317,11 @@ fetches it as an `ArrayBuffer`.
 - `internal/web/web_test.go` — assert the vendored WASM and `.tflite` are present
   in the embedded FS. A missing model is a feature dead on arrival that no JS
   test would notice.
-- `internal/server/static_test.go` — assert `.wasm` is served with
-  `Content-Type: application/wasm`.
+- `internal/server/static_test.go` — for a gzip-accepting request, assert the
+  response carries `Content-Encoding: gzip` **and** `Content-Type:
+  application/wasm` (not `application/gzip`), and that the decompressed body
+  begins with the WASM magic bytes `\0asm`. Also assert a request *without*
+  `Accept-Encoding: gzip` still gets a usable uncompressed response.
 
 **Manual, on-device — reported as pending, not claimed as verified:**
 
@@ -295,8 +332,10 @@ sounds work.
 
 ## Risks
 
-- **Binary grows ~18%.** Accepted; the noise-suppression worklet already set this
-  precedent at 1.9 MB.
+- **Binary grows ~20%** (~18.7 MB to ~22.4 MB). Accepted; the noise-suppression
+  worklet already set the vendored-blob precedent at 1.9 MB. Note this figure
+  depends on the gzip-serving work landing — without it the same feature costs
+  +65%.
 - **Output quality depends on a model, not on code we control.** This is the
   first such feature in the app. If MediaPipe's segmenter does poorly in a given
   user's lighting, that is tuning, not a fixable bug.
