@@ -242,7 +242,12 @@ been verified yet; every item below is an open check, not a confirmed result.**
       not fully cover the canvas — the blur's alpha ramp leaves roughly the
       outer 8px (Blur) to 38px (Blur+, at 720p) partially transparent, which can
       read as a faint dark band. Check both strengths; it is most likely to be
-      visible on **Blur+ at a large (720p+) frame**.
+      visible on **Blur+ at a large (720p+) frame**. **Verdict:** a band
+      roughly matching that description is a known, accepted limitation —
+      pass it. Fail only if the band is substantially larger or darker than
+      described, if it appears on the **painted** (non-blur) backgrounds too
+      (those are drawn to full coverage and should have no band at all), or if
+      it shows as a hard cutoff rather than a soft transparency ramp.
 - [ ] **Mask resolution and main-thread cost** — with an effect running, open
       devtools and find the actual dimensions of the confidence mask
       `_drawMaskedPerson` widens into an alpha channel each frame (log
@@ -254,6 +259,12 @@ been verified yet; every item below is an open check, not a confirmed result.**
       Performance panel for how much main-thread time this loop actually costs.
       This determines whether low-end devices are protected by the watchdog or
       being crushed by this loop before the watchdog gets a chance to react.
+      **Verdict:** record the observed mask dimensions and the measured
+      per-frame cost — there's no pass/fail on the numbers themselves, but if
+      the mask comes back at input resolution rather than the assumed
+      256×256, that's a real finding worth its own follow-up issue, and
+      `segmenter.js`'s "~65k elements" comment should be corrected to match
+      whatever is actually observed either way.
 - [ ] **Effect is visible to remotes** — join with an effect on. Confirm the
       self tile AND a second browser's remote tile both show it.
 - [ ] **Survives camera off/on, device switch, and leave/rejoin** — turn the
