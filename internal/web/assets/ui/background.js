@@ -74,6 +74,7 @@ export class BackgroundPicker {
     this.media = media || null;
     this.onChange = typeof onChange === "function" ? onChange : () => {};
     this.busy = false;
+    this._effectsDisabled = false; // latched by _disableEffects when WebGL is absent
     this.chips = new Map();
 
     this.notice = el("p", { class: "bg-notice", role: "status", hidden: true });
@@ -184,6 +185,12 @@ export class BackgroundPicker {
     if (reason === "slow") {
       this.notice.hidden = false;
       this.notice.textContent = "Background turned off — this device couldn't keep up.";
+    } else if (reason === "unsupported") {
+      // Permanent, and actionable — so say what is wrong and what to do, rather
+      // than a generic failure the user would retry forever.
+      this.notice.hidden = false;
+      this.notice.textContent = "Backgrounds need WebGL, which this browser has turned off. Enable hardware acceleration in your browser settings, then reload.";
+      this._disableEffects();
     } else if (reason === "failed") {
       this.notice.hidden = false;
       this.notice.textContent = "That background could not be started.";
@@ -191,6 +198,18 @@ export class BackgroundPicker {
       this.notice.hidden = true;
     }
     this.onChange(effectId, reverted);
+  }
+
+  // Permanently disable every chip but "None". Called when Media reports that
+  // this browser cannot run effects at all — leaving them clickable would invite
+  // the user to keep picking things that can only fail, once per attempt.
+  _disableEffects() {
+    for (const [id, chip] of this.chips) {
+      if (id === "none") continue;
+      chip.disabled = true;
+      chip.title = `${chip.title} — unavailable without WebGL`;
+    }
+    this._effectsDisabled = true;
   }
 
   // Pure chip highlighting — no notice, no onChange. Used for the settled path
@@ -208,6 +227,10 @@ export class BackgroundPicker {
   _setPending(effectId, pending) {
     const chip = this.chips.get(effectId);
     if (chip) chip.classList.toggle("pending", pending);
-    for (const c of this.chips.values()) c.disabled = pending;
+    for (const [id, c] of this.chips) {
+      // Clearing a pending state must not resurrect chips that _disableEffects
+      // switched off for good — this browser still cannot run them.
+      c.disabled = pending || (this._effectsDisabled && id !== "none");
+    }
   }
 }

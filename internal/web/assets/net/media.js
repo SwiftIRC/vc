@@ -650,7 +650,11 @@ export class Media extends EventTarget {
       // on the {track:null} substitute forever. A no-op when nothing was held.
       this._releaseHeldVideo();
       this._emitError(error, "background");
-      this._emitBackground("none", "failed");
+      // "unsupported" is a permanent property of the browser, not a transient
+      // failure: MediaPipe's vision graph needs WebGL and this one has none, so
+      // no amount of retrying will help. Say that plainly instead of offering a
+      // generic "could not be started" the user would reasonably retry forever.
+      this._emitBackground("none", error && error.code === "no-webgl" ? "unsupported" : "failed");
       return "none";
     }
   }
@@ -666,7 +670,7 @@ export class Media extends EventTarget {
     const raw = this._rawCameraTrack || this.cameraTrack;
     if (!raw) throw new Error("no camera to process");
 
-    const segmenter = new BackgroundSegmenter({ onBail: () => this._onBackgroundBail(segmenter) });
+    const segmenter = new BackgroundSegmenter({ onBail: (cause) => this._onBackgroundBail(segmenter, cause) });
     this._bgPending = segmenter; // a build is now in flight; see setBackground's no-op guard
     let processed;
     try {
@@ -752,11 +756,16 @@ export class Media extends EventTarget {
   // pipeline bailed (C2): a build that lost the generation race can still be
   // running its own watchdog after losing, and its bail must not tear down
   // whatever pipeline actually won — only the CURRENT `_segmenter` may act.
-  _onBackgroundBail(segmenter) {
+  _onBackgroundBail(segmenter, cause) {
     if (segmenter !== this._segmenter) return; // an orphaned/superseded build; not the live one
     this._teardownBackground();
     this._bgEffect = "none";
-    this._emitBackground("none", "slow");
+    // The segmenter distinguishes a device that cannot keep up ("slow") from a
+    // pipeline that is simply broken — most often a WebGL context that never
+    // existed or went away ("broken"). Only the former is honestly reported as a
+    // performance problem; telling someone their machine is too slow when the
+    // GPU was never usable sends them optimising the wrong thing.
+    this._emitBackground("none", cause === "slow" ? "slow" : "failed");
   }
 
   // reason is "user" (an explicit user choice), "failed" (the pipeline could not

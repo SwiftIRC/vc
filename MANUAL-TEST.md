@@ -302,3 +302,28 @@ been verified yet; every item below is an open check, not a confirmed result.**
       reload the page. The effect must come back rather than staying off — the
       reverted state is deliberately not persisted, precisely so a bad watchdog
       call on one occasion doesn't disable the feature for good.
+
+## Backgrounds on a machine without WebGL
+
+MediaPipe's vision graph is GL-based no matter what `delegate` is set to, so with
+hardware acceleration off there is no working configuration. This was a real
+production failure: `glActiveTexture` threw once per frame forever, and
+`delegate: "CPU"` failed identically. `segmenter.js` now refuses up front.
+
+To reproduce the no-WebGL state, launch Chrome with `--disable-gpu`, or turn off
+"Use graphics acceleration when available" in Settings → System and restart. Then:
+
+- [ ] Confirm the browser really has no WebGL — in the console,
+      `document.createElement("canvas").getContext("webgl2")` should be `null`.
+- [ ] Open a room and pick any background.
+      **Verdict:** exactly one notice appears — "Backgrounds need WebGL, which this
+      browser has turned off. Enable hardware acceleration in your browser
+      settings, then reload." — every chip except **None** becomes disabled, and
+      the camera keeps sending unprocessed video. Fail if the console shows
+      repeating `frame failed` errors, if the notice blames the device for being
+      too slow, or if the chips stay clickable.
+- [ ] Confirm the console shows no per-frame spam: at most one `frame failed`
+      line per run of failures, not one per frame.
+- [ ] Re-enable acceleration, restart the browser, reload, and pick a background.
+      **Verdict:** it works normally, and a previously saved preference is still
+      there — the unsupported state must never have been persisted over it.

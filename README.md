@@ -26,7 +26,9 @@ own and can wire natively into SwiftIRC.
 - Mic noise suppression (an AudioWorklet, on by default, opt-out).
 - Background blur and virtual backgrounds (MediaPipe selfie segmentation, run
   entirely in the browser), with an automatic fall back to no effect on a device
-  that cannot sustain a usable frame rate.
+  that cannot sustain a usable frame rate. **Requires WebGL** — MediaPipe's vision
+  graph is GL-based regardless of whether inference runs on the GPU or the CPU, so
+  with hardware acceleration disabled the picker says so and offers only "None".
 - Per-participant local volume, a mirrored self-view, and a shared countdown
   sound.
 - Self-healing clients: reconnect on drop, ICE-restart on media failure, and —

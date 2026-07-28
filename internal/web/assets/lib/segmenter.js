@@ -29,6 +29,40 @@ const OUTPUT_FPS = 24;
 // catch a total stall, because a stalled compositor stops calling push().
 const GUARD_TICK_MS = 1000;
 
+// How many consecutive frames may throw before we conclude the pipeline is dead
+// rather than hiccupping. At ~24fps this is well under a second of bad frames.
+const MAX_CONSECUTIVE_FRAME_ERRORS = 30;
+
+// Can this page actually get a WebGL context right now?
+//
+// This exists because MediaPipe will NOT tell us. Emscripten's GL.createContext
+// returns the handle 0 when getContext() yields null, and makeContextCurrent(0)
+// returns `!(contextHandle && !GLctx)` — which is `true` for handle 0. A failed
+// acquisition is therefore reported as SUCCESS with the module-global GLctx left
+// undefined, so createFromOptions({delegate:"GPU"}) resolves and the failure only
+// appears as a per-frame TypeError deep inside the WASM. Asking the browser
+// directly is the only way to choose the delegate honestly.
+//
+// The probe context is explicitly released: browsers cap live WebGL contexts
+// (~16 in Chrome), and silently consuming one per pipeline build to answer a
+// yes/no question would be its own bug.
+//
+// `createCanvas` is injectable so this can be unit tested without a DOM.
+export function webglAvailable(createCanvas = () => document.createElement("canvas")) {
+  try {
+    const canvas = createCanvas();
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+    if (!gl) return false;
+    // Best-effort release; absent on some implementations, and harmless if so.
+    const lose = gl.getExtension && gl.getExtension("WEBGL_lose_context");
+    if (lose) lose.loseContext();
+    return true;
+  } catch {
+    // getContext can throw outright where WebGL is disabled by policy.
+    return false;
+  }
+}
+
 // Cached across instances: the fileset resolves once per page, and re-resolving
 // it on every effect change would re-fetch the runtime.
 let visionModule = null;
@@ -73,6 +107,7 @@ export class BackgroundSegmenter {
     this._pipelineStartedAt = null; // wall clock for the "zero frames ever" fallback
     this._firstFrameAt = null;
     this._bailed = false; // latches onBail() to at most one call per armed guard
+    this._frameErrors = 0; // consecutive throwing frames; reset by any good frame
     this._stopped = false;
     this._generation = 0; // bumped by start() and stop(); see the comment in start()
   }
@@ -106,6 +141,26 @@ export class BackgroundSegmenter {
     this._bailed = false;
     this._effect = effectById(effectId);
 
+    // WebGL is a hard precondition, not a preference. MediaPipe's vision
+    // GraphRunner is GL-based no matter what `delegate` says — `delegate` only
+    // selects where TFLite INFERENCE runs. On a browser with no WebGL the graph
+    // still reports "Graph successfully started running" and then throws
+    // "Cannot read properties of undefined (reading 'activeTexture')" from
+    // glActiveTexture on every single frame, on CPU and GPU alike. Observed in
+    // production alongside MediaPipe's own "Couldn't create webGL 1 context".
+    //
+    // Checking first is the only honest option, because MediaPipe will not tell
+    // us: emscripten's GL.createContext returns handle 0 when getContext()
+    // yields null, and makeContextCurrent(0) returns `!(contextHandle && !GLctx)`
+    // — `true` for handle 0 — so a FAILED acquisition is reported as SUCCESS
+    // with the module-global GLctx left undefined. createFromOptions resolves,
+    // and nothing rejects for a .catch() to catch.
+    if (!webglAvailable()) {
+      const err = new Error("background effects need WebGL, which this browser cannot provide");
+      err.code = "no-webgl"; // media.js maps this to the "unsupported" notice
+      throw err;
+    }
+
     try {
       const { vision, fileset } = await loadVision();
       if (gen !== this._generation) return null; // superseded while the runtime was loading
@@ -119,8 +174,9 @@ export class BackgroundSegmenter {
       const segmenter = await vision.ImageSegmenter.createFromOptions(fileset, {
         baseOptions: {
           modelAssetPath: MODEL_PATH,
-          // GPU keeps the model off the main thread's CPU budget. Some machines
-          // have no usable WebGL context, so fall back rather than fail outright.
+          // GPU keeps the TFLite inference off the main thread's CPU budget.
+          // Note this only selects where INFERENCE runs — see the WebGL
+          // precondition above; the graph itself is GL-based either way.
           delegate: "GPU",
         },
         runningMode: "VIDEO",
@@ -129,7 +185,10 @@ export class BackgroundSegmenter {
         outputConfidenceMasks: true,
         outputCategoryMask: false,
       }).catch(async (err) => {
-        console.warn("segmenter: GPU delegate failed, falling back to CPU", err);
+        // A GPU that passed the WebGL precondition can still fail to initialise
+        // TFLite's GPU delegate. Inference falls back to CPU; the graph keeps
+        // using the WebGL context we already confirmed exists.
+        console.warn("segmenter: GPU inference delegate failed, running inference on the CPU", err);
         return vision.ImageSegmenter.createFromOptions(fileset, {
           baseOptions: { modelAssetPath: MODEL_PATH, delegate: "CPU" },
           runningMode: "VIDEO",
@@ -349,9 +408,26 @@ export class BackgroundSegmenter {
         const now = performance.now();
         this._guard.push(now);
         if (this._firstFrameAt === null) this._firstFrameAt = now;
+        this._frameErrors = 0; // a good frame clears a run of bad ones
       }
     } catch (err) {
-      console.error("segmenter: frame failed", err);
+      // Log ONCE per run of failures. A dead GL context throws on every frame,
+      // and logging each one buries the actual first error under thousands of
+      // identical lines.
+      if (this._frameErrors === 0) console.error("segmenter: frame failed", err);
+      this._frameErrors += 1;
+      if (this._frameErrors >= MAX_CONSECUTIVE_FRAME_ERRORS && !this._bailed) {
+        // Every frame since the last good one has thrown. This is not a slow
+        // device — it is a broken pipeline. start() rules out "no WebGL at all",
+        // so the usual cause here is a context that went away underneath us (a
+        // lost GPU process). Bail with a reason that says so: telling the user
+        // their device "couldn't keep up" would be a wrong diagnosis for a
+        // machine that is not even being asked to do the work.
+        console.error(`segmenter: ${this._frameErrors} consecutive frame failures, dropping the effect`);
+        this._bailed = true;
+        this.onBail("broken");
+        return; // do not reschedule; the pipeline is being torn down
+      }
     }
     this._scheduleFrame();
   }
@@ -504,14 +580,17 @@ export class BackgroundSegmenter {
       if (elapsed < this._guard.graceMs + this._guard.windowMs) return;
       this._bailed = true;
       console.warn("segmenter: no frame ever rendered, dropping the background effect");
-      this.onBail();
+      // "broken", not "slow": zero frames across the whole grace+window is a
+      // pipeline that never worked, not a device struggling to keep up.
+      this.onBail("broken");
       return;
     }
     if (this._guard.check(performance.now())) {
       this._bailed = true;
       console.warn("segmenter: frame rate too low, dropping the background effect");
-      // Report only; media.js owns the tracks and performs the revert.
-      this.onBail();
+      // Report only; media.js owns the tracks and performs the revert. This is
+      // the one genuinely "the device can't keep up" case.
+      this.onBail("slow");
     }
   }
 }
