@@ -24,6 +24,9 @@ own and can wire natively into SwiftIRC.
   status (via signed tokens, in the planned Anope module).
 - Optional per-room password and identified-users-only mode.
 - Mic noise suppression (an AudioWorklet, on by default, opt-out).
+- Background blur and virtual backgrounds (MediaPipe selfie segmentation, run
+  entirely in the browser), with an automatic fall back to no effect on a device
+  that cannot sustain a usable frame rate.
 - Per-participant local volume, a mirrored self-view, and a shared countdown
   sound.
 - Self-healing clients: reconnect on drop, ICE-restart on media failure, and —
@@ -47,7 +50,11 @@ own and can wire natively into SwiftIRC.
 - **`internal/room`** — pure room state: join rules, roster, chat ring, moderation, countdown. No I/O, no Pion.
 - **`internal/sfu`** — the media plane (Pion `webrtc/v4`): one PeerConnection per participant, forwarding each published track (VP8/Opus) to every other participant; perfect-negotiation with the server as the impolite peer.
 - **`internal/server`** — the `Hub`: WebSocket join flow, signaling dispatch, HTTP API, static serving.
-- **`internal/web`** — the embedded browser client (`assets/`), with `node --test` unit tests for its pure logic (`test/`).
+- **`internal/web`** — the embedded browser client (`assets/`), with `node --test`
+  unit tests for its pure logic (`test/`). Includes the vendored MediaPipe
+  segmentation runtime (`assets/vendor/mediapipe/`, stored gzipped — see its
+  README), which is why the binary is 22,737,562 bytes (~21.7 MiB), up from
+  18,756,525 bytes before it was vendored.
 - **`cmd/webrtc-chat`** — the entrypoint.
 
 ## Build & run

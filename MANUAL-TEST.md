@@ -213,3 +213,81 @@ real browser — it's the manual check the Pion limitation requires.
       rollback, `_onRemoteOffer` re-runs `_makeOffer`, so the screen is re-offered and
       **must** still reach the others rather than sitting silently unpublished on B's
       PC. Verify B's screen shows for every remote even when the glare is forced.
+
+## Background blur and virtual backgrounds
+
+The automated suite covers the effect catalogue, the frame-rate watchdog's pure
+logic, and the vendored asset serving (gzip, content-type, SIMD-only). It cannot
+cover segmentation quality, the blur's edge coverage, actual mask resolution,
+thermal/battery behaviour, or tab-visibility interaction — those only exist in a
+real browser with a real camera. **None of this feature's runtime behaviour has
+been verified yet; every item below is an open check, not a confirmed result.**
+
+- [ ] **Lobby catalogue** — open a room. The lobby shows a **Background** row
+      with 8 chips.
+- [ ] **Blur starts and lazy-loads once** — pick **Blur**. The preview blurs
+      behind you within a few seconds. The first pick downloads ~3.4MB (Network
+      tab: `vision_wasm_internal.wasm`, `Content-Encoding: gzip`); picking a
+      different effect afterward does not re-download it.
+- [ ] **Mask edge quality** — check the mask edge around **hair and shoulders**
+      on Blur and on a virtual background. Some softness is expected; large
+      chunks of head disappearing is not.
+- [ ] **Virtual backgrounds fill the frame** — pick each of the 5 procedural
+      backgrounds in turn. Each should fill the frame completely — no camera
+      visible at the edges, no flicker between frames.
+- [ ] **Blur edge coverage (vignette check)** — on both **Blur** and **Blur+**,
+      look closely at the outer edge of the frame, ideally against something
+      light or high-contrast behind you. A `clearRect` fix already stops the
+      previous frame's pixels ghosting through, but the blurred draw still does
+      not fully cover the canvas — the blur's alpha ramp leaves roughly the
+      outer 8px (Blur) to 38px (Blur+, at 720p) partially transparent, which can
+      read as a faint dark band. Check both strengths; it is most likely to be
+      visible on **Blur+ at a large (720p+) frame**.
+- [ ] **Mask resolution and main-thread cost** — with an effect running, open
+      devtools and find the actual dimensions of the confidence mask
+      `_drawMaskedPerson` widens into an alpha channel each frame (log
+      `mask.width`/`mask.height` in `internal/web/assets/lib/segmenter.js`, or
+      inspect via the debugger). A code comment assumes a 256×256 mask (~65k
+      elements/frame); if MediaPipe is actually returning the mask at the
+      *input* resolution, 1280×720 would be ~921k iterations/frame — roughly
+      22M writes/second on the main thread at the 24fps output rate. Check the
+      Performance panel for how much main-thread time this loop actually costs.
+      This determines whether low-end devices are protected by the watchdog or
+      being crushed by this loop before the watchdog gets a chance to react.
+- [ ] **Effect is visible to remotes** — join with an effect on. Confirm the
+      self tile AND a second browser's remote tile both show it.
+- [ ] **Survives camera off/on, device switch, and leave/rejoin** — turn the
+      camera off and back on: the effect returns. Switch camera device: the
+      effect survives on the new device. Leave and rejoin: the effect is
+      restored from the saved preference.
+- [ ] **Tab-away does not trip the watchdog** — with an effect on, switch to
+      another tab for 10+ seconds, then come back. The published stream is
+      expected to freeze for remote peers while the tab was hidden (`rAF`/`rVFC`
+      stop firing in a hidden tab — a known, accepted trade-off), but the effect
+      itself **must still be active** on return and must **not** have been
+      switched off. The watchdog's verdict is explicitly suppressed while
+      `document.hidden`; a revert here is a bug, not a pass.
+- [ ] **Low light** — dim the room. Quality degrades — confirm it degrades
+      rather than breaking (no strobing, no fully-lost subject).
+- [ ] **Safari < 17 downscale fallback still blurs** — on a Safari below 17
+      (no `CanvasRenderingContext2D.filter`), Blur still works via the
+      downscale fallback, though visibly coarser, and the mask edge is harder.
+      Confirm it is not simply unblurred.
+- [ ] **Mobile: watchdog holds or reverts cleanly** — on the oldest phone
+      available, pick a virtual background and leave the call running for two
+      minutes. Either it holds a usable frame rate, **or** it reverts to None
+      with the notice **"Background turned off — this device couldn't keep
+      up."** Both are passes; a sustained low-fps feed with no revert is a
+      failure. Note battery and thermal behaviour over those two minutes.
+- [ ] **Mobile: the pipeline-failure notice is distinct from the watchdog
+      notice** — the picker shows two different notices depending on why an
+      effect didn't stick, and both need checking, not just the watchdog one
+      above. Force a start failure (e.g. block network requests matching
+      `/vendor/mediapipe/` in devtools, or go offline, right as you pick an
+      effect) and confirm the notice reads **"That background could not be
+      started."** — not the watchdog's wording — and that the raw camera keeps
+      streaming rather than going black.
+- [ ] **A revert is never permanent** — after a revert (either notice above),
+      reload the page. The effect must come back rather than staying off — the
+      reverted state is deliberately not persisted, precisely so a bad watchdog
+      call on one occasion doesn't disable the feature for good.
