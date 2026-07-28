@@ -23,9 +23,13 @@
 //                                changed; reason is "user" (an explicit user
 //                                choice), "failed" (the pipeline could not
 //                                start), or "slow" (the frame-rate watchdog
-//                                bailed). reverted is true for "failed"/"slow"
-//                                — it is the persist/don't-persist signal;
-//                                reason exists so the UI can show why
+//                                bailed). reverted is true for "failed"/"slow".
+//                                BackgroundPicker._settle recomputes its own
+//                                persist/don't-persist signal from `reason`
+//                                (reverted = reason !== "user") and passes THAT
+//                                to onChange; detail.reverted itself is read only
+//                                as a fallback inside the picker's own listener,
+//                                for a detail shape that somehow lacks `reason`
 
 import { BackgroundSegmenter } from "../lib/segmenter.js";
 import { resolveEffectId } from "../lib/backgrounds.js";
@@ -726,12 +730,16 @@ export class Media extends EventTarget {
   }
 
   // reason is "user" (an explicit user choice), "failed" (the pipeline could not
-  // start), or "slow" (the watchdog bailed). reverted, derived from it, is the
-  // persist/don't-persist signal Task 8 reads; reason exists so the picker can
-  // show why. Note for Task 8: an effect chosen while the camera is off emits
-  // this event TWICE — once recording the choice (setBackground's no-camera
-  // branch), once when enableCamera actually applies it. Both carry reason
-  // "user" and the same effectId; harmless, but don't be surprised by it.
+  // start), or "slow" (the watchdog bailed). reverted, derived from it, is carried
+  // on the event for completeness, but BackgroundPicker._settle does not read it —
+  // it recomputes the same persist/don't-persist signal itself from `reason`
+  // (reverted = reason !== "user") and passes THAT to onChange; detail.reverted is
+  // read only as _onChanged's fallback for a detail shape lacking `reason`. reason
+  // is the actual signal; it also lets the picker show why. Note: an effect chosen
+  // while the camera is off emits this event TWICE — once recording the choice
+  // (setBackground's no-camera branch), once when enableCamera actually applies
+  // it. Both carry reason "user" and the same effectId; harmless, but don't be
+  // surprised by it.
   _emitBackground(effectId, reason) {
     const reverted = reason !== "user";
     this.dispatchEvent(new CustomEvent("background-changed", { detail: { effectId, reverted, reason } }));

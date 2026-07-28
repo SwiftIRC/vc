@@ -291,9 +291,11 @@ gzip`. Notes:
 - This path uses `io.Copy` rather than `http.ServeContent`: byte ranges over a
   content-encoded body are more trouble than they are worth here, so `Accept-Ranges`
   is not advertised for it.
-- A client that does not send `Accept-Encoding: gzip` falls through to the
-  existing uncompressed path, so behaviour is unchanged when the `.gz` is absent
-  or unwanted.
+- A client that does not send `Accept-Encoding: gzip` is not served the raw file
+  from a fallback path — the raw file is not embedded at all, so that would be a
+  404. `serveEmbeddedGzip` decompresses the stored `.gz` on the fly instead and
+  serves that, so behaviour is unchanged (a correct, uncompressed response) for a
+  client that cannot or will not accept gzip.
 - `http.ServeContent` already returns `application/wasm` for `.wasm` (verified),
   and `.tflite` has no registered MIME type so it is sniffed as
   `application/octet-stream` — correct, since MediaPipe fetches it as an
@@ -329,6 +331,79 @@ Segmentation quality (hair edges, low light, glasses), and the mobile thermal
 behaviour the watchdog exists to catch, cannot be verified from the test suite.
 A MANUAL-TEST.md section covers both, following the precedent set by the iOS call
 sounds work.
+
+## Mechanisms added during implementation
+
+The four items below were not anticipated by the design above. Each is now
+load-bearing — removing it reintroduces a real defect — but none has a design
+record anywhere else, so it goes here rather than staying implicit in code
+comments.
+
+**The `holdVideo` / `_heldVideo` withheld-announcement protocol
+(`net/media.js`).** This spec's own goal — "degrade honestly," and more
+pointedly the privacy motivation for the whole feature — turns out to require
+withholding an announcement, not just making one. Several paths rebuild the
+pipeline on a live call: a mid-call camera switch (`useDevices`), turning the
+camera back on with an effect already chosen (`enableCamera`), and — as of the
+F1 fix below — the very first publish on join. In every one of these, the raw
+device track becomes briefly current in `media.stream` before the rebuilt
+composite replaces it, and the natural `camera-track` announcement for that raw
+track would show remote peers the exact room the user turned an effect on to
+hide. `holdVideo` (an option to `_adopt`/`_swapTrack`, media.js:785,797)
+substitutes `{track: null}` for that one announcement instead, and sets
+`_heldVideo` so the substitution is remembered as a debt, not just a courtesy
+null. `_releaseHeldVideo` (media.js:762) pays that debt with whatever is
+actually in `stream` by the time the triggering build reaches a final state
+(commit, cancel, or failure) — every such path is required to call it, or a
+remote peer would stay pinned to camera-off forever despite a live track being
+sent nowhere. The join-time case added by finding F1 (`app.js`'s initial
+publish skipping the camera while `media.backgroundPending` is true, gated
+through a new `Media.backgroundPending` getter) is the same protocol applied to
+one more caller: the lobby's saved-background restore is deliberately
+unawaited (see [Persistence](#persistence)), so a fast Join click can otherwise
+land before the composite exists.
+
+**`_swapTrack` emitting `background-changed {reason: "failed"}` on a raced
+device switch (`net/media.js:797`, around the `_teardownBackground({emit:
+false})` call).** `_swapTrack` is the low-level track-replacement primitive
+underneath `_adopt`; it can be reached by a device switch's own rebuild logic
+losing a race to a DIFFERENT call's rebuild that commits first. When that
+happens the first call's bookkeeping (`_bgEffect`) is stale: it still names the
+dropped effect while `_segmenter` is now null and the raw camera is what's
+actually published. Without this emit, the picker chip keeps showing the old
+effect selected — the same "chip lies" failure mode that F2/F3 fixes on the
+restore path, but here from a completely different race. `_swapTrack` corrects
+`_bgEffect` to `"none"` and emits the same event `setBackground`'s own failure
+path emits, so the picker's existing listener repaints the chip and shows the
+same notice a build failure would.
+
+**Watchdog verdicts suppressed while `document.hidden`, all three clocks
+re-armed on wake (`lib/segmenter.js`).** This refines rather than contradicts
+the [Accepted regression: backgrounded tabs](#accepted-regression-backgrounded-tabs)
+section above. That section is still accurate about frames freezing in a
+hidden tab; what it does not anticipate is what the watchdog should conclude
+from a frozen frame rate. `rAF`/`rVFC` stalling in the background would read,
+to `fpsGuard`, as the device failing to keep up — and trip a revert the user
+never asked for and would not observe until switching back to a tab that has
+silently lost its effect. `segmenter.js` checks `document.hidden` before
+acting on a guard verdict (segmenter.js:168,495) and, on `visibilitychange`
+waking back up, re-arms all three clocks the guard's trip decision depends on
+together — the guard's own `push()`-driven window, the "zero frames ever"
+wall-clock fallback, and the first-frame timestamp — so a genuinely struggling
+device still gets a fair, freshly-timed trial after the tab regains focus
+rather than being judged on stale pre-hidden timings (segmenter.js:195-210).
+
+**ETag/304 revalidation on gzip-served assets (`internal/server/static.go`,
+`serveEmbeddedGzip`).** `embed.FS` reports a zero modtime for every file, which
+defeats the timestamp-based conditional-GET machinery `http.ServeContent`
+otherwise gets for free (see the file-level comment at static.go:20-23) — every
+load would re-fetch the ~3.4 MB runtime with no way for the browser to ask "has
+this changed?". `serveEmbeddedGzip` sets an explicit `ETag` derived from
+`assetsVersion` (itself a content hash of the whole embedded asset set, so it
+changes exactly when the bytes do) and answers a matching `If-None-Match` with
+a bare 304. This is what makes the "immutable" caching story in
+[Pre-compressed serving](#pre-compressed-serving) actually work for the
+MediaPipe assets specifically, rather than only for version-stamped URLs.
 
 ## Risks
 
