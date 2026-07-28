@@ -535,12 +535,42 @@ export class Media extends EventTarget {
     return this._bgEffect;
   }
 
-  // True while a background build is in flight. Callers that are about to PUBLISH
-  // the camera use this to hold off: during a build `cameraTrack` is still the raw
-  // device track, and publishing it would show remote peers the very room the user
-  // turned an effect on to hide.
+  // True while a background build is in flight. Exposed for callers that only need
+  // to KNOW, not withhold — e.g. deciding whether to show a "starting…" state.
+  // A caller about to PUBLISH the camera must use holdCameraForBackground() below
+  // instead: checking this getter and withholding on your own account creates an
+  // unrecorded debt that nothing is obliged to pay off.
   get backgroundPending() {
     return this._bgPending !== null;
+  }
+
+  // Called by a caller that is about to publish the camera and wants to withhold
+  // it while a background build is in flight — today, only the join-time initial
+  // publish in app.js, since a fast Join click can land before the lobby's
+  // saved-background restore (which does not await) has produced a composite.
+  // Returns true (and withholds is the caller's job) when there is a build to wait
+  // for; false when there is nothing pending, i.e. cameraTrack is already safe to
+  // publish as-is.
+  //
+  // This is NOT a courtesy check — it RECORDS the withhold as `_heldVideo`, the
+  // same flag `_adopt`'s `holdVideo` option sets (see the constructor comment and
+  // _releaseHeldVideo). That recording is what makes the withhold safe: every
+  // terminal path the in-flight build can take — commit (_buildBackground releases
+  // inline), failure (setBackground's catch calls _releaseHeldVideo), and cancel to
+  // "none" mid-build (setBackground's `wanted === "none"` branch calls it too) —
+  // already calls _releaseHeldVideo unconditionally, so recording the hold here is
+  // enough to guarantee a `camera-track` eventually fires with whatever is actually
+  // in `stream`. A build merely SUPERSEDED by another effect deliberately does NOT
+  // release here (see _releaseHeldVideo's own comment) — the superseding call
+  // becomes the new final word and inherits the same obligation. Without recording
+  // the hold, none of that machinery ever runs: a caller that withholds on its own
+  // reading of backgroundPending is gambling that some OTHER path happens to
+  // publish the camera later, and on a build failure nothing does — the camera
+  // goes unpublished for the rest of the call.
+  holdCameraForBackground() {
+    if (!this.backgroundPending) return false;
+    this._heldVideo = true;
+    return true;
   }
 
   // Apply a background effect, replacing whatever was in force. Returns the effect

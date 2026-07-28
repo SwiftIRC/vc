@@ -386,12 +386,12 @@ from a frozen frame rate. `rAF`/`rVFC` stalling in the background would read,
 to `fpsGuard`, as the device failing to keep up — and trip a revert the user
 never asked for and would not observe until switching back to a tab that has
 silently lost its effect. `segmenter.js` checks `document.hidden` before
-acting on a guard verdict (segmenter.js:168,495) and, on `visibilitychange`
+acting on a guard verdict (segmenter.js:495, inside `_tickGuard`) and, on `visibilitychange`
 waking back up, re-arms all three clocks the guard's trip decision depends on
 together — the guard's own `push()`-driven window, the "zero frames ever"
 wall-clock fallback, and the first-frame timestamp — so a genuinely struggling
 device still gets a fair, freshly-timed trial after the tab regains focus
-rather than being judged on stale pre-hidden timings (segmenter.js:195-210).
+rather than being judged on stale pre-hidden timings (segmenter.js:167-171).
 
 **ETag/304 revalidation on gzip-served assets (`internal/server/static.go`,
 `serveEmbeddedGzip`).** `embed.FS` reports a zero modtime for every file, which
