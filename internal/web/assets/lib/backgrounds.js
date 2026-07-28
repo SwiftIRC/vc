@@ -64,7 +64,11 @@ export function paintDusk(ctx, w, h) {
 export function paintGrid(ctx, w, h) {
   fill(ctx, w, h, "#14161a"); // --bg
   if (w <= 0 || h <= 0) return; // Degenerate frame: skip the dot grid
-  const pitch = Math.max(4, w / 24); // Floor to prevent pathological density at very small widths
+  // Pitch is floored to Math.max(4, w / 24) to prevent pathological call counts
+  // (w=1 would generate ~1.7M draw calls). This means narrow frames (< 96px wide)
+  // show a sparser grid than the design intent: a 48×27 thumbnail gets 84 dots
+  // instead of 312. The trade-off is load-bearing against render hangs.
+  const pitch = Math.max(4, w / 24);
   const r = Math.max(0.5, pitch * 0.06);
   ctx.fillStyle = "rgba(76, 141, 255, 0.22)"; // --accent, well faded
   for (let y = pitch / 2; y < h; y += pitch) {
