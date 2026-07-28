@@ -1,9 +1,11 @@
 package server
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -193,4 +195,83 @@ func TestStaticDoesNotShadowRoutes(t *testing.T) {
 	c := dialRoom(t, srv, "lobby")
 	send(t, c, map[string]any{"type": "join", "name": "alice"})
 	recv(t, c, "joined")
+}
+
+// A gzip-only embedded asset must reach the browser under its REAL name and type.
+// Content-Type from ".gz" would be application/gzip, which makes the browser
+// refuse to compile the WebAssembly module — the whole point of this path.
+func TestServesGzipEmbeddedAssetToGzipClient(t *testing.T) {
+	h, _ := newTestHub(t, "", true)
+	req := httptest.NewRequest(http.MethodGet, "/vendor/mediapipe/vision_wasm_internal.wasm", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.handleStatic(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("Content-Encoding = %q, want gzip", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/wasm" {
+		t.Errorf("Content-Type = %q, want application/wasm", got)
+	}
+	if got := rec.Header().Get("Vary"); !strings.Contains(got, "Accept-Encoding") {
+		t.Errorf("Vary = %q, want it to contain Accept-Encoding", got)
+	}
+	zr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatalf("body is not gzip: %v", err)
+	}
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(zr, magic); err != nil {
+		t.Fatalf("read magic: %v", err)
+	}
+	if string(magic) != "\x00asm" {
+		t.Errorf("decompressed magic = %q, want \\x00asm", magic)
+	}
+}
+
+// A client that does not advertise gzip still gets a usable asset: we decompress
+// on the fly rather than 406, so curl and any encoding-stripping proxy work.
+func TestServesGzipEmbeddedAssetDecompressedWhenNotAccepted(t *testing.T) {
+	h, _ := newTestHub(t, "", true)
+	req := httptest.NewRequest(http.MethodGet, "/vendor/mediapipe/vision_wasm_internal.wasm", nil)
+	req.Header.Set("Accept-Encoding", "identity")
+	rec := httptest.NewRecorder()
+	h.handleStatic(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "" {
+		t.Errorf("Content-Encoding = %q, want empty", got)
+	}
+	if got := rec.Body.Bytes(); len(got) < 4 || string(got[:4]) != "\x00asm" {
+		t.Errorf("body does not start with WASM magic")
+	}
+}
+
+// embed.FS reports a zero modtime, so without an explicit validator a 3.4MB
+// runtime would be re-downloaded on every page load (Cache-Control: no-cache
+// means "revalidate", not "do not store").
+func TestGzipEmbeddedAssetRevalidatesWithETag(t *testing.T) {
+	h, _ := newTestHub(t, "", true)
+	req := httptest.NewRequest(http.MethodGet, "/vendor/mediapipe/vision_wasm_internal.wasm", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	h.handleStatic(rec, req)
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag on a gzip-embedded asset")
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/vendor/mediapipe/vision_wasm_internal.wasm", nil)
+	req2.Header.Set("Accept-Encoding", "gzip")
+	req2.Header.Set("If-None-Match", etag)
+	rec2 := httptest.NewRecorder()
+	h.handleStatic(rec2, req2)
+	if rec2.Code != http.StatusNotModified {
+		t.Errorf("status = %d, want 304", rec2.Code)
+	}
 }

@@ -2,12 +2,15 @@ package server
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -97,6 +100,74 @@ func splitVersioned(p string) (assetPath string, versioned, current bool) {
 	return assetPath, true, version == assetsVersion
 }
 
+// acceptsGzip reports whether the client advertised gzip in Accept-Encoding.
+// A token scan is enough: gzip is the only encoding we ever offer, so there is
+// nothing to rank, and an explicit "gzip;q=0" refusal only costs that client a
+// decompression we do for them anyway.
+func acceptsGzip(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		name, _, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if name == "gzip" {
+			return true
+		}
+	}
+	return false
+}
+
+// serveEmbeddedGzip serves an asset that is embedded ONLY in gzipped form
+// (p+".gz"). It exists so ~12MB of MediaPipe WASM can ship as ~3.4MB: storing it
+// raw would grow the binary by 65% instead of 20%.
+//
+// Clients that accept gzip get the stored bytes verbatim; anything else gets them
+// decompressed on the fly. Reports whether it handled the request.
+//
+// Two things this deliberately does NOT do:
+//   - Derive Content-Type from ".gz". A browser told application/gzip refuses to
+//     compile a WebAssembly module. The type always comes from the ORIGINAL name.
+//   - Use http.ServeContent. It would advertise byte ranges against the COMPRESSED
+//     bytes while the client sees a decompressed body, so ranges are not offered.
+func serveEmbeddedGzip(w http.ResponseWriter, r *http.Request, p string) bool {
+	f, err := web.Assets.Open(p + ".gz")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	ctype := mime.TypeByExtension(path.Ext(p))
+	if ctype == "" {
+		// .tflite has no registered type; octet-stream is correct — MediaPipe
+		// fetches the model as an ArrayBuffer and never sniffs it.
+		ctype = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ctype)
+	// A shared cache must not hand a gzipped body to a client that did not ask.
+	w.Header().Set("Vary", "Accept-Encoding")
+
+	// embed.FS has a zero modtime, so revalidation needs an explicit validator or
+	// the runtime is re-fetched on every page load. assetsVersion is derived from
+	// asset CONTENTS, so it changes exactly when the bytes do.
+	etag := `"` + assetsVersion + `"`
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+
+	if acceptsGzip(r) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = io.Copy(w, f)
+		return true
+	}
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		http.Error(w, "corrupt asset", http.StatusInternalServerError)
+		return true
+	}
+	defer zr.Close()
+	_, _ = io.Copy(w, zr)
+	return true
+}
+
 // handleStatic serves an embedded asset, or the SPA shell (index.html) for the
 // app root and room paths. A request that names a real embedded file (e.g.
 // /app.js, /style.css, or its version-stamped /v/<version>/app.js form) is served
@@ -107,6 +178,21 @@ func (h *Hub) handleStatic(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/")
 	p, versioned, current := splitVersioned(p)
 	if p != "" {
+		// A current-version URL names exactly one build's bytes, so it can be
+		// cached hard — that URL never changes meaning. Everything else
+		// revalidates: 304 within a run, 200 after a redeploy.
+		cache := "no-cache"
+		if versioned && current {
+			cache = "public, max-age=31536000, immutable"
+		}
+		// Some assets (the MediaPipe runtime) are embedded ONLY gzipped. Try that
+		// form before the plain one, since the plain one does not exist for them.
+		if _, err := fs.Stat(web.Assets, p+".gz"); err == nil {
+			w.Header().Set("Cache-Control", cache)
+			if serveEmbeddedGzip(w, r, p) {
+				return
+			}
+		}
 		// fs.Stat validates the path (rejecting "..") and tells a real asset
 		// apart from a room slug. Directories fall through to the shell.
 		if f, err := fs.Stat(web.Assets, p); err == nil && !f.IsDir() {
@@ -117,14 +203,7 @@ func (h *Hub) handleStatic(w http.ResponseWriter, r *http.Request) {
 				// Content-Type from the extension and handles Range + conditional
 				// requests against startTime.
 				if rs, ok := file.(io.ReadSeeker); ok {
-					// A current-version URL names exactly one build's bytes, so it can be
-					// cached hard — that URL never changes meaning. Everything else
-					// revalidates: 304 within a run, 200 after a redeploy.
-					if versioned && current {
-						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-					} else {
-						w.Header().Set("Cache-Control", "no-cache")
-					}
+					w.Header().Set("Cache-Control", cache)
 					http.ServeContent(w, r, p, startTime, rs)
 					return
 				}
