@@ -146,7 +146,18 @@ export class Prejoin {
     const background = resolveEffectId(prefs.background);
     if (background !== "none") {
       this.backgroundPicker.select(background); // reflect it immediately; the build is async
-      await this.media.setBackground(background).catch(() => {
+      // Deliberately NOT awaited. mount() gates the mic/camera toggles' first
+      // interactive state and the occupancy poll behind this method returning, and
+      // a first-use background build loads the ~3.4MB MediaPipe runtime — multiple
+      // seconds on a slow connection. Blocking the whole lobby on that download would
+      // freeze the toggle buttons and the "… in call" count for exactly the returning
+      // user this feature is for. Let it settle in the background instead: Media
+      // emits its own "error" event and degrades to "none" on failure, and the
+      // picker's own "background-changed" listener reflects whatever the outcome is
+      // (including a watchdog revert) whenever it lands — independently of whether
+      // this method, or even this Prejoin instance, is still around by then. Someone
+      // will be tempted to put the `await` back for tidiness: don't.
+      this.media.setBackground(background).catch(() => {
         /* Media emits its own error and degrades to "none"; the picker follows
            via the background-changed event */
       });
