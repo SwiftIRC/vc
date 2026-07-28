@@ -74,6 +74,12 @@ export class Media extends EventTarget {
     // null when idle. Exists so setBackground("none") can cancel an in-flight
     // build instead of no-op'ing — _bgEffect alone can't tell "at rest" from
     // "mid-build", since it only updates on commit.
+    this._heldVideo = false; // a video camera-track announcement was withheld
+    // (holdVideo) on the assumption a real one would follow shortly. MUST be
+    // released — with whatever is actually in `stream` — on every path that is
+    // the final word for the build that set it, or remote peers are pinned to
+    // {track:null} forever even though a live device track is being sent
+    // nowhere. See _releaseHeldVideo.
   }
 
   // Current local tracks, or null when not captured / removed. Getters read the
@@ -177,8 +183,13 @@ export class Media extends EventTarget {
       // show remote peers the very room this effect exists to hide, for as long
       // as device acquisition and the model reload take (I6) — briefly showing
       // nothing is strictly better than briefly showing the room.
+      //
+      // This IS a withheld announcement (not just a courtesy null), and MUST be
+      // marked as such: if getUserMedia fails below, nothing else will ever
+      // correct it (H2) — _releaseHeldVideo in the catch block is what does.
       this._teardownBackground({ emit: false });
       this._bgEffect = "none";
+      this._heldVideo = true;
       this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: null } }));
     }
     const wasMuted = rebuildNs && this._processedTrack ? !this._processedTrack.enabled : false;
@@ -189,7 +200,14 @@ export class Media extends EventTarget {
       // I4: a failed device switch must not silently drop the effect with no
       // event — without this the picker keeps showing the old chip selected
       // while the room is, in fact, unblurred (or off, per the emit above).
-      if (rebuildBg) this._emitBackground("none", "failed");
+      // H2: and the withheld camera-track above must be released with the OLD
+      // raw device (still live, folded back into `stream` by the teardown
+      // above) — without this, remote peers are pinned to {track:null} forever
+      // even though a live camera is being sent nowhere.
+      if (rebuildBg) {
+        this._releaseHeldVideo();
+        this._emitBackground("none", "failed");
+      }
       throw error;
     }
     // _adopt swaps the raw device tracks and emits camera-track; it emits mic-track too
@@ -550,6 +568,12 @@ export class Media extends EventTarget {
     if (wanted === "none") {
       this._teardownBackground();
       this._bgEffect = "none";
+      // H1/H5: cancelling to "none" can be the FINAL word for a build that
+      // started under a hold (I7 makes this reachable — cancelling a pending
+      // rebuild before it ever commits a segmenter, so _teardownBackground
+      // above is a no-op and emits nothing itself). Release it now or remote
+      // peers are pinned to the {track:null} substitute forever.
+      this._releaseHeldVideo();
       this._emitBackground("none", "user");
       return "none";
     }
@@ -577,13 +601,12 @@ export class Media extends EventTarget {
       // video track because an effect failed to load.
       this._teardownBackground();
       this._bgEffect = "none";
-      // The raw track's announcement may have been withheld by a caller (see
-      // enableCamera/useDevices' `holdVideo`) on the assumption the composite
-      // would replace it a moment later. It didn't: announce the raw track now
-      // so remote peers learn about it at all, rather than being stuck on the
-      // {track:null} substitute forever.
-      const raw = this.cameraTrack;
-      if (raw) this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: raw } }));
+      // H4: this build's own announcement may have been withheld by a caller
+      // (see enableCamera/useDevices' `holdVideo`) on the assumption the
+      // composite would replace it a moment later. It didn't: release the hold
+      // now so remote peers learn about the raw track, rather than being stuck
+      // on the {track:null} substitute forever. A no-op when nothing was held.
+      this._releaseHeldVideo();
       this._emitError(error, "background");
       this._emitBackground("none", "failed");
       return "none";
@@ -647,6 +670,9 @@ export class Media extends EventTarget {
     const current = this.stream.getVideoTracks()[0] || null;
     if (current && current !== processed) this.stream.removeTrack(current);
     this.stream.addTrack(processed);
+    // This IS the release of any hold this build started under: a real
+    // announcement just fired, so there is nothing left to correct later.
+    this._heldVideo = false;
     this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: processed } }));
     return true;
   }
@@ -703,6 +729,26 @@ export class Media extends EventTarget {
     this.dispatchEvent(new CustomEvent("background-changed", { detail: { effectId, reverted, reason } }));
   }
 
+  // Release a video announcement withheld by `holdVideo` (I6), announcing
+  // whatever is ACTUALLY in `stream` right now — the composite, the raw
+  // device, or null. A no-op when nothing is currently held.
+  //
+  // This must be called from every path that is the FINAL WORD for a build
+  // that started under a hold: a genuine pipeline failure (H4), and cancelling
+  // back to "none" (H1/H5, in setBackground and useDevices respectively). A
+  // successful commit releases inline (see _buildBackground) rather than
+  // through here, since its own "here's the composite" emit already IS the
+  // release. Deliberately NOT called when a build is merely SUPERSEDED by
+  // ANOTHER effect build (H3) or abandoned because its device died — in both
+  // cases a different in-flight (or already-fired) call is the new final word
+  // and will release the hold itself; calling this there would emit a spurious
+  // intermediate announcement moments before the real one.
+  _releaseHeldVideo() {
+    if (!this._heldVideo) return;
+    this._heldVideo = false;
+    this.dispatchEvent(new CustomEvent("camera-track", { detail: { track: this.cameraTrack } }));
+  }
+
   // --- internals ---
 
   async _getUserMedia(constraints) {
@@ -744,7 +790,19 @@ export class Media extends EventTarget {
     // its own event below — folds the parked track back into `stream` as
     // `prev`, so the ordinary swap logic beneath stops it like any other
     // replaced track. No effect running means this is a no-op.
-    if (isVideo && this._segmenter) this._teardownBackground({ emit: false });
+    if (isVideo && this._segmenter) {
+      this._teardownBackground({ emit: false });
+      // Q: this can be the ONLY place a committed effect ever gets torn down —
+      // a device switch that raced past a rebuild without itself knowing an
+      // effect was active (useDevices' own top-level rebuildBg bookkeeping
+      // only sees `_bgEffect` at ITS OWN call time; a DIFFERENT call's rebuild
+      // can commit one after that). Without this, `_bgEffect` keeps reporting
+      // the dropped effect (e.g. "blur") with `_segmenter` now null and the
+      // raw camera published — the picker shows the chip selected while the
+      // room is, in fact, unblurred, and nothing ever fires to correct it.
+      this._bgEffect = "none";
+      this._emitBackground("none", "failed");
+    }
     const prev = (isVideo ? this.stream.getVideoTracks() : this.stream.getAudioTracks())[0] || null;
     if (prev === next) return;
     if (prev) {
@@ -763,7 +821,9 @@ export class Media extends EventTarget {
     // so this only suppresses the emit during an in-call mic switch.)
     if (!isVideo && this._nsOn) return;
     const event = isVideo ? "camera-track" : "mic-track";
-    const track = isVideo && holdVideo ? null : next;
+    const held = isVideo && holdVideo;
+    if (held) this._heldVideo = true; // must be released — see _releaseHeldVideo
+    const track = held ? null : next;
     this.dispatchEvent(new CustomEvent(event, { detail: { track } }));
   }
 
