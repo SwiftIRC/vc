@@ -11,6 +11,8 @@
 
 import { loadMediaPrefs, saveMediaPrefs, loadName, saveName } from "../lib/prefs.js";
 import { applyAvatar, gravatarHash } from "../lib/avatar.js";
+import { BackgroundPicker } from "./background.js";
+import { resolveEffectId } from "../lib/backgrounds.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -139,6 +141,16 @@ export class Prejoin {
     if (prefs.camera !== true && this.media.cameraTrack) {
       this.media.disableCamera(); // release the camera
     }
+    // Restore the saved background. Only meaningful with a live camera; with the
+    // camera off, Media records the choice and applies it on the next enable.
+    const background = resolveEffectId(prefs.background);
+    if (background !== "none") {
+      this.backgroundPicker.select(background); // reflect it immediately; the build is async
+      await this.media.setBackground(background).catch(() => {
+        /* Media emits its own error and degrades to "none"; the picker follows
+           via the background-changed event */
+      });
+    }
   }
 
   _build() {
@@ -218,6 +230,18 @@ export class Prejoin {
 
     this.joinButton = el("button", { class: "join", type: "button", onClick: () => this._submit() }, "Join");
 
+    // Background effects. A reverted choice (the watchdog gave up) must NOT be
+    // persisted: writing "none" would be read back forever as a deliberate
+    // preference, and a device that overheated once would silently lose the
+    // feature for good. This is the same reasoning as the noise-suppression
+    // persistence rule in controls.js.
+    this.backgroundPicker = new BackgroundPicker({
+      media: this.media,
+      onChange: (effectId, reverted) => {
+        if (!reverted) saveMediaPrefs({ background: effectId });
+      },
+    });
+
     const form = el(
       "div",
       { class: "prejoin" },
@@ -229,6 +253,7 @@ export class Prejoin {
         el("label", { class: "field" }, el("span", { text: "Camera" }), this.cameraSelect),
         el("label", { class: "field" }, el("span", { text: "Microphone" }), this.micSelect),
       ),
+      el("div", { class: "field" }, el("span", { text: "Background" }), this.backgroundPicker.el),
       el("label", { class: "field" }, el("span", { text: "Display name" }), this.nameInput),
       el("label", { class: "field" }, el("span", { text: "Gravatar email" }), this.emailInput),
       this.passwordField,
@@ -444,6 +469,7 @@ export class Prejoin {
     }
     clearTimeout(this._emailTimer);
     if (this.video) this.video.srcObject = null;
+    if (this.backgroundPicker) this.backgroundPicker.destroy();
     this.root.replaceChildren();
   }
 }

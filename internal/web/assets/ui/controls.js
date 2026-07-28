@@ -28,6 +28,7 @@ import { QUALITY_TIERS } from "../lib/quality.js";
 import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS, EYE_PATHS, EYE_OFF_PATHS, SPEAKER_PATHS, SPEAKER_OFF_PATHS } from "../lib/icons.js";
 import { confirmDialog } from "../lib/confirm.js";
 import { primeAudio, unlockSounds } from "../lib/sounds.js";
+import { BackgroundPicker } from "./background.js";
 
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
 // sets textContent, so any caller string is inert markup-wise.
@@ -386,12 +387,24 @@ export class Controls {
         else if (e.key === "Escape") { e.preventDefault(); this._closeMenus(); }
       },
     });
+    // Background effects, compact variant so the popover stays a sane width. A
+    // watchdog revert is never persisted — see the same rule on the denoise
+    // toggle below: writing a state the user did not choose means reading it back
+    // forever as though they had.
+    this.backgroundPicker = new BackgroundPicker({
+      media: this.media,
+      compact: true,
+      onChange: (effectId, reverted) => {
+        if (!reverted) saveMediaPrefs({ background: effectId });
+      },
+    });
     this.settingsMenu = el(
       "div",
       { class: "share-menu settings-menu", hidden: true },
       this._settingsRow("Name", this.renameInput),
       this._settingsRow("Hide self", this.hideSelfBtn),
       this._settingsRow("Noise suppression", this.nsBtn),
+      this._settingsRow("Background", this.backgroundPicker.el),
       this._settingsRow("Data saver", this.lowBwBtn),
       this._settingsRow("Columns", this.colsSeg),
     );
@@ -1199,6 +1212,7 @@ export class Controls {
   // Detach Media + activity listeners and cancel the idle timer. After this the
   // control bar drives nothing and holds no timers.
   destroy() {
+    if (this.backgroundPicker) this.backgroundPicker.destroy();
     if (this.media) {
       this.media.removeEventListener("screen-start", this._onScreenStart);
       this.media.removeEventListener("screen-stop", this._onScreenStop);
