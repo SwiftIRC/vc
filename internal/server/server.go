@@ -275,7 +275,7 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 		switch m := v.(type) {
 		case *signal.Leave:
 			return
-		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.SetQuality, *signal.Countdown, *signal.MediaState, *signal.Rename:
+		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.SetQuality, *signal.Countdown, *signal.MediaState, *signal.Rename, *signal.CreatePoll, *signal.Vote, *signal.ClosePoll:
 			h.dispatch(rm, p, m)
 		case *signal.Offer:
 			if err := mp.HandleOffer(m.SDP, m.Kinds); err != nil {
@@ -343,6 +343,14 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 			h.log.Debug("countdown refused", "from", p.ID, "action", m.Action, "err", err)
 		}
 		return
+	case *signal.Vote:
+		// Refusals are deliberately silent, for the same reason countdown's are: a
+		// stale card or a lost race self-heals on the next broadcast, and an "error"
+		// frame would be treated by the in-call client as a terminal join error.
+		if err := rm.Vote(p.ID, m.PollID, m.Choice); err != nil {
+			h.log.Debug("vote refused", "from", p.ID, "poll", m.PollID, "err", err)
+		}
+		return
 	case *signal.MediaState:
 		// A participant's own mic/camera state changed (or its initial post-join
 		// assertion). Store it and fan it out so remote mute indicators are correct.
@@ -367,6 +375,10 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 		err = rm.GrantOp(p.ID, m.ID)
 	case *signal.SetQuality:
 		err = rm.SetQuality(p.ID, m.Target, m.Tier)
+	case *signal.CreatePoll:
+		err = rm.CreatePoll(p.ID, m.Question, m.Options)
+	case *signal.ClosePoll:
+		err = rm.ClosePoll(p.ID, m.PollID)
 	default:
 		return
 	}

@@ -1,8 +1,12 @@
 package server
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/ryanwohara/webrtc-chat/internal/token"
 )
 
@@ -163,5 +167,96 @@ func TestOversizedChatDropped(t *testing.T) {
 	send(t, a, map[string]any{"type": "chat", "text": "small"})
 	if m := recv(t, a, "chat"); m["text"] != "small" {
 		t.Errorf("oversized chat was not dropped: %v", m["text"])
+	}
+}
+
+// recvBefore reads frames in order until wantType, failing if rejectType shows up
+// first. recv() alone cannot express "no error frame" because it skips past anything
+// that is not the type it was asked for.
+func recvBefore(t *testing.T, c *websocket.Conn, wantType, rejectType string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		var m map[string]any
+		err := wsjson.Read(ctx, c, &m)
+		cancel()
+		if err != nil {
+			t.Fatalf("waiting for %q: %v", wantType, err)
+		}
+		if m["type"] == rejectType {
+			t.Fatalf("got a %q frame before %q: %v", rejectType, wantType, m)
+		}
+		if m["type"] == wantType {
+			return m
+		}
+	}
+	t.Fatalf("no %q frame before deadline", wantType)
+	return nil
+}
+
+func TestPollOverWS(t *testing.T) {
+	_, srv := newTestHub(t, testSecret, false)
+	op := dialRoom(t, srv, "swift")
+	send(t, op, map[string]any{"type": "join", "token": opToken(t, "swift", 0)})
+	recv(t, op, "joined")
+	guest := dialRoom(t, srv, "swift")
+	send(t, guest, map[string]any{"type": "join", "name": "voter"})
+	recv(t, guest, "joined")
+
+	// A guest cannot create: the refusal is private to them, like the other
+	// moderation commands.
+	send(t, guest, map[string]any{"type": "create-poll", "question": "Ship it?", "options": []string{"Yes", "No"}})
+	if e := recv(t, guest, "error"); e["code"] != "not-op" {
+		t.Errorf("code = %v, want not-op", e["code"])
+	}
+
+	// The op creates: both see the poll open, and the feed narrates it.
+	send(t, op, map[string]any{"type": "create-poll", "question": "Ship it?", "options": []string{"Yes", "No"}})
+	opened := recv(t, guest, "poll")
+	if opened["action"] != "open" || opened["question"] != "Ship it?" {
+		t.Fatalf("open = %v", opened)
+	}
+	if m := recv(t, op, "moderation"); m["action"] != "poll-open" {
+		t.Errorf("feed = %v", m)
+	}
+	pollID, _ := opened["id"].(string)
+
+	// The guest votes; everyone sees the tally move.
+	send(t, guest, map[string]any{"type": "vote", "pollId": pollID, "choice": 0})
+	updated := recv(t, op, "poll")
+	tallies, _ := updated["tallies"].([]any)
+	if updated["action"] != "update" || len(tallies) != 2 || tallies[0].(float64) != 1 {
+		t.Fatalf("update = %v", updated)
+	}
+
+	// A guest cannot close.
+	send(t, guest, map[string]any{"type": "close-poll", "pollId": pollID})
+	if e := recv(t, guest, "error"); e["code"] != "not-op" {
+		t.Errorf("close code = %v, want not-op", e["code"])
+	}
+
+	// The op can.
+	send(t, op, map[string]any{"type": "close-poll", "pollId": pollID})
+	closed := recv(t, guest, "poll")
+	if closed["action"] != "close" || closed["open"] != false {
+		t.Fatalf("close = %v", closed)
+	}
+}
+
+// A refused vote must stay silent: an "error" frame is treated by the in-call client
+// as a terminal join error, so a stale card would eject the user from the call.
+func TestRefusedVoteSendsNoErrorFrame(t *testing.T) {
+	_, srv := newTestHub(t, testSecret, true)
+	c := dialRoom(t, srv, "quiet")
+	send(t, c, map[string]any{"type": "join", "name": "voter"})
+	recv(t, c, "joined")
+
+	send(t, c, map[string]any{"type": "vote", "pollId": "no-such-poll", "choice": 0})
+	// Chat after it: the chat echo proves the socket is still being served, and
+	// recvBefore fails if an error frame arrives first.
+	send(t, c, map[string]any{"type": "chat", "text": "still here"})
+	if m := recvBefore(t, c, "chat", "error"); m["text"] != "still here" {
+		t.Fatalf("chat = %v", m)
 	}
 }
