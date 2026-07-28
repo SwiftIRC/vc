@@ -531,6 +531,14 @@ export class Media extends EventTarget {
     return this._bgEffect;
   }
 
+  // True while a background build is in flight. Callers that are about to PUBLISH
+  // the camera use this to hold off: during a build `cameraTrack` is still the raw
+  // device track, and publishing it would show remote peers the very room the user
+  // turned an effect on to hide.
+  get backgroundPending() {
+    return this._bgPending !== null;
+  }
+
   // Apply a background effect, replacing whatever was in force. Returns the effect
   // ACTUALLY in force afterwards, so a caller that asked for "aurora" and got
   // "none" back knows the pipeline failed to build and can reflect that.

@@ -462,7 +462,18 @@ function wirePeerAndStart() {
   if (lowBandwidth && signaling) signaling.send("set-receive-video", { enabled: false });
 
   const localTracks = [];
-  if (media && media.cameraTrack) localTracks.push({ track: media.cameraTrack, kind: "camera" });
+  // Skip the camera while a background build is pending: cameraTrack is still the
+  // RAW device track until the build commits (setBackground swaps the composite in
+  // only on success), so publishing it here — the lobby's saved-background restore
+  // deliberately does not await that build, see prejoin.js — would show every
+  // remote peer the exact room the user turned an effect on to hide, for as long as
+  // the ~3.4 MB MediaPipe download + model warm-up takes. The camera-track listener
+  // above publishes the composite itself once the build fires it (or publishes the
+  // raw camera if the build fails); until then remote peers see camera-off, the same
+  // trade already made in enableCamera and useDevices. Consequence: joinMediaState()
+  // reports camera:true for those seconds — consistent with every other withheld-
+  // announcement path today (see media.js's holdVideo/_heldVideo).
+  if (media && media.cameraTrack && !media.backgroundPending) localTracks.push({ track: media.cameraTrack, kind: "camera" });
   if (media && media.micTrack) localTracks.push({ track: media.micTrack, kind: "mic" });
   // Re-publish an in-progress screenshare too, so a reconnect mid-share keeps sharing.
   if (media && media.screenTrack) localTracks.push({ track: media.screenTrack, kind: "screen" });
