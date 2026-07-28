@@ -21,6 +21,21 @@ func lastPoll(c *fakeConn) (signal.PollEvent, bool) {
 	return signal.PollEvent{}, false
 }
 
+// countPollEvents counts every PollEvent a fakeConn received, matching countRenamed
+// in rename_test.go — needed because lastPoll alone can't prove a SECOND broadcast
+// never happened (the "last" one could just be the first, seen twice by coincidence).
+func countPollEvents(c *fakeConn) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, m := range c.msgs {
+		if _, ok := m.(signal.PollEvent); ok {
+			n++
+		}
+	}
+	return n
+}
+
 // joinWithRef joins a participant carrying an explicit session ref, which member()
 // does not set. Used for the reconnect tests, where the ref is the whole point.
 func joinWithRef(t *testing.T, r *Room, id, name, ref string) (*Participant, *fakeConn) {
@@ -93,6 +108,40 @@ func TestVoteCountsAndChanges(t *testing.T) {
 	}
 	if got := r.poll.tallies(); got[0] != 0 || got[1] != 1 {
 		t.Fatalf("tallies after revote = %v", got)
+	}
+}
+
+// Re-selecting the choice you already have changes no state, so it must not
+// re-broadcast: a repeat click on your own selection would otherwise fan a full poll
+// frame out to the whole room for zero state change, with no rate limiting.
+func TestRepeatVoteSameChoiceDoesNotRebroadcast(t *testing.T) {
+	r, _, _, _, bc := modRoom(t)
+	if err := r.CreatePoll("p1", "Ship it?", []string{"Yes", "No"}); err != nil {
+		t.Fatal(err)
+	}
+	id := r.poll.ID
+
+	if err := r.Vote("p2", id, 0); err != nil {
+		t.Fatalf("first vote: %v", err)
+	}
+	before := countPollEvents(bc)
+
+	if err := r.Vote("p2", id, 0); err != nil {
+		t.Fatalf("repeat vote (same choice): %v", err)
+	}
+	if got := countPollEvents(bc); got != before {
+		t.Fatalf("repeat vote for the same choice broadcast again: %d poll events, want %d", got, before)
+	}
+	if got := r.poll.tallies(); got[0] != 1 || got[1] != 0 {
+		t.Fatalf("tallies after repeat vote = %v, want unchanged [1 0]", got)
+	}
+
+	// A genuine change (different choice) must still broadcast.
+	if err := r.Vote("p2", id, 1); err != nil {
+		t.Fatalf("changed vote: %v", err)
+	}
+	if got := countPollEvents(bc); got != before+1 {
+		t.Fatalf("changed vote did not broadcast: %d poll events, want %d", got, before+1)
 	}
 }
 

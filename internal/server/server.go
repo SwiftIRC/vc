@@ -351,6 +351,27 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 			h.log.Debug("vote refused", "from", p.ID, "poll", m.PollID, "err", err)
 		}
 		return
+	case *signal.CreatePoll:
+		// Silent for the same reason Vote's refusals are: the in-call client's only
+		// "error" handler (onServerError in app.js) stops the socket for good and
+		// then tries to show the error on the prejoin screen, which no longer exists
+		// once in-call — so an "error" frame here would silently kill the actor's
+		// session. That includes ErrNotOp: the poll controls only render for ops
+		// (_ensureOpSettingsRows) and the Close button only renders for ops, so a
+		// create/close frame from a non-op is a hand-rolled frame, not something a
+		// legitimate client can produce — whereas a legitimate op CAN hit the
+		// stale/closed races below. Silence costs a non-op nothing and removes an
+		// entire class of session-killing refusal.
+		if err := rm.CreatePoll(p.ID, m.Question, m.Options); err != nil {
+			h.log.Debug("create-poll refused", "from", p.ID, "err", err)
+		}
+		return
+	case *signal.ClosePoll:
+		// Same silence, same rationale as CreatePoll above.
+		if err := rm.ClosePoll(p.ID, m.PollID); err != nil {
+			h.log.Debug("close-poll refused", "from", p.ID, "poll", m.PollID, "err", err)
+		}
+		return
 	case *signal.MediaState:
 		// A participant's own mic/camera state changed (or its initial post-join
 		// assertion). Store it and fan it out so remote mute indicators are correct.
@@ -375,10 +396,6 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 		err = rm.GrantOp(p.ID, m.ID)
 	case *signal.SetQuality:
 		err = rm.SetQuality(p.ID, m.Target, m.Tier)
-	case *signal.CreatePoll:
-		err = rm.CreatePoll(p.ID, m.Question, m.Options)
-	case *signal.ClosePoll:
-		err = rm.ClosePoll(p.ID, m.PollID)
 	default:
 		return
 	}

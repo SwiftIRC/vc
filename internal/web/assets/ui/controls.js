@@ -1225,6 +1225,7 @@ export class Controls {
       this.countdownAudio = null;
     }
     if (this.pollDialog) {
+      if (this.pollDialog.open) this.pollDialog.close();
       this.pollDialog.remove();
       this.pollDialog = null;
     }

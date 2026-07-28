@@ -147,7 +147,15 @@ func (r *Room) Vote(actorID, pollID string, choice int) error {
 		r.mu.Unlock()
 		return ErrBadPollChoice
 	}
-	r.poll.votes[voterKey(actor)] = choice
+	key := voterKey(actor)
+	if existing, ok := r.poll.votes[key]; ok && existing == choice {
+		// Re-selecting the same choice changes no state, so there is nothing to
+		// broadcast: skip the fan-out (a repeat click otherwise sends a full poll
+		// frame to the whole room for zero state change, with no rate limiting).
+		r.mu.Unlock()
+		return nil
+	}
+	r.poll.votes[key] = choice
 	ev := r.poll.event("update")
 	r.mu.Unlock()
 

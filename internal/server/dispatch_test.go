@@ -204,11 +204,13 @@ func TestPollOverWS(t *testing.T) {
 	send(t, guest, map[string]any{"type": "join", "name": "voter"})
 	recv(t, guest, "joined")
 
-	// A guest cannot create: the refusal is private to them, like the other
-	// moderation commands.
+	// A guest cannot create: the refusal is silent (poll refusals never surface an
+	// "error" frame — see TestRefusedCreatePollSendsNoErrorFrame). A chat right after
+	// proves the socket is still being served with no error frame ahead of it.
 	send(t, guest, map[string]any{"type": "create-poll", "question": "Ship it?", "options": []string{"Yes", "No"}})
-	if e := recv(t, guest, "error"); e["code"] != "not-op" {
-		t.Errorf("code = %v, want not-op", e["code"])
+	send(t, guest, map[string]any{"type": "chat", "text": "still here (create)"})
+	if m := recvBefore(t, guest, "chat", "error"); m["text"] != "still here (create)" {
+		t.Fatalf("chat after refused create = %v", m)
 	}
 
 	// The op creates: both see the poll open, and the feed narrates it.
@@ -230,10 +232,11 @@ func TestPollOverWS(t *testing.T) {
 		t.Fatalf("update = %v", updated)
 	}
 
-	// A guest cannot close.
+	// A guest cannot close: also silent, same as create above.
 	send(t, guest, map[string]any{"type": "close-poll", "pollId": pollID})
-	if e := recv(t, guest, "error"); e["code"] != "not-op" {
-		t.Errorf("close code = %v, want not-op", e["code"])
+	send(t, guest, map[string]any{"type": "chat", "text": "still here (close)"})
+	if m := recvBefore(t, guest, "chat", "error"); m["text"] != "still here (close)" {
+		t.Fatalf("chat after refused close = %v", m)
 	}
 
 	// The op can.
@@ -257,6 +260,32 @@ func TestRefusedVoteSendsNoErrorFrame(t *testing.T) {
 	// recvBefore fails if an error frame arrives first.
 	send(t, c, map[string]any{"type": "chat", "text": "still here"})
 	if m := recvBefore(t, c, "chat", "error"); m["text"] != "still here" {
+		t.Fatalf("chat = %v", m)
+	}
+}
+
+// A refused close-poll must stay silent too, for the exact reason vote's must: the
+// in-call client's only "error" handler stops the socket for good (see onServerError
+// in app.js) and then tries to show the error on the prejoin screen, which is gone
+// once in-call. Two real one-click triggers exist: closing a superseded poll
+// (ErrStalePoll, covered here) and double-clicking Close before the first close
+// broadcast round-trips (ErrPollClosed).
+func TestRefusedClosePollSendsNoErrorFrame(t *testing.T) {
+	_, srv := newTestHub(t, testSecret, false)
+	op := dialRoom(t, srv, "quiet")
+	send(t, op, map[string]any{"type": "join", "token": opToken(t, "quiet", 0)})
+	recv(t, op, "joined")
+
+	send(t, op, map[string]any{"type": "create-poll", "question": "Ship it?", "options": []string{"Yes", "No"}})
+	opened := recv(t, op, "poll")
+	pollID, _ := opened["id"].(string)
+
+	// Stale id: as if a second poll had already superseded this one.
+	send(t, op, map[string]any{"type": "close-poll", "pollId": "not-" + pollID})
+	// Chat after it: the chat echo proves the socket is still being served, and
+	// recvBefore fails if an error frame arrives first.
+	send(t, op, map[string]any{"type": "chat", "text": "still here"})
+	if m := recvBefore(t, op, "chat", "error"); m["text"] != "still here" {
 		t.Fatalf("chat = %v", m)
 	}
 }

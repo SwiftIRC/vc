@@ -233,7 +233,7 @@ function onJoined(msg) {
     if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
     rebuildPeer();
     for (const p of msg.peers || []) addRosterPeer(p);
-    if (msg.poll) chat.onPoll(msg.poll); // clear() above dropped any prior card; restore the live poll
+    if (chat && msg.poll) chat.onPoll(msg.poll); // clear() above dropped any prior card; restore the live poll
     // Reconcile our OWN role from the authoritative rejoin. The server restores op
     // across a reconnect (by account or session ref), so trust msg.role rather than
     // the role the initial render captured — otherwise the control bar keeps stale op
@@ -414,7 +414,11 @@ function renderInCall(msg) {
   });
   signaling.on("poll", (m) => {
     chat.onPoll(m);
-    controls.notifyChatActivity(); // a poll opened while the panel is closed must be noticed
+    // An "update" re-renders the existing card in place rather than appending, so it
+    // has nothing new to read — only open/close genuinely change what is on screen.
+    // Without this gate, a single poll with N voters bumps the badge N times for
+    // everyone with the chat panel closed.
+    if (m && m.action !== "update") controls.notifyChatActivity();
   });
   signaling.on("moderation", (m) => chat.onModeration(m));
   // A role change (op promotion): update the badge everywhere, and if it's US, gain

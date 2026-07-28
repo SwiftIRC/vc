@@ -234,6 +234,14 @@ export class Chat {
       if (this._pollCard.el.parentNode !== this.log) this._append(this._pollCard.el);
       return;
     }
+    if (this._pollCard) {
+      // A different id supersedes the old poll. Freeze the orphaned card in place
+      // (through the same render path, forced closed) rather than leaving it in the
+      // log with live option buttons and, for an op, a live Close button — clicking
+      // either would send a frame the server silently refuses (stale-poll), and the
+      // card could never correct itself since no further broadcast ever carries its id.
+      this._pollCard.update({ ...this._pollCard.poll, open: false });
+    }
     this._pollCard = new PollCard({
       poll: msg,
       isOp: this._isOp,
