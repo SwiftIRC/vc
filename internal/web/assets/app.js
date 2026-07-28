@@ -233,6 +233,7 @@ function onJoined(msg) {
     if (chat) chat.clear(); // the server replays chat on re-join; clear so it doesn't double up
     rebuildPeer();
     for (const p of msg.peers || []) addRosterPeer(p);
+    if (msg.poll) chat.onPoll(msg.poll); // clear() above dropped any prior card; restore the live poll
     // Reconcile our OWN role from the authoritative rejoin. The server restores op
     // across a reconnect (by account or session ref), so trust msg.role rather than
     // the role the initial render captured — otherwise the control bar keeps stale op
@@ -354,6 +355,7 @@ function renderInCall(msg) {
   // Seed the roster the server already knew about at join time, including each
   // existing peer's stored mic/camera state (so an already-muted peer shows muted).
   for (const p of msg.peers || []) addRosterPeer(p);
+  if (msg.poll) chat.onPoll(msg.poll); // a poll already open when we join gets its card immediately
 
   // Local mic track swapped (noise-suppression toggle): replace what we publish for
   // "mic" in place — replaceTrack needs no renegotiation for a same-kind track. The
@@ -409,6 +411,10 @@ function renderInCall(msg) {
   signaling.on("chat", (m) => {
     chat.onChat(m);
     controls.notifyChatActivity(); // bumps the unread badge while chat is hidden
+  });
+  signaling.on("poll", (m) => {
+    chat.onPoll(m);
+    controls.notifyChatActivity(); // a poll opened while the panel is closed must be noticed
   });
   signaling.on("moderation", (m) => chat.onModeration(m));
   // A role change (op promotion): update the badge everywhere, and if it's US, gain

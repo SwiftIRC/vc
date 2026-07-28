@@ -212,6 +212,7 @@ export class Controls {
     this.chat = chat || null;
     this.chatOpen = false;
     if (this.chat) this.chat.setVisible(false);
+    if (this.chat) this.chat.setOp(this.isOp);
     this._clearUnread();
     this._setChatButton();
   }
@@ -897,6 +898,73 @@ export class Controls {
       : "Play countdown for everyone";
   }
 
+  // A native <dialog>: it gives the modal backdrop, focus trapping and Escape-to-cancel
+  // for free, the same reasons lib/confirm.js uses one.
+  _openPollForm() {
+    this._closeMenus();
+    if (!this.pollDialog) this._buildPollForm();
+    this.pollQuestion.value = "";
+    for (const input of this.pollOptions) input.value = "";
+    this._setPollOptionCount(2);
+    this.pollDialog.showModal();
+    this.pollQuestion.focus();
+  }
+
+  _buildPollForm() {
+    // MAX_POLL_OPTIONS matches the server's MaxPollOptions; a mismatch would let the
+    // form build a poll the server silently refuses.
+    const MAX_POLL_OPTIONS = 6;
+    this.pollQuestion = el("input", { class: "poll-input", type: "text", maxlength: "200", placeholder: "Question", "aria-label": "Poll question" });
+    this.pollOptions = Array.from({ length: MAX_POLL_OPTIONS }, (_, i) =>
+      el("input", { class: "poll-input", type: "text", maxlength: "80", placeholder: `Option ${i + 1}`, "aria-label": `Option ${i + 1}` }),
+    );
+    this.pollAddBtn = el("button", { type: "button", class: "poll-add", onClick: () => this._setPollOptionCount(this._pollShown + 1) }, "Add option");
+
+    const form = el(
+      "form",
+      { class: "poll-form", method: "dialog", onSubmit: (e) => { e.preventDefault(); this._submitPoll(); } },
+      el("h2", { class: "poll-form-title", text: "New poll" }),
+      this.pollQuestion,
+      ...this.pollOptions,
+      this.pollAddBtn,
+      el(
+        "div",
+        { class: "poll-form-actions" },
+        el("button", { type: "button", class: "poll-cancel", onClick: () => this.pollDialog.close() }, "Cancel"),
+        el("button", { type: "submit", class: "poll-create" }, "Create"),
+      ),
+    );
+    this.pollDialog = el("dialog", { class: "poll-dialog", "aria-label": "Create a poll" }, form);
+    document.body.append(this.pollDialog);
+    this._setPollOptionCount(2);
+  }
+
+  // Show exactly n option inputs (clamped 2..6) and hide the rest.
+  _setPollOptionCount(n) {
+    this._pollShown = Math.max(2, Math.min(this.pollOptions.length, n));
+    this.pollOptions.forEach((input, i) => {
+      input.hidden = i >= this._pollShown;
+      if (input.hidden) input.value = "";
+    });
+    this.pollAddBtn.hidden = this._pollShown >= this.pollOptions.length;
+  }
+
+  _submitPoll() {
+    const question = this.pollQuestion.value.trim();
+    const options = this.pollOptions
+      .slice(0, this._pollShown)
+      .map((input) => input.value.trim())
+      .filter(Boolean);
+    // Same limits the server enforces, so an obviously invalid poll never leaves the
+    // page — the server refusal would otherwise be silent to the user.
+    if (!question || options.length < 2) {
+      this.pollQuestion.focus();
+      return;
+    }
+    this._send("create-poll", { question, options });
+    this.pollDialog.close();
+  }
+
   _removeAudioUnlock() {
     for (const ev of this._audioUnlockEvents) {
       window.removeEventListener(ev, this._onAudioUnlock);
@@ -1002,6 +1070,7 @@ export class Controls {
     this.isOp = true;
     this._ensureOpSettingsRows();
     if (this.grid) this.grid.addOpControls();
+    if (this.chat) this.chat.setOp(true);
   }
 
   // Add the op-only Lock + Quality rows to the ☰ menu, once. Called from _build (if the
@@ -1015,6 +1084,10 @@ export class Controls {
     if (!this.qualityRow) {
       this.qualityRow = this._settingsRow("Quality", this._buildQualityControl());
       this.settingsMenu.append(this.qualityRow);
+    }
+    if (!this.pollBtn) {
+      this.pollBtn = el("button", { type: "button", class: "ctl poll", text: "New poll…", onClick: () => this._openPollForm() });
+      this.settingsMenu.append(this._settingsRow("Poll", this.pollBtn));
     }
   }
 
@@ -1150,6 +1223,10 @@ export class Controls {
       this.countdownAudio.pause();
       this.countdownAudio.src = "";
       this.countdownAudio = null;
+    }
+    if (this.pollDialog) {
+      this.pollDialog.remove();
+      this.pollDialog = null;
     }
   }
 }

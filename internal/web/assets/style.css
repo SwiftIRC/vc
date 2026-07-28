@@ -1157,3 +1157,62 @@ body.ui-idle .controls {
 .settings-menu .seg { display: flex; gap: 4px; }
 .settings-menu .quality-inline { display: flex; gap: 8px; align-items: center; }
 .settings-menu .quality-inline .field { margin: 0; }
+
+/* Poll compose dialog (op only). */
+.poll-dialog {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  color: var(--fg);
+  padding: 0.8rem;
+  min-width: min(22rem, 90vw);
+}
+
+.poll-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.poll-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.poll-form-title {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+}
+
+.poll-input {
+  width: 100%;
+}
+
+.poll-add {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 0.3rem;
+  color: var(--muted);
+  padding: 0.2rem 0.45rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.poll-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.poll-create {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.poll-cancel {
+  cursor: pointer;
+}
