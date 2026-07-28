@@ -1216,3 +1216,60 @@ body.ui-idle .controls {
 .poll-cancel {
   cursor: pointer;
 }
+
+/* --- background picker (lobby + settings menu) --- */
+
+.bg-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+/* In the settings popover a scrolling strip is awkward to hit, so wrap instead. */
+.bg-picker.compact .bg-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  overflow-x: visible;
+}
+
+.bg-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.bg-chip:hover:not(:disabled) { border-color: var(--muted); color: var(--fg); }
+.bg-chip.on { border-color: var(--accent); color: var(--fg); }
+.bg-chip:disabled { opacity: 0.5; cursor: default; }
+.bg-chip.pending { border-color: var(--accent); animation: bg-pulse 1s ease-in-out infinite; }
+
+@keyframes bg-pulse { 50% { opacity: 0.45; } }
+
+.bg-thumb {
+  display: block;
+  width: 48px;
+  height: 27px;
+  border-radius: 3px;
+}
+
+.bg-picker.compact .bg-thumb { width: 100%; height: auto; aspect-ratio: 16 / 9; }
+
+.bg-label { white-space: nowrap; }
+.bg-picker.compact .bg-label { display: none; } /* the title attribute carries it */
+
+.bg-notice {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
