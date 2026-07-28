@@ -999,6 +999,105 @@ body.ui-idle .controls {
   font-size: 0.8rem;
 }
 
+/* Poll card in the chat log. */
+.poll-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--panel);
+}
+
+.poll-q {
+  font-weight: 700;
+  color: var(--fg);
+}
+
+/* Each option is a button whose bar is a positioned child, so the bar can grow
+   without reflowing the label. */
+.poll-option {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.poll-option:disabled {
+  cursor: default;
+}
+
+.poll-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  opacity: 0.25;
+  transition: width 150ms ease-out;
+}
+
+.poll-label {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.poll-count {
+  position: relative;
+  flex: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* The viewer's own choice, and the winner once voting has closed. */
+.poll-mine {
+  border-color: var(--accent);
+}
+
+.poll-win {
+  font-weight: 700;
+}
+
+.poll-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.poll-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.poll-close {
+  flex: none;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.poll-close:hover,
+.poll-close:focus-visible {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+
 .chat-compose {
   display: flex;
   gap: 0.4rem;

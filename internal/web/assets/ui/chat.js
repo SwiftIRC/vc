@@ -24,6 +24,7 @@
 // or data: scheme, and the anchor's own text is set with textContent like the rest.
 
 import { linkSegments } from "../lib/linkify.js";
+import { PollCard } from "./poll.js";
 
 // Tiny DOM helper: el("div", {class:"x", onClick:fn}, child, "text"...). The
 // "text" key sets textContent, so caller-supplied strings can never inject markup.
@@ -76,6 +77,10 @@ function moderationText({ actor, action, target, kind } = {}) {
       const tier = !kind || kind === "auto" ? "Auto" : kind.charAt(0).toUpperCase() + kind.slice(1);
       return `${who} set ${target || "video"} quality to ${tier}`;
     }
+    case "poll-open":
+      return `${who} started a poll`;
+    case "poll-close":
+      return `${who} closed the poll`;
     default:
       // Unknown action: still narrate it, safely, rather than drop it silently.
       return target ? `${who} ${action || "acted on"} ${target}` : `${who} ${action || "acted"}`;
@@ -93,6 +98,8 @@ export class Chat {
   constructor({ signaling, onClose } = {}) {
     this.signaling = signaling || null;
     this.onClose = typeof onClose === "function" ? onClose : null;
+    this._pollCard = null; // the one live poll card in the log, if any
+    this._isOp = false;
     this._build();
   }
 
@@ -215,6 +222,34 @@ export class Chat {
     this._append(line);
   }
 
+  // Inbound `poll` {action, id, question, options, tallies, by, open}, and the poll
+  // carried in the join snapshot. A card for the poll already on screen re-renders in
+  // place; a different id means a new poll, which gets its own card.
+  onPoll(msg = {}) {
+    if (!msg || !msg.id) return;
+    if (this._pollCard && this._pollCard.id === msg.id) {
+      this._pollCard.update(msg);
+      // MAX_ENTRIES may have evicted the card while it was scrolled away; put a still
+      // live poll back rather than updating a node that is no longer in the document.
+      if (this._pollCard.el.parentNode !== this.log) this._append(this._pollCard.el);
+      return;
+    }
+    this._pollCard = new PollCard({
+      poll: msg,
+      isOp: this._isOp,
+      myVote: msg.yourVote == null ? null : msg.yourVote,
+      onVote: (id, choice) => this.signaling && this.signaling.send("vote", { pollId: id, choice }),
+      onClose: (id) => this.signaling && this.signaling.send("close-poll", { pollId: id }),
+    });
+    this._append(this._pollCard.el);
+  }
+
+  // controls.js calls this on an op promotion so the Close button appears mid-poll.
+  setOp(isOp) {
+    this._isOp = !!isOp;
+    if (this._pollCard) this._pollCard.setOp(this._isOp);
+  }
+
   _append(line) {
     // Auto-scroll only when the user is already pinned to the bottom, so reading
     // back through history isn't yanked away by an incoming message.
@@ -228,6 +263,7 @@ export class Chat {
   // where the server replays chat history again: clearing first keeps the replay
   // from stacking a duplicate copy on top of what's already shown.
   clear() {
+    this._pollCard = null;
     this.log.replaceChildren();
   }
 
