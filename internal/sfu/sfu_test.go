@@ -1,7 +1,9 @@
 package sfu
 
 import (
+	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1130,4 +1132,32 @@ func (s *SFU) firstTrackKey(slug string) string {
 		}
 	}
 	return ""
+}
+
+// trackKeys returns the room's published track keys, sorted, for diagnostics.
+func (s *SFU) trackKeys(slug string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	if r := s.rooms[slug]; r != nil {
+		for k := range r.tracks {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// transceiverLayout renders "mid:direction>currentDirection(trackID)" per
+// transceiver, for diagnosing a publish that never reached the wire.
+func transceiverLayout(pc *webrtc.PeerConnection) string {
+	var parts []string
+	for _, tr := range pc.GetTransceivers() {
+		id := "-"
+		if snd := tr.Sender(); snd != nil && snd.Track() != nil {
+			id = snd.Track().ID()
+		}
+		parts = append(parts, fmt.Sprintf("%s:%s(%s)", tr.Mid(), tr.Direction(), id))
+	}
+	return strings.Join(parts, " ")
 }

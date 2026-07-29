@@ -41,7 +41,7 @@ func TestThreeClientsFullMesh(t *testing.T) {
 		c.waitConnected()
 		// Every planned track for this client must reach the room table (OnTrack ->
 		// addLocalTrack) before the next client joins, so renegotiations stay bounded.
-		waitFor(t, func() bool { return s.trackCount("room") == roomTracksAfter })
+		waitForRoomTracks(t, s, "room", roomTracksAfter, c)
 		return c
 	}
 
@@ -105,4 +105,40 @@ func assertReceivesAll(t *testing.T, tc *testClient, want map[string]bool) {
 			t.Fatalf("%s: no RTP forwarded on %s: %v", tc.id, key, err)
 		}
 	}
+}
+
+// waitForRoomTracks polls until the room's track table holds want entries. On
+// timeout it reports the whole negotiation state rather than a bare deadline: the
+// room's keys, both peers' signaling states, whether the client still owes an offer,
+// the m-line directions of the negotiated SDP on each side, and the client's
+// transceiver layout.
+//
+// That distinguishes the three ways this can stall, which a bare "condition not met"
+// cannot. Still negotiating: a non-stable state or offerPending. Never offered: the
+// track is missing from the client's own localDesc. Offered but swallowed: both
+// descriptions declare the m-line yet no track reached the room — which is what a
+// publish recycled onto a server-created forward m-line looks like (see publish).
+func waitForRoomTracks(t *testing.T, s *SFU, slug string, want int, c *testClient) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.trackCount(slug) == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	c.server.mu.Lock()
+	pending, srvState := c.offerPending, c.server.pc.SignalingState().String()
+	c.server.mu.Unlock()
+	sdpOf := func(d *webrtc.SessionDescription) string {
+		if d == nil {
+			return "(none)"
+		}
+		return mlineDirections(d.SDP)
+	}
+	t.Fatalf("after %s joined: room has %v, want %d tracks; client=%s server=%s offerPending=%v"+
+		"\n  client localDesc:  %s\n  server remoteDesc: %s\n  client transceivers: %s",
+		c.id, s.trackKeys(slug), want, c.pc.SignalingState(), srvState, pending,
+		sdpOf(c.pc.CurrentLocalDescription()), sdpOf(c.server.pc.CurrentRemoteDescription()),
+		transceiverLayout(c.pc))
 }

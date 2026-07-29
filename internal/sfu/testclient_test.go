@@ -198,6 +198,18 @@ func (tc *testClient) fromServer(v any) {
 // a random per-track stream id plus recordKinds — rather than the (impossible in a
 // browser) stream id == kind. The server derives kind from that map joined to
 // remote.StreamID(), and the publisherID from the Peer; the track id is ignored.
+//
+// The track goes on a FRESH sendonly transceiver (AddTransceiverFromTrack), which is
+// what net/peer.js's _addLocal does — addTransceiver never recycles. AddTrack must
+// NOT be used: per spec it RECYCLES a compatible recvonly transceiver, and on this
+// client every recvonly m-line is one the SERVER created to forward another peer's
+// track. The SFU builds those with Direction: Sendonly, and Pion's
+// newTransceiverFromTrack leaves Receiver() nil for a sendonly transceiver — so a
+// publish landing in a recycled forward slot arrives on an m-line the server has no
+// receiver for, OnTrack never fires, and the track is swallowed for the rest of the
+// call with both sides reporting a fully negotiated, stable connection. That is a
+// real (if browser-unreachable) SFU limitation; recycling here made the three-client
+// mesh test flaky under load rather than testing the product's actual client.
 func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 	tc.t.Helper()
 	mime := webrtc.MimeTypeVP8
@@ -214,7 +226,9 @@ func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 		tc.t.Fatal(err)
 	}
 	tc.server.recordKinds(map[string]string{streamID: kind}) // browser: offer's `kinds` map
-	if _, err := tc.pc.AddTrack(track); err != nil {
+	if _, err := tc.pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendonly,
+	}); err != nil {
 		tc.t.Fatal(err)
 	}
 	return track
