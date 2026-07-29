@@ -198,11 +198,12 @@ func (s *SFU) signalPeerConnections(slug string) {
 		// Reconcile every peer's senders; mark changed peers into the room's
 		// persistent reneg set and collect the video tracks freshly forwarded to a
 		// new subscriber so their publishers can be PLI'd (outside s.mu) once the
-		// offers are sent. reneg persists across invocations, so a peer whose
-		// senders were reconciled but could not be offered (its PC was still in
-		// have-local-offer) stays pending here even after a later sync pass finds
-		// those senders already present (changed=false) — that is exactly the
-		// starvation this recovers from.
+		// offers are sent. reneg persists across invocations (a mark is only cleared
+		// by the pass that claims it, and a claim that fails to produce an offer is
+		// handed back by remarkReneg), so a peer whose senders were reconciled but
+		// could not be offered — its PC was still in have-local-offer — stays pending
+		// even after a later sync pass finds those senders already present
+		// (changed=false) — that is exactly the starvation this recovers from.
 		var newVideo []*localTrack
 		for id, p := range r.peers {
 			changed, added := syncPeerSendersLocked(p, r.tracks)
@@ -212,10 +213,25 @@ func (s *SFU) signalPeerConnections(slug string) {
 			newVideo = append(newVideo, added...)
 		}
 		// Snapshot the peers still awaiting an offer so renegotiation runs without
-		// holding s.mu. The drop above guarantees every reneg id is a live peer.
+		// holding s.mu, CLAIMING each one as we go: the pending flag is cleared HERE,
+		// under the same lock that guards it, never after the offer is delivered.
+		//
+		// Passes run CONCURRENTLY — unpublishing a screenshare that carries audio ends
+		// two publisher read loops on two goroutines, and each calls in here. Clearing
+		// the flag after delivery erases a mark a sibling pass set while this one was
+		// offering (it marks under s.mu the moment we release it). The pass that set
+		// that mark then finds the sender already reconciled by us (changed=false, since
+		// a track-less sender has no senderKey) and an empty todo, so it returns without
+		// ever offering: the SFU stops forwarding the track but never tells the
+		// subscriber, whose m-line stays sendonly. That is a stopped screenshare whose
+		// pane never goes away for the other participants. Claiming leaves any
+		// post-claim mark intact for the pass that owns it.
+		//
+		// The drop above guarantees every reneg id is a live peer.
 		todo := make([]*Peer, 0, len(r.reneg))
 		for id := range r.reneg {
 			todo = append(todo, r.peers[id])
+			delete(r.reneg, id)
 		}
 		s.mu.Unlock()
 
@@ -236,16 +252,18 @@ func (s *SFU) signalPeerConnections(slug string) {
 			p.makingOffer = true
 			offer, err := p.pc.CreateOffer(nil)
 			if err != nil {
-				// A renegotiation is mid-flight (signaling state not stable); leave p
-				// in reneg and retry the whole pass shortly.
+				// A renegotiation is mid-flight (signaling state not stable); hand the
+				// claim back so p stays pending, and retry the whole pass shortly.
 				p.makingOffer = false
 				p.mu.Unlock()
+				s.remarkReneg(slug, p.id)
 				retry = true
 				continue
 			}
 			if err := p.pc.SetLocalDescription(offer); err != nil {
 				p.makingOffer = false
 				p.mu.Unlock()
+				s.remarkReneg(slug, p.id)
 				retry = true
 				continue
 			}
@@ -257,10 +275,6 @@ func (s *SFU) signalPeerConnections(slug string) {
 			// After SetLocalDescription the transceiver mids are assigned, so p can
 			// be told which mid carries which {participantID, kind} it now receives.
 			p.sig.Send(signal.Tracks{Tracks: peerTrackInfos(p)})
-			// Offer delivered: p no longer needs renegotiation.
-			s.mu.Lock()
-			delete(r.reneg, p.id)
-			s.mu.Unlock()
 		}
 		// Ask each newly-subscribed video's publisher for a keyframe so the new
 		// subscriber can start decoding without waiting for the room ticker.
@@ -286,6 +300,21 @@ func (s *SFU) signalPeerConnections(slug string) {
 		time.Sleep(renegRetryDelay)
 		s.signalPeerConnections(slug)
 	}()
+}
+
+// remarkReneg hands a claimed renegotiation back to the room's pending set after an
+// offer could not be created or applied, so the retry (or a sibling pass) picks the
+// peer up again. A peer that has since left the room is skipped — nothing to offer.
+func (s *SFU) remarkReneg(slug, peerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.rooms[slug]
+	if r == nil {
+		return
+	}
+	if _, ok := r.peers[peerID]; ok {
+		r.reneg[peerID] = true
+	}
 }
 
 // syncPeerSendersLocked reconciles peer p's outbound RTP senders with the room's

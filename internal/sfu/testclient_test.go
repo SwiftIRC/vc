@@ -3,6 +3,7 @@ package sfu
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -62,6 +63,20 @@ type testClient struct {
 	// by server.mu so the "is the server making an offer?" check and the offer's
 	// creation/application are atomic against signalPeerConnections.
 	offerPending bool
+
+	// offers records every server-initiated offer SDP delivered to this client, so a
+	// test can assert on the m-line directions a real browser would see (a forward
+	// the SFU dropped must reach the subscriber as an inactive m-line).
+	offersMu sync.Mutex
+	offers   []string
+}
+
+// serverOffers returns a copy of the server-initiated offer SDPs this client has
+// received, oldest first.
+func (tc *testClient) serverOffers() []string {
+	tc.offersMu.Lock()
+	defer tc.offersMu.Unlock()
+	return append([]string(nil), tc.offers...)
 }
 
 func newTestClient(t *testing.T, s *SFU, slug, id string) *testClient {
@@ -140,6 +155,9 @@ func (tc *testClient) fromServer(v any) {
 		// mutate the client and server PeerConnections). After answering, flush any
 		// offer that a glare had deferred — the server is stable again now, so the
 		// deferred screenshare offer goes through here.
+		tc.offersMu.Lock()
+		tc.offers = append(tc.offers, m.SDP)
+		tc.offersMu.Unlock()
 		p := tc.server
 		p.mu.Lock()
 		defer p.mu.Unlock()
@@ -183,7 +201,7 @@ func (tc *testClient) fromServer(v any) {
 func (tc *testClient) publish(kind string) *webrtc.TrackLocalStaticRTP {
 	tc.t.Helper()
 	mime := webrtc.MimeTypeVP8
-	if kind == "mic" {
+	if kind == "mic" || kind == "screen-audio" {
 		mime = webrtc.MimeTypeOpus
 	}
 	streamID := fmt.Sprintf("stream-%d", trackSeq.Add(1)) // random MSID stream id (browser: new MediaStream())

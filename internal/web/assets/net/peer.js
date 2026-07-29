@@ -409,12 +409,32 @@ export class Peer extends EventTarget {
   // Sent (and resent as the set changes) after each renegotiation. Rebuild the map
   // from scratch and try to emit any track already received on those mids — ontrack
   // and this message race, and either can arrive first.
+  //
+  // The list is also AUTHORITATIVE about what the SFU still forwards: it is built
+  // from the live senders on the server's PeerConnection, so a mid we hold media for
+  // that is no longer listed is a forward the server has dropped (the publisher
+  // stopped a screenshare, or left). Retire those here rather than relying solely on
+  // a media event.
+  //
+  // This is a SAFETY NET, not the main path: removetrack/ended only fires once the
+  // browser applies an offer whose m-line stopped receiving, so a renegotiation that
+  // never reaches us — dropped on send overflow, or lost to a server-side race —
+  // leaves the tile orphaned for the rest of the call, which is how a stopped
+  // screenshare stayed on every receiver's screen. This message rides the same
+  // renegotiation but is also the last thing sent, so it closes that gap.
+  // _onStreamGone is idempotent: whichever signal arrives first wins.
   _onTracks(msg) {
-    this._trackInfo = new Map();
+    const next = new Map();
     for (const info of msg.tracks || []) {
-      this._trackInfo.set(info.mid, { participantId: info.participantId, kind: info.kind });
-      this._emitRemoteTrack(info.mid);
+      next.set(info.mid, { participantId: info.participantId, kind: info.kind });
     }
+    // Retire departed forwards BEFORE swapping the map in, so _onStreamGone can
+    // still fall back to the old label for a track that never paired with media.
+    for (const mid of [...this._incoming.keys()]) {
+      if (!next.has(mid)) this._onStreamGone(mid);
+    }
+    this._trackInfo = next;
+    for (const mid of next.keys()) this._emitRemoteTrack(mid);
     this._dumpPairing("onTracks");
   }
 
