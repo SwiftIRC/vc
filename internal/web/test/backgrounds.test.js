@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EFFECTS, resolveEffectId, effectById, coverRect, drawImageBackground } from "../assets/lib/backgrounds.js";
+import { EFFECTS, GROUPS, resolveEffectId, effectById, coverRect, drawImageBackground } from "../assets/lib/backgrounds.js";
 
 // A recording stand-in for CanvasRenderingContext2D. Node has no canvas, but the
 // properties that matter here — does the painter cover the frame, does it leave
@@ -43,19 +43,27 @@ function fakeCtx(w, h, callLimit = Infinity) {
 test("the effect id set is frozen", () => {
   assert.deepEqual(
     EFFECTS.map((e) => e.id),
-    ["none", "blur", "blur-strong", "aurora", "dusk", "grid", "depth", "paper"],
+    [
+      "none", "blur", "blur-strong", "aurora", "dusk", "grid", "depth", "paper",
+      "office-space", "space-ghost", "star-trek", "idiocracy", "carina",
+    ],
   );
 });
 
 test("every effect is well formed for its kind", () => {
   for (const e of EFFECTS) {
     assert.ok(e.label, `${e.id} has no label`);
-    assert.ok(["none", "blur", "paint"].includes(e.kind), `${e.id} has kind ${e.kind}`);
+    assert.ok(["none", "blur", "paint", "image"].includes(e.kind), `${e.id} has kind ${e.kind}`);
     if (e.kind === "blur") {
       assert.equal(typeof e.radius, "number", `${e.id} needs a radius`);
       assert.ok(e.radius > 0 && e.radius < 0.2, `${e.id} radius ${e.radius} is out of range`);
     }
     if (e.kind === "paint") assert.equal(typeof e.paint, "function", `${e.id} needs a painter`);
+    if (e.kind === "image") {
+      assert.match(e.src, /^img\/[a-z0-9-]+\.webp$/, `${e.id} src ${e.src} is not an img/ webp`);
+      assert.match(e.fallback, /^#[0-9a-fA-F]{6}$/, `${e.id} fallback ${e.fallback} is not a hex colour`);
+      assert.equal(e.paint, undefined, `${e.id} is an image and must not carry a painter`);
+    }
   }
 });
 
@@ -208,4 +216,32 @@ test("drawImageBackground never leaves global canvas state dirty", () => {
   drawImageBackground(ctx, { width: 1280, height: 720 }, "#585454", 640, 480);
   assert.equal(ctx.globalCompositeOperation, "source-over");
   assert.equal(ctx.filter, "none");
+});
+
+test("GROUPS partitions EFFECTS exactly", () => {
+  // A new entry added to EFFECTS but not reachable through GROUPS would be
+  // selectable from a saved preference yet invisible in the picker.
+  const grouped = GROUPS.flatMap((g) => g.effects);
+  assert.equal(grouped.length, EFFECTS.length, "an effect is missing from GROUPS or duplicated");
+  assert.deepEqual(new Set(grouped), new Set(EFFECTS));
+  for (const g of GROUPS) {
+    assert.ok(g.id, "a group has no id");
+    assert.ok(g.label, `group ${g.id} has no label`);
+    assert.ok(g.effects.length > 0, `group ${g.id} is empty`);
+  }
+});
+
+test("the Scenes group is exactly the image effects", () => {
+  const scenes = GROUPS.find((g) => g.id === "scene");
+  assert.deepEqual(
+    scenes.effects.map((e) => e.id),
+    ["office-space", "space-ghost", "star-trek", "idiocracy", "carina"],
+  );
+  const effects = GROUPS.find((g) => g.id === "effect");
+  assert.ok(effects.effects.every((e) => e.kind !== "image"));
+});
+
+test("a saved image-background preference resolves", () => {
+  assert.equal(resolveEffectId("carina"), "carina");
+  assert.equal(effectById("office-space").src, "img/office-space.webp");
 });

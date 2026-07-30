@@ -1,9 +1,18 @@
-// The background-effect catalogue, and the painters that draw the virtual ones.
+// The background-effect catalogue: the painters that draw the procedural
+// backgrounds, and the entries describing the photographic ones.
 //
-// Backgrounds are drawn in code rather than shipped as image files. That keeps
-// the binary from carrying photo assets, sidesteps image licensing entirely, and
-// stays sharp at any resolution — the same painter fills a 1080p frame and a
-// 48x27 picker thumbnail, so a chip is always an exact preview of the effect.
+// Two kinds of virtual background live here, with different properties.
+//
+// PAINTED backgrounds are drawn in code. They cost no bytes in the binary, carry
+// no licensing, and are resolution-independent — the same painter fills a 1080p
+// frame and a 48x27 picker thumbnail, so a chip is an exact preview of the effect.
+//
+// IMAGE backgrounds (kind "image") are WebP assets under assets/img/, embedded in
+// the binary and described here by `src` plus `fallback`. They give up all three
+// of those properties: ~339K of payload, third-party imagery (see
+// assets/img/README.md), and a fixed 1280x720 that upscales on a 1080p camera and
+// says little at chip size. They buy recognisable scenes, which no painter can.
+// The catalogue holds both; only painters are bound by the rules below.
 //
 // Every painter must:
 //   - fill the ENTIRE (w, h) rect, or the real camera shows through at the edges;
@@ -145,6 +154,32 @@ export const EFFECTS = Object.freeze([
   Object.freeze({ id: "grid", label: "Grid", kind: "paint", paint: paintGrid }),
   Object.freeze({ id: "depth", label: "Depth", kind: "paint", paint: paintDepth }),
   Object.freeze({ id: "paper", label: "Paper", kind: "paint", paint: paintPaper }),
+  // Photographic scenes. Unlike a painter these are assets: they need decoding
+  // before first use, they are not resolution-independent, and `fallback` — the
+  // image's own average colour — is what covers the frame until the bitmap lands.
+  Object.freeze({ id: "office-space", label: "Office Space", kind: "image", src: "img/office-space.webp", fallback: "#585454" }),
+  Object.freeze({ id: "space-ghost", label: "Space Ghost", kind: "image", src: "img/space-ghost.webp", fallback: "#675364" }),
+  Object.freeze({ id: "star-trek", label: "Star Trek", kind: "image", src: "img/star-trek.webp", fallback: "#7D705E" }),
+  Object.freeze({ id: "idiocracy", label: "Idiocracy", kind: "image", src: "img/idiocracy.webp", fallback: "#3E3524" }),
+  Object.freeze({ id: "carina", label: "Carina", kind: "image", src: "img/carina.webp", fallback: "#614E54" }),
+]);
+
+// The picker's two rows. Derived from `kind` rather than a field on each entry —
+// there is exactly one rule ("photos are scenes") and duplicating it per entry
+// would just be a second place to get it wrong. A test asserts this partitions
+// EFFECTS exactly, so an entry cannot go missing from the UI by being appended to
+// EFFECTS alone.
+export const GROUPS = Object.freeze([
+  Object.freeze({
+    id: "effect",
+    label: "Effects",
+    effects: Object.freeze(EFFECTS.filter((e) => e.kind !== "image")),
+  }),
+  Object.freeze({
+    id: "scene",
+    label: "Scenes",
+    effects: Object.freeze(EFFECTS.filter((e) => e.kind === "image")),
+  }),
 ]);
 
 // The saved-preference gate. Effect ids live in localStorage, so a rename, a
