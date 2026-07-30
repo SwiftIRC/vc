@@ -39,3 +39,25 @@ func TestMediaPipeAssetsEmbedded(t *testing.T) {
 		t.Error("no-SIMD build should not be vendored")
 	}
 }
+
+// The image backgrounds are embedded assets. A missing or truncated file here is
+// a picker chip that 404s in the browser and that no JS test would notice, so
+// assert each one explicitly — the same reasoning as TestMediaPipeAssetsEmbedded.
+func TestImageBackgroundAssetsEmbedded(t *testing.T) {
+	for _, name := range []string{
+		"img/office-space.webp",
+		"img/space-ghost.webp",
+		"img/star-trek.webp",
+		"img/idiocracy.webp",
+		"img/carina.webp",
+	} {
+		info, err := fs.Stat(Assets, name)
+		if err != nil {
+			t.Errorf("asset %q not embedded: %v", name, err)
+			continue
+		}
+		if info.Size() < 20*1024 {
+			t.Errorf("asset %q is only %d bytes — looks truncated", name, info.Size())
+		}
+	}
+}
