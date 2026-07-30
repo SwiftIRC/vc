@@ -45,7 +45,7 @@ Accepted — see Risks.
 
 ## Assets
 
-Five WebP files at 1280x720, quality 80, in `internal/web/assets/img/`. The existing
+Five WebP files at 1280x720, in `internal/web/assets/img/`. The existing
 `//go:embed all:assets` picks them up with no change to `web.go`.
 
 | file | subject | source native | crop to 16:9 |
@@ -62,8 +62,14 @@ the form:
 
 ```
 convert <src> -gravity center -crop <W>x<H>+0+0 +repage \
-        -resize 1280x720 -quality 80 <out>.webp
+        -resize 1280x720 -define webp:method=6 <out>.webp
 ```
+
+`-quality` is deliberately absent: this ImageMagick's WebP delegate (libwebp
+1.3.2) ignores it — q30 and q95 produce byte-identical output — so
+`-define webp:method=6` is what actually sets the encode effort, and
+`carina.webp` additionally uses `-define webp:target-size` to cap its size. See
+`img/README.md` for the exact per-file commands.
 
 **Not gzipped.** WebP is already compressed; the pre-compressed serving path exists
 for the MediaPipe `.wasm`/`.tflite` binaries and gains nothing here.

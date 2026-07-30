@@ -49,9 +49,17 @@ function glow(ctx, w, h, { x, y, r, from, to }) {
 // and no distortion — the "cover" fit. Needed because the image assets are 16:9
 // but a camera frame may be 4:3, and the picker's chip is 48x27.
 //
-// Returns null for any non-positive or non-finite dimension. A zero-sized source
-// rect makes drawImage throw IndexSizeError, so callers need a signal to fall
-// back on rather than a rect they cannot use.
+// Returns null when any dimension fails `> 0` — which non-finite values do too,
+// except +Infinity (unreachable in practice: ImageBitmap.width/height are an
+// unsigned long, so a real bitmap can never hand this a non-finite size).
+//
+// The null signal matters because of what a zero-sized or non-finite source
+// rect does to drawImage: per the current spec it does NOT throw, it silently
+// returns without drawing anything. That is worse than a throw here, because
+// drawImageBackground only fills the fallback colour when coverRect returns
+// falsy — so a garbage-but-truthy rect would draw nothing AND skip the fill,
+// leaving the frame uncovered and the raw camera showing through underneath.
+// That is exactly the failure this code exists to prevent.
 export function coverRect(sw, sh, dw, dh) {
   if (!(sw > 0) || !(sh > 0) || !(dw > 0) || !(dh > 0)) return null;
   const scale = Math.max(dw / sw, dh / sh); // whichever axis needs more growth wins
@@ -157,11 +165,24 @@ export const EFFECTS = Object.freeze([
   // Photographic scenes. Unlike a painter these are assets: they need decoding
   // before first use, they are not resolution-independent, and `fallback` — the
   // image's own average colour — is what covers the frame until the bitmap lands.
-  Object.freeze({ id: "office-space", label: "Office Space", kind: "image", src: "img/office-space.webp", fallback: "#585454" }),
-  Object.freeze({ id: "space-ghost", label: "Space Ghost", kind: "image", src: "img/space-ghost.webp", fallback: "#675364" }),
-  Object.freeze({ id: "star-trek", label: "Star Trek", kind: "image", src: "img/star-trek.webp", fallback: "#7D705E" }),
-  Object.freeze({ id: "idiocracy", label: "Idiocracy", kind: "image", src: "img/idiocracy.webp", fallback: "#3E3524" }),
-  Object.freeze({ id: "carina", label: "Carina", kind: "image", src: "img/carina.webp", fallback: "#614E54" }),
+  //
+  // `src` is resolved against THIS MODULE's URL, not written as a plain relative
+  // string, on purpose: `loadBackgroundImage` hands it straight to `fetch()`,
+  // which resolves a relative URL against `document.baseURI` — the PAGE's path,
+  // not this file's. The app's router serves the SPA shell for any unknown path,
+  // so a room URL with a trailing slash (e.g. `/lobby/`) would turn `img/foo.webp`
+  // into a request for `/lobby/img/foo.webp`, which 200s with HTML instead of
+  // 404ing — `res.ok` is true, `createImageBitmap` then rejects on the HTML blob,
+  // and the failure is cached as a permanent `null`. Every scene becomes a flat
+  // fallback colour for the rest of the page's life. `new URL(..., import.meta.url)`
+  // resolves against this module's own versioned URL instead, which is stable
+  // regardless of what page embedded it. Do not "simplify" this back to a bare
+  // string.
+  Object.freeze({ id: "office-space", label: "Office Space", kind: "image", src: new URL("../img/office-space.webp", import.meta.url).href, fallback: "#585454" }),
+  Object.freeze({ id: "space-ghost", label: "Space Ghost", kind: "image", src: new URL("../img/space-ghost.webp", import.meta.url).href, fallback: "#675364" }),
+  Object.freeze({ id: "star-trek", label: "Star Trek", kind: "image", src: new URL("../img/star-trek.webp", import.meta.url).href, fallback: "#7D705E" }),
+  Object.freeze({ id: "idiocracy", label: "Idiocracy", kind: "image", src: new URL("../img/idiocracy.webp", import.meta.url).href, fallback: "#3E3524" }),
+  Object.freeze({ id: "carina", label: "Carina", kind: "image", src: new URL("../img/carina.webp", import.meta.url).href, fallback: "#614E54" }),
 ]);
 
 // The picker's two rows. Derived from `kind` rather than a field on each entry —

@@ -146,7 +146,6 @@ export class BackgroundSegmenter {
     this._stopped = false;
     this._bailed = false;
     this._effect = effectById(effectId);
-    this._warmImage(this._effect);
 
     // WebGL is a hard precondition, not a preference. MediaPipe's vision
     // GraphRunner is GL-based no matter what `delegate` says — `delegate` only
@@ -167,6 +166,11 @@ export class BackgroundSegmenter {
       err.code = "no-webgl"; // media.js maps this to the "unsupported" notice
       throw err;
     }
+
+    // Only warm the image decode once WebGL is confirmed present: this call is
+    // about to throw and abandon the pipeline build on a browser without it, and
+    // starting a fetch/decode it is about to abandon would waste both.
+    this._warmImage(this._effect);
 
     try {
       const { vision, fileset } = await loadVision();

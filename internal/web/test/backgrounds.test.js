@@ -60,7 +60,11 @@ test("every effect is well formed for its kind", () => {
     }
     if (e.kind === "paint") assert.equal(typeof e.paint, "function", `${e.id} needs a painter`);
     if (e.kind === "image") {
-      assert.match(e.src, /^img\/[a-z0-9-]+\.webp$/, `${e.id} src ${e.src} is not an img/ webp`);
+      // `src` is resolved via `new URL(..., import.meta.url)` (see backgrounds.js),
+      // so under node --test it's an absolute file:// URL rather than a bare
+      // relative string. What must hold regardless of the runtime is that it
+      // still points at this effect's own file under img/.
+      assert.match(e.src, new RegExp(`img/${e.id}\\.webp$`), `${e.id} src ${e.src} does not end in its own img/ webp`);
       assert.match(e.fallback, /^#[0-9a-fA-F]{6}$/, `${e.id} fallback ${e.fallback} is not a hex colour`);
       assert.equal(e.paint, undefined, `${e.id} is an image and must not carry a painter`);
     }
@@ -176,8 +180,10 @@ test("coverRect uses the whole source when the aspect ratios match", () => {
 });
 
 test("coverRect returns null for degenerate dimensions rather than a NaN rect", () => {
-  // drawImage throws IndexSizeError on a zero-sized source rect, so callers need a
-  // signal to fall back instead of a rect they cannot use.
+  // A zero-sized or non-finite source rect makes drawImage silently draw nothing
+  // (per spec, it does not throw), so callers need an explicit falsy signal to
+  // fall back to the fallback fill instead of a rect that draws nothing and
+  // leaves the frame uncovered.
   for (const args of [[0, 720, 640, 360], [1280, 0, 640, 360], [1280, 720, 0, 360], [1280, 720, 640, 0]]) {
     assert.equal(coverRect(...args), null, `coverRect(${args}) should be null`);
   }
@@ -243,5 +249,5 @@ test("the Scenes group is exactly the image effects", () => {
 
 test("a saved image-background preference resolves", () => {
   assert.equal(resolveEffectId("carina"), "carina");
-  assert.equal(effectById("office-space").src, "img/office-space.webp");
+  assert.match(effectById("office-space").src, /img\/office-space\.webp$/);
 });

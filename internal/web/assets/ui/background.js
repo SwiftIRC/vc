@@ -20,6 +20,7 @@
 
 import { GROUPS, drawImageBackground, effectById } from "../lib/backgrounds.js";
 import { loadBackgroundImage } from "../lib/backgroundImages.js";
+import { webglAvailable } from "../lib/segmenter.js";
 
 const THUMB_W = 48;
 const THUMB_H = 27;
@@ -42,13 +43,21 @@ function el(tag, attrs = {}, ...kids) {
 // Draw an effect's chip preview. "paint" effects call their own painter; the blur
 // chips get a schematic stand-in (there is no camera frame to blur at chip size,
 // and faking one would be more misleading than a glyph).
-function drawThumb(canvas, effect) {
+//
+// `webglOk` gates only the fetch/decode of the scene's bitmap, not the chip
+// itself: background effects are unusable without WebGL, so on a machine that
+// has none, fetching ~347KB and decoding ~18MB of ImageBitmaps across the five
+// scenes at lobby render would buy nothing but wasted bandwidth and memory. The
+// chip still renders — fallback colour, label, and all — and a separate path
+// (_disableEffects) is what greys it out with an explanatory title.
+function drawThumb(canvas, effect, webglOk) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, THUMB_W, THUMB_H);
   if (effect.kind === "image") {
     // The fallback now, the real image when it decodes. Requesting it here is also
     // what warms the loader's cache before the user picks anything.
     drawImageBackground(ctx, null, effect.fallback, THUMB_W, THUMB_H);
+    if (!webglOk) return;
     loadBackgroundImage(effect.src).then((bitmap) => {
       if (!bitmap) return; // a dead asset keeps its fallback colour
       ctx.clearRect(0, 0, THUMB_W, THUMB_H);
@@ -98,11 +107,15 @@ export class BackgroundPicker {
     this.notice = el("p", { class: "bg-notice", role: "status", hidden: true });
     this.strip = el("div", { class: "bg-strip", role: "radiogroup", "aria-label": "Background" });
 
+    // Computed once and reused for every chip: it probes and releases a real
+    // WebGL context, so calling it per chip would be five probes for one answer.
+    const webglOk = webglAvailable();
+
     for (const group of GROUPS) {
       const chips = el("div", { class: "bg-row-chips" });
       for (const effect of group.effects) {
         const canvas = el("canvas", { class: "bg-thumb", width: THUMB_W, height: THUMB_H, "aria-hidden": "true" });
-        drawThumb(canvas, effect);
+        drawThumb(canvas, effect, webglOk);
         const chip = el(
           "button",
           {
