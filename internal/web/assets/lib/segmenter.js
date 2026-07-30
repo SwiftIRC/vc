@@ -20,7 +20,8 @@
 // who never opens the background picker never downloads it.
 
 import { FpsGuard } from "./fpsGuard.js";
-import { effectById } from "./backgrounds.js";
+import { effectById, drawImageBackground } from "./backgrounds.js";
+import { loadBackgroundImage } from "./backgroundImages.js";
 
 const VENDOR_BASE = "/vendor/mediapipe";
 const MODEL_PATH = `${VENDOR_BASE}/selfie_segmenter.tflite`;
@@ -96,6 +97,11 @@ export class BackgroundSegmenter {
     this._maskImage = null; // the ImageData backing _maskCanvas; can hold multiple MB
     this._painted = null; // cached procedural background, repainted only on resize
     this._paintedFor = null; // the effect id _painted holds, so a switch repaints
+    // src -> decoded ImageBitmap for the "image" effects. Populated by _warmImage;
+    // absent until a decode lands, which is exactly when _drawBackground falls back
+    // to the effect's colour. Not a cache — backgroundImages.js owns that — just the
+    // resolved handles, so the frame loop never touches a promise.
+    this._bitmaps = new Map();
     this._stream = null;
     this._track = null;
     this._cancelFrame = null; // cancels the pending rVFC/rAF callback
@@ -140,6 +146,7 @@ export class BackgroundSegmenter {
     this._stopped = false;
     this._bailed = false;
     this._effect = effectById(effectId);
+    this._warmImage(this._effect);
 
     // WebGL is a hard precondition, not a preference. MediaPipe's vision
     // GraphRunner is GL-based no matter what `delegate` says — `delegate` only
@@ -255,6 +262,7 @@ export class BackgroundSegmenter {
   // a fair try at a cheap blur.
   setEffect(effectId) {
     this._effect = effectById(effectId);
+    this._warmImage(this._effect);
     this._painted = null;
     this._paintedFor = null;
     this._bailed = false; // a fresh effect deserves a fresh chance to bail (or not)
@@ -271,6 +279,17 @@ export class BackgroundSegmenter {
     this._guard.reset();
     this._pipelineStartedAt = performance.now();
     this._firstFrameAt = null;
+  }
+
+  // Kick off the decode for an image effect. Safe to call repeatedly: the loader
+  // memoises per src, so redundant calls neither re-fetch nor re-decode. Nothing
+  // awaits this — the effect is already live and drawing its fallback, and the
+  // bitmap simply starts being used on whichever frame follows the decode.
+  _warmImage(effect) {
+    if (!effect || effect.kind !== "image") return;
+    loadBackgroundImage(effect.src).then((bitmap) => {
+      if (bitmap) this._bitmaps.set(effect.src, bitmap);
+    });
   }
 
   // Idempotent teardown. Stops the composited track (not the raw one — the caller
@@ -493,6 +512,15 @@ export class BackgroundSegmenter {
         this._paintedFor = effect.id;
       }
       ctx.drawImage(this._painted, 0, 0, w, h);
+      return;
+    }
+    if (effect.kind === "image") {
+      // No canvas cache here, unlike the paint branch: re-running a painter every
+      // frame is waste, but drawImage from an ImageBitmap is GPU-cheap, and caching
+      // it would hold a second full-size copy of every asset. Falls back to the
+      // effect's colour until the decode lands (see _warmImage) — the frame is
+      // always fully covered, so the raw camera never shows through.
+      drawImageBackground(ctx, this._bitmaps.get(effect.src) || null, effect.fallback, w, h);
       return;
     }
     // kind "none" should never reach the compositor — media.js tears the
