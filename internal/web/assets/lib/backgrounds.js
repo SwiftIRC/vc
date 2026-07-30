@@ -51,6 +51,24 @@ export function coverRect(sw, sh, dw, dh) {
   return { sx: (sw - cw) / 2, sy: (sh - ch) / 2, sw: cw, sh: ch };
 }
 
+// Draw an image background: the bitmap cover-fit into the frame, or the effect's
+// fallback colour when it is not (yet) available. Returns whether the bitmap was
+// drawn, so a caller that wants to redraw once it arrives can tell.
+//
+// The fallback branch is load-bearing, not cosmetic. An image effect is applied
+// SYNCHRONOUSLY while its bitmap is still decoding, so for the first frame or two
+// this is the only thing standing between the subject and a composited raw camera
+// frame. It must fill the entire rect, exactly as a painter must.
+export function drawImageBackground(ctx, bitmap, fallback, w, h) {
+  const rect = bitmap && coverRect(bitmap.width, bitmap.height, w, h);
+  if (!rect) {
+    fill(ctx, w, h, fallback);
+    return false;
+  }
+  ctx.drawImage(bitmap, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, w, h);
+  return true;
+}
+
 // --- painters ---
 
 // Deep night sky with additive colour washes.

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EFFECTS, resolveEffectId, effectById, coverRect } from "../assets/lib/backgrounds.js";
+import { EFFECTS, resolveEffectId, effectById, coverRect, drawImageBackground } from "../assets/lib/backgrounds.js";
 
 // A recording stand-in for CanvasRenderingContext2D. Node has no canvas, but the
 // properties that matter here — does the painter cover the frame, does it leave
@@ -27,6 +27,10 @@ function fakeCtx(w, h, callLimit = Infinity) {
     fill: () => {
       if (calls.length >= callLimit) throw new Error("unbounded work detected");
       calls.push({ op: "fill" });
+    },
+    drawImage: (...args) => {
+      if (calls.length >= callLimit) throw new Error("unbounded work detected");
+      calls.push({ op: "drawImage", args });
     },
     createLinearGradient: () => ({ addColorStop() {} }),
     createRadialGradient: () => ({ addColorStop() {} }),
@@ -171,4 +175,37 @@ test("coverRect returns null for degenerate dimensions rather than a NaN rect", 
   }
   assert.equal(coverRect(NaN, 720, 640, 360), null);
   assert.equal(coverRect(1280, 720, undefined, 360), null);
+});
+
+test("drawImageBackground draws the bitmap cover-fit and reports it drew", () => {
+  const { ctx, calls } = fakeCtx(640, 480);
+  const bitmap = { width: 1280, height: 720 };
+  assert.equal(drawImageBackground(ctx, bitmap, "#585454", 640, 480), true);
+  assert.deepEqual(calls, [
+    // source rect from coverRect(1280,720,640,480), destination the full frame
+    { op: "drawImage", args: [bitmap, 160, 0, 960, 720, 0, 0, 640, 480] },
+  ]);
+});
+
+test("drawImageBackground fills the whole frame with the fallback when there is no bitmap", () => {
+  // This is the invariant that matters: until the bitmap decodes, something must
+  // cover every pixel, or the raw camera shows through.
+  const { ctx, calls } = fakeCtx(640, 480);
+  assert.equal(drawImageBackground(ctx, null, "#585454", 640, 480), false);
+  assert.deepEqual(calls, [{ op: "fillRect", x: 0, y: 0, w: 640, h: 480 }]);
+  assert.equal(ctx.fillStyle, "#585454");
+});
+
+test("drawImageBackground falls back for a bitmap with unusable dimensions", () => {
+  const { ctx, calls } = fakeCtx(640, 480);
+  assert.equal(drawImageBackground(ctx, { width: 0, height: 0 }, "#585454", 640, 480), false);
+  assert.deepEqual(calls, [{ op: "fillRect", x: 0, y: 0, w: 640, h: 480 }]);
+});
+
+test("drawImageBackground never leaves global canvas state dirty", () => {
+  // Same contract the painters are held to: the compositor reuses one context.
+  const { ctx } = fakeCtx(640, 480);
+  drawImageBackground(ctx, { width: 1280, height: 720 }, "#585454", 640, 480);
+  assert.equal(ctx.globalCompositeOperation, "source-over");
+  assert.equal(ctx.filter, "none");
 });
