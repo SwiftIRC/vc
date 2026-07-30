@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EFFECTS, resolveEffectId, effectById } from "../assets/lib/backgrounds.js";
+import { EFFECTS, resolveEffectId, effectById, coverRect } from "../assets/lib/backgrounds.js";
 
 // A recording stand-in for CanvasRenderingContext2D. Node has no canvas, but the
 // properties that matter here — does the painter cover the frame, does it leave
@@ -146,4 +146,29 @@ test("painters handle degenerate sizes without infinite loops or unbounded work"
       assert.ok(calls.length < 100, `${e.id} at ${w}×${h} made ${calls.length} calls`);
     }
   }
+});
+
+test("coverRect crops the sides when the source is wider than the target", () => {
+  // 16:9 source into a 4:3 frame: full height, sides trimmed, centred.
+  assert.deepEqual(coverRect(1280, 720, 640, 480), { sx: 160, sy: 0, sw: 960, sh: 720 });
+});
+
+test("coverRect crops top and bottom when the source is taller than the target", () => {
+  // A square source into 16:9: full width, top and bottom trimmed, centred.
+  assert.deepEqual(coverRect(1024, 1024, 1280, 720), { sx: 0, sy: 224, sw: 1024, sh: 576 });
+});
+
+test("coverRect uses the whole source when the aspect ratios match", () => {
+  assert.deepEqual(coverRect(1280, 720, 640, 360), { sx: 0, sy: 0, sw: 1280, sh: 720 });
+  assert.deepEqual(coverRect(1280, 720, 48, 27), { sx: 0, sy: 0, sw: 1280, sh: 720 });
+});
+
+test("coverRect returns null for degenerate dimensions rather than a NaN rect", () => {
+  // drawImage throws IndexSizeError on a zero-sized source rect, so callers need a
+  // signal to fall back instead of a rect they cannot use.
+  for (const args of [[0, 720, 640, 360], [1280, 0, 640, 360], [1280, 720, 0, 360], [1280, 720, 640, 0]]) {
+    assert.equal(coverRect(...args), null, `coverRect(${args}) should be null`);
+  }
+  assert.equal(coverRect(NaN, 720, 640, 360), null);
+  assert.equal(coverRect(1280, 720, undefined, 360), null);
 });

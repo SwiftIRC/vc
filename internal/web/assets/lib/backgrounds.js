@@ -36,6 +36,21 @@ function glow(ctx, w, h, { x, y, r, from, to }) {
   ctx.fillRect(0, 0, w, h);
 }
 
+// The source rectangle that fills a dw x dh target completely with a centre crop
+// and no distortion — the "cover" fit. Needed because the image assets are 16:9
+// but a camera frame may be 4:3, and the picker's chip is 48x27.
+//
+// Returns null for any non-positive or non-finite dimension. A zero-sized source
+// rect makes drawImage throw IndexSizeError, so callers need a signal to fall
+// back on rather than a rect they cannot use.
+export function coverRect(sw, sh, dw, dh) {
+  if (!(sw > 0) || !(sh > 0) || !(dw > 0) || !(dh > 0)) return null;
+  const scale = Math.max(dw / sw, dh / sh); // whichever axis needs more growth wins
+  const cw = Math.min(sw, dw / scale);
+  const ch = Math.min(sh, dh / scale);
+  return { sx: (sw - cw) / 2, sy: (sh - ch) / 2, sw: cw, sh: ch };
+}
+
 // --- painters ---
 
 // Deep night sky with additive colour washes.
