@@ -223,8 +223,10 @@ thermal/battery behaviour, or tab-visibility interaction — those only exist in
 real browser with a real camera. **None of this feature's runtime behaviour has
 been verified yet; every item below is an open check, not a confirmed result.**
 
-- [ ] **Lobby catalogue** — open a room. The lobby shows a **Background** row
-      with 8 chips.
+- [ ] **Lobby catalogue** — open a room. The lobby's Background control shows
+      two labelled rows: **EFFECTS** (None, Blur, Blur+, Aurora, Dusk, Grid,
+      Depth, Paper — 8 chips) and **SCENES** (Office Space, Space Ghost, Star
+      Trek, Idiocracy, Carina — 5 chips), thirteen chips in all.
 - [ ] **Blur starts and lazy-loads once** — pick **Blur**. The preview blurs
       behind you within a few seconds. The first pick downloads ~3.4MB (Network
       tab: `vision_wasm_internal.wasm`, `Content-Encoding: gzip`); picking a
@@ -233,8 +235,20 @@ been verified yet; every item below is an open check, not a confirmed result.**
       on Blur and on a virtual background. Some softness is expected; large
       chunks of head disappearing is not.
 - [ ] **Virtual backgrounds fill the frame** — pick each of the 5 procedural
-      backgrounds in turn. Each should fill the frame completely — no camera
-      visible at the edges, no flicker between frames.
+      backgrounds in turn, then each of the 5 image scenes in turn. Each should
+      fill the frame completely — no camera visible at the edges, no flicker
+      between frames.
+- [ ] **Scene chips show their image** — every chip in the **Scenes** row shows a
+      photo, not a flat colour rectangle. A flat chip means that asset failed to
+      load: check the console for "background image … could not be loaded".
+- [ ] **Scenes fill a non-16:9 frame** — the assets are 16:9. On a device whose
+      camera offers 4:3, pick each scene and confirm it still fills the frame with
+      no letterboxing and no stretching (it is centre-cropped).
+- [ ] **No raw camera during a scene switch** — switch rapidly between scenes, and
+      between a scene and a painted effect. A brief flat colour is expected while
+      the image decodes; the unmasked camera background must never appear.
+- [ ] **A scene survives a reload** — pick a scene in the lobby, join, reload.
+      The lobby returns with that scene selected and its chip highlighted.
 - [ ] **Blur edge coverage (vignette check)** — on both **Blur** and **Blur+**,
       look closely at the outer edge of the frame, ideally against something
       light or high-contrast behind you. A `clearRect` fix already stops the
