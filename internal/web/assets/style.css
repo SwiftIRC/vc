@@ -1221,16 +1221,39 @@ body.ui-idle .controls {
 
 .bg-strip {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0; /* let the chip row scroll rather than stretching the picker */
+}
+
+.bg-row-label {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The scroll moved from the strip to each row, so Effects and Scenes scroll
+   independently and neither pushes the other sideways. */
+.bg-row-chips {
+  display: flex;
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 
 /* In the settings popover a scrolling strip is awkward to hit, so wrap instead. */
-.bg-picker.compact .bg-strip {
+.bg-picker.compact .bg-row-chips {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   overflow-x: visible;
+  padding-bottom: 0;
 }
 
 .bg-chip {

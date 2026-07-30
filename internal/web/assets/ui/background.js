@@ -3,16 +3,23 @@
 // in-call settings menu (`compact`, which wraps to a grid so the popover stays a
 // sane width).
 //
-// Thumbnails are drawn by the SAME painters that draw the real background, at
-// 48x27, so a chip is always an exact preview rather than a stale asset that can
-// drift from what the effect actually produces.
+// Chips are grouped into a labelled row per backgrounds.js GROUPS: the blur and
+// painted "Effects", then the photographic "Scenes".
+//
+// A painted chip is drawn by the SAME painter that draws the real background, at
+// 48x27, so it is an exact preview. A scene chip cannot be: it shows a 48x27 crop
+// of the asset, which conveys the colour and little else, so its label carries the
+// meaning. Scene chips paint the effect's fallback colour immediately and redraw
+// when the bitmap decodes — which also warms the cache, so the image is normally
+// ready before anyone clicks.
 //
 // The ~3.4MB MediaPipe runtime is loaded on first use, not on page load, so the
 // disabled/pending state here matters: it is the only feedback during a load that
 // can take a few seconds on a slow connection. This mirrors how the noise
 // suppression button handles its ~2MB worklet.
 
-import { EFFECTS, effectById } from "../lib/backgrounds.js";
+import { GROUPS, drawImageBackground, effectById } from "../lib/backgrounds.js";
+import { loadBackgroundImage } from "../lib/backgroundImages.js";
 
 const THUMB_W = 48;
 const THUMB_H = 27;
@@ -38,6 +45,17 @@ function el(tag, attrs = {}, ...kids) {
 function drawThumb(canvas, effect) {
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, THUMB_W, THUMB_H);
+  if (effect.kind === "image") {
+    // The fallback now, the real image when it decodes. Requesting it here is also
+    // what warms the loader's cache before the user picks anything.
+    drawImageBackground(ctx, null, effect.fallback, THUMB_W, THUMB_H);
+    loadBackgroundImage(effect.src).then((bitmap) => {
+      if (!bitmap) return; // a dead asset keeps its fallback colour
+      ctx.clearRect(0, 0, THUMB_W, THUMB_H);
+      drawImageBackground(ctx, bitmap, effect.fallback, THUMB_W, THUMB_H);
+    });
+    return;
+  }
   if (effect.kind === "paint") {
     effect.paint(ctx, THUMB_W, THUMB_H);
     return;
@@ -80,24 +98,30 @@ export class BackgroundPicker {
     this.notice = el("p", { class: "bg-notice", role: "status", hidden: true });
     this.strip = el("div", { class: "bg-strip", role: "radiogroup", "aria-label": "Background" });
 
-    for (const effect of EFFECTS) {
-      const canvas = el("canvas", { class: "bg-thumb", width: THUMB_W, height: THUMB_H, "aria-hidden": "true" });
-      drawThumb(canvas, effect);
-      const chip = el(
-        "button",
-        {
-          type: "button",
-          class: "bg-chip",
-          role: "radio",
-          "aria-checked": "false",
-          title: effect.label,
-          onClick: () => this._choose(effect.id),
-        },
-        canvas,
-        el("span", { class: "bg-label", text: effect.label }),
+    for (const group of GROUPS) {
+      const chips = el("div", { class: "bg-row-chips" });
+      for (const effect of group.effects) {
+        const canvas = el("canvas", { class: "bg-thumb", width: THUMB_W, height: THUMB_H, "aria-hidden": "true" });
+        drawThumb(canvas, effect);
+        const chip = el(
+          "button",
+          {
+            type: "button",
+            class: "bg-chip",
+            role: "radio",
+            "aria-checked": "false",
+            title: effect.label,
+            onClick: () => this._choose(effect.id),
+          },
+          canvas,
+          el("span", { class: "bg-label", text: effect.label }),
+        );
+        this.chips.set(effect.id, chip);
+        chips.append(chip);
+      }
+      this.strip.append(
+        el("div", { class: "bg-row" }, el("span", { class: "bg-row-label", text: group.label }), chips),
       );
-      this.chips.set(effect.id, chip);
-      this.strip.append(chip);
     }
 
     this.el = el("div", { class: compact ? "bg-picker compact" : "bg-picker" }, this.strip, this.notice);
