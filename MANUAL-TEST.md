@@ -71,6 +71,17 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       tile appears for the shared surface **without** displacing the sharer's camera
       tile; other browsers see the same separate screen tile. Stop it (button or the
       browser's "Stop sharing") and the screen tile — and only it — goes away.
+- [ ] **Audio-only share ends cleanly** — share a tab with "Share tab audio" ticked
+      but pick a surface with no video (or share audio only). Remote browsers get a
+      screen tile showing the 🔊 **Sharing audio** placeholder plus a volume slider.
+      Stop the share: on every remote browser the whole tile goes away — not just
+      the slider. A black tile still captioned "Sharing audio", with no controls on
+      it, is the failure this checks for.
+- [ ] **Half a share ending keeps the other half** — share a tab WITH both video and
+      audio, then stop only the audio (re-share the same surface without audio, or
+      mute the tab at source). The screen tile must stay up showing the video, and
+      lose only its volume slider. Conversely a share whose video ends while its
+      audio continues must keep the tile and fall back to the 🔊 placeholder.
 - [ ] **Active speaker highlights** — with 2+ remote participants, whoever is
       talking gets an accent-outlined tile; it follows the loudest voice and clears
       when the room goes quiet.

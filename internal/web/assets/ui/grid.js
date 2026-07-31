@@ -341,12 +341,8 @@ export class Grid {
   // presence — a toggle keeps the track published, so no track-end fires for it.
   onPeerGone({ participantId, kind } = {}) {
     if (!participantId) return;
-    if (kind === "screen") {
-      this._removeScreenTile(participantId);
-      return;
-    }
-    if (kind === "screen-audio") {
-      this._detachScreenAudio(participantId);
+    if (kind === "screen" || kind === "screen-audio") {
+      this._dropScreenPart(participantId, kind);
       return;
     }
     const tile = this.tiles.get(participantId);
@@ -787,6 +783,31 @@ export class Grid {
     }
     this._applyVolume(rec, rec.volumeEl ? Math.min(2, Math.max(0, Number(rec.volumeEl.value))) : 1);
     rec.audioEl.play().catch(() => {});
+  }
+
+  // One half of a screenshare ended. A screen tile is justified by EITHER half —
+  // the shared video, or the shared tab/system audio — so losing one half must
+  // leave the tile up while the other is still live, and losing the LAST half must
+  // take the tile down.
+  //
+  // Routing both kinds through here is what makes an audio-only share end
+  // properly. Such a share never calls _addScreenTile (there is no video), so its
+  // tile is created by _attachScreenAudio, keeps the "Sharing audio" placeholder,
+  // and has a null video.srcObject. Detaching the audio on its own then stripped
+  // the <audio> element, the volume slider and its label but left the tile itself:
+  // a black pane captioned "Sharing audio" with no controls, for the rest of the
+  // call, since nothing else removes a screen tile except the publisher leaving.
+  _dropScreenPart(id, kind) {
+    const rec = this.screens.get(id);
+    if (!rec) return;
+    if (kind === "screen") {
+      rec.video.srcObject = null;
+      // Shared audio may still be playing, and that is what the placeholder says.
+      if (rec.placeholder) rec.placeholder.hidden = false;
+    } else {
+      this._detachScreenAudio(id);
+    }
+    if (!rec.video.srcObject && !rec.audioEl) this._removeScreenTile(id);
   }
 
   _detachScreenAudio(id) {
