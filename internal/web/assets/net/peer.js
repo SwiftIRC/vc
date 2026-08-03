@@ -506,24 +506,38 @@ export class Peer extends EventTarget {
   async _dumpStats() {
     if (!TRACK_DEBUG || !this.pc || !this._incoming) return;
     if (this.pc.connectionState === "closed") return;
-    let stats;
-    try {
-      stats = await this.pc.getStats();
-    } catch {
-      return;
-    }
-    const trackToMid = new Map();
-    for (const [mid, rec] of this._incoming) if (rec && rec.track) trackToMid.set(rec.track.id, mid);
+    // Ask each RECEIVER for its own stats rather than matching one connection-wide
+    // report by trackIdentifier. The SFU names every forwarded track after its KIND
+    // (NewTrackLocalStaticRTP(codec, kind, publisherID)), which Pion writes as
+    // `a=msid:<publisherID> <kind>` — so EVERY publisher's camera arrives as a track
+    // whose id is literally "camera". Keying a mid lookup by track id therefore
+    // collapsed all of them onto whichever mid was added last, and the dump then
+    // attributed one publisher's stream to another: two cameras both printed as the
+    // newest participant's mid, which reads as one peer having two video streams.
+    // Per-receiver stats carry no such ambiguity.
     const lines = [];
-    stats.forEach((r) => {
-      if (r.type !== "inbound-rtp" || r.kind !== "video") return;
-      const mid = trackToMid.get(r.trackIdentifier);
-      const info = mid != null && this._trackInfo ? this._trackInfo.get(mid) : null;
-      const who = info ? `${info.kind}@${info.participantId}` : `ssrc=${r.ssrc}`;
-      lines.push(
-        `${who} mid=${mid ?? "?"} recv=${r.framesReceived ?? 0} dec=${r.framesDecoded ?? 0} key=${r.keyFramesDecoded ?? 0} drop=${r.framesDropped ?? 0} pli=${r.pliCount ?? 0} nack=${r.nackCount ?? 0} lost=${r.packetsLost ?? 0} bytes=${r.bytesReceived ?? 0} ${r.frameWidth ?? 0}x${r.frameHeight ?? 0} fps=${r.framesPerSecond ?? 0}`,
-      );
-    });
+    for (const tr of this.pc.getTransceivers()) {
+      const mid = tr.mid;
+      if (mid == null) continue;
+      if (!this._incoming.has(mid) && !this._trackInfo.has(mid)) continue; // skip retired m-lines
+      const receiver = tr.receiver;
+      const track = receiver && receiver.track;
+      if (!track || track.kind !== "video") continue;
+      let scoped;
+      try {
+        scoped = await receiver.getStats();
+      } catch {
+        continue;
+      }
+      const info = this._trackInfo.get(mid);
+      const who = info ? `${info.kind}@${info.participantId}` : `mid=${mid}`;
+      scoped.forEach((r) => {
+        if (r.type !== "inbound-rtp" || r.kind !== "video") return;
+        lines.push(
+          `${who} mid=${mid} recv=${r.framesReceived ?? 0} dec=${r.framesDecoded ?? 0} key=${r.keyFramesDecoded ?? 0} drop=${r.framesDropped ?? 0} pli=${r.pliCount ?? 0} nack=${r.nackCount ?? 0} lost=${r.packetsLost ?? 0} bytes=${r.bytesReceived ?? 0} ${r.frameWidth ?? 0}x${r.frameHeight ?? 0} fps=${r.framesPerSecond ?? 0}`,
+        );
+      });
+    }
     if (lines.length) console.info("[track-debug stats]\n  " + lines.join("\n  "));
   }
 

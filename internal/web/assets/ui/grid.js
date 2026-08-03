@@ -330,6 +330,23 @@ export class Grid {
       tile.cameraVideo.srcObject = stream;
       tile.cameraVideo.play().catch(() => {}); // nudge playback in case autoplay stalled (black tile)
       tile.hasCamera = true;
+      // Deliberately NOT clearing camOff here. Track arrival cannot prove the camera
+      // is live: this app mutes a camera by disabling the track, not by unpublishing
+      // it, so a peer who joins with their camera off still publishes a (disabled)
+      // track and still lands here — uncovering would replace their avatar with a
+      // black frame. setPeerMedia stays the authority.
+      //
+      // But that authority is a single point of failure: camOff is written NOWHERE
+      // else for a remote tile, so one lost, stale, or out-of-order media-state
+      // leaves a decoding video covered for the rest of the call, which presents as
+      // "their camera is on but I can't see them". Log the inconsistency so the next
+      // occurrence names itself instead of needing a track-debug session.
+      if (!tile.camOff.hidden) {
+        console.warn(
+          `[grid] camera media arrived for ${participantId} while the camera-off placeholder is still showing —` +
+            " the last media-state for them said camera off. If they are visibly on, a media-state broadcast was missed.",
+        );
+      }
     } else if (kind === "mic") {
       this._attachAudio(participantId, stream);
     }
