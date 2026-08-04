@@ -504,11 +504,15 @@ export class Controls {
   // by app.js right after join, so a client that joined muted/camera-off (a
   // pre-join toggle) is seen correctly — the server otherwise stored the default
   // (on). Idempotent to re-send.
-  sendMediaState() {
+  //
+  // remember=false broadcasts without persisting. An op-forced mute must still tell
+  // the room (see onMuted) but is not this user's own preference, so it must not
+  // decide how their NEXT call starts.
+  sendMediaState({ remember = true } = {}) {
     const mic = !!(this.media && this.media.micTrack && this.media.micTrack.enabled);
     const camera = !!(this.media && this.media.cameraTrack && this.media.cameraTrack.enabled);
     this._send("media-state", { mic, camera });
-    saveMediaPrefs({ mic, camera }); // remember for the next call's lobby
+    if (remember) saveMediaPrefs({ mic, camera }); // remember for the next call's lobby
   }
 
   // Toggle this client's low-bandwidth (data-saver) mode: stop/resume downloading
@@ -840,6 +844,11 @@ export class Controls {
         t.enabled = false;
         this._setMicButton(false);
         if (this.grid) this.grid.refreshSelf();
+        // Tell the room, exactly as _toggleMic does. Without this the track really
+        // is disabled — the mute WORKS — but nobody else is told, so every remote
+        // mic pill for this user stays showing "unmuted", including the op who just
+        // muted them. The op sees no change and concludes the mute did nothing.
+        this.sendMediaState({ remember: false });
       }
     } else if (kind === "camera") {
       const t = this.media.cameraTrack;
@@ -847,6 +856,7 @@ export class Controls {
         t.enabled = false;
         this._setCameraButton(false);
         if (this.grid) this.grid.refreshSelf();
+        this.sendMediaState({ remember: false }); // same as mic above
       }
     } else if (kind === "screen") {
       this.media.stopScreen(); // -> screen-stop -> unpublish + button

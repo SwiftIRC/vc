@@ -159,6 +159,16 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Op mute nudges the target (re-enableable)** — an op clicks mute on a remote
       tile; that client's mic goes off (its Mute button flips to Unmute) but the
       user can click Unmute to speak again — a nudge, not a hard lock.
+- [ ] **An op-forced mute updates everyone's indicator** — as an op, mute browser B's
+      mic from B's tile. B's mic really goes silent, AND B's mic pill flips to
+      crossed-out on **every** browser including the op's own, not just on B's. A
+      mute that silences B while leaving their pill showing "unmuted" everywhere else
+      reads to the op as "my mute did nothing" — that is the failure this checks for.
+      Repeat for camera. Then have B un-mute themselves: the pill must come back on
+      for everyone (the mute is a nudge, not a lock).
+- [ ] **A forced mute is not remembered** — after being op-muted, B leaves and
+      rejoins. B's lobby must NOT come back pre-muted: a forced mute is not B's own
+      preference and must not decide how their next call starts.
 - [ ] **Op stops a screenshare** — while browser B is sharing its screen, an op sees
       a **stop share** button on B's screen tile (a non-op does not). The op clicks
       it; B's share ends (B's Share-screen button flips back from "Stop share"), and
