@@ -465,6 +465,14 @@ export class Grid {
     if (this._audioCtx && typeof this._audioCtx.setSinkId === "function") {
       this._audioCtx.setSinkId(this._sinkId).catch(() => {});
     }
+    // Logged because this is the leading suspect whenever someone echoes. A
+    // browser's echo canceller subtracts a reference of what it believes is being
+    // played, and that reference is tied to the DEFAULT output device. Routing
+    // playback to a different sink leaves the canceller subtracting the wrong
+    // signal, so a speaker user who picks a non-default output can echo even
+    // though echoCancellation reports true on their mic. Pair this line with
+    // "[audio capture]" from media.js to tell the two causes apart.
+    console.info(`[audio output] sink=${this._sinkId || "(browser default)"}`);
   }
 
   // Mute/unmute ALL incoming audio (deafen). Transient — not persisted. Re-applies volume

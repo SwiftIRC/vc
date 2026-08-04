@@ -23,6 +23,15 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       browser and confirm the first browser's count rises within ~3s.
 - [ ] **Device pickers** — the Camera / Microphone dropdowns list your inputs;
       switching one updates the preview without dropping the other.
+- [ ] **Audio processing is reported** — on joining, the console logs one
+      `[audio capture]` line naming the mic and the processing the browser actually
+      applied. `echoCancellation=true` is what you want; `false` or `undefined` on a
+      participant who echoes is the answer. Switching microphone logs an
+      `[audio switch]` line, and changing the output device logs `[audio output]`.
+      **When chasing an echo, collect all three from the person being echoed, not
+      from the person hearing it** — a non-default output sink can defeat echo
+      cancellation even when the mic reports `echoCancellation=true`, because the
+      canceller's reference follows the default device.
 - [ ] **Locked room shows password field** — with the room locked (an op runs the
       lock action from another client), reload the lobby; a Password field appears
       once the poll reports `locked`.

@@ -33,6 +33,7 @@
 
 import { BackgroundSegmenter } from "../lib/segmenter.js";
 import { resolveEffectId } from "../lib/backgrounds.js";
+import { micConstraints } from "../lib/audioConstraints.js";
 
 export class Media extends EventTarget {
   constructor() {
@@ -100,6 +101,44 @@ export class Media extends EventTarget {
     return this._nsOn;
   }
 
+  // What the browser ACTUALLY applied to the mic capture — not what we asked for.
+  // A constraint is a request: a device or platform that cannot echo-cancel simply
+  // reports it off, and until now nothing here would have said so.
+  //
+  // Read from the RAW device track, deliberately. While the noise-suppression
+  // worklet is on, micTrack is the worklet's MediaStreamDestination output, whose
+  // getSettings() describes a synthetic node and says nothing about capture-time
+  // processing — reading it would report every call as having no echo cancellation.
+  //
+  // An undefined field means the browser does not report that setting, which is
+  // itself worth seeing: it is not the same as the feature being off.
+  micProcessing() {
+    const raw = (this.stream && this.stream.getAudioTracks()[0]) || null;
+    if (!raw || typeof raw.getSettings !== "function") return null;
+    const s = raw.getSettings() || {};
+    return {
+      label: raw.label || "",
+      echoCancellation: s.echoCancellation,
+      noiseSuppression: s.noiseSuppression,
+      autoGainControl: s.autoGainControl,
+      sampleRate: s.sampleRate,
+      worklet: this._nsOn, // our own RNNoise pass, on top of whatever the browser did
+    };
+  }
+
+  // One line per capture, so a pasted console log answers "was echo cancellation
+  // even on for this person?" without a debugging session. Echo reports are
+  // otherwise unfalsifiable: the person hearing it is never the person causing it.
+  _logMicProcessing(where) {
+    const p = this.micProcessing();
+    if (!p) return;
+    console.info(
+      `[audio ${where}] mic="${p.label}" echoCancellation=${p.echoCancellation} ` +
+        `noiseSuppression=${p.noiseSuppression} autoGainControl=${p.autoGainControl} ` +
+        `sampleRate=${p.sampleRate} rnnoiseWorklet=${p.worklet}`,
+    );
+  }
+
   get cameraTrack() {
     return (this.stream && this.stream.getVideoTracks()[0]) || null;
   }
@@ -133,8 +172,11 @@ export class Media extends EventTarget {
         return null; // a denied/absent device must not block the other
       }
     };
-    const micStream = await grab({ audio: micId ? { deviceId: { ideal: micId } } : true });
-    if (micStream) this._adopt(micStream);
+    const micStream = await grab({ audio: micConstraints(micId) });
+    if (micStream) {
+      this._adopt(micStream);
+      this._logMicProcessing("capture");
+    }
     const camStream = await grab({ video: cameraId ? { deviceId: { ideal: cameraId } } : true });
     if (camStream) this._adopt(camStream);
     if (!this.stream) {
@@ -170,7 +212,7 @@ export class Media extends EventTarget {
     // Truthy, not != null: an empty deviceId (a device with no label/id because
     // permission was never granted) would become {exact:""} and fail the whole call.
     if (cameraId) constraints.video = { deviceId: { exact: cameraId } };
-    if (micId) constraints.audio = { deviceId: { exact: micId } };
+    if (micId) constraints.audio = micConstraints(micId, { exact: true });
     if (!constraints.video && !constraints.audio) return this.stream;
     // While NS is on the mute state lives on the PROCESSED track (micTrack), not the
     // raw device track; remember it so a mic switch keeps the same mute state.
@@ -248,6 +290,10 @@ export class Media extends EventTarget {
       // track; setBackground already reports and degrades to "none".
       await this.setBackground(wantedBg);
     }
+    // A different microphone can come back with different processing — a headset
+    // that cancels, a virtual/loopback device that does not — so report the switch
+    // as well as the initial capture.
+    if (micId) this._logMicProcessing("switch");
     return this.stream;
   }
 
