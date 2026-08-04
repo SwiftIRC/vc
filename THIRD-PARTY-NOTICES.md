@@ -36,13 +36,14 @@ bundle rather than from a recorded vendoring step:
 Re-vendoring this file from a recorded source, with checksums and the licence texts,
 would put it on the same footing as the MediaPipe directory.
 
-### Background scenes — `internal/web/assets/img/`
+### Background scenes — `internal/web/assets/img/bg/`
 
-See [`internal/web/assets/img/README.md`](internal/web/assets/img/README.md) for
-per-file sources and checksums.
+See [`internal/web/assets/img/bg/README.md`](internal/web/assets/img/bg/README.md)
+for per-file sources and checksums.
 
-`carina.webp` is the JWST "Cosmic Cliffs" image from the ESA/Webb archive.
-Credit **NASA/ESA/CSA/STScI**.
+`carina.webp` ("Cosmic Cliffs") and `pillars.webp` ("Pillars of Creation") are JWST
+images from the ESA/Webb archive. Credit **NASA/ESA/CSA/STScI**. They are the only
+scenes tracked in this repository.
 
 **Four further scenes — `office-space.webp`, `space-ghost.webp`, `star-trek.webp`
 and `idiocracy.webp` — are frames from copyrighted film and television** (Office
@@ -54,8 +55,10 @@ merge, publish, distribute, sublicense, and/or sell" does not extend to them and
 cannot be granted by this project.
 
 **They are therefore not in this repository.** They are git-ignored, so they exist
-only in a working copy that put them there deliberately. A clone contains
-`carina.webp` and nothing else, and a binary built from a clone embeds only that.
+only in a working copy that put them there deliberately. A clone contains the two
+JWST images and nothing else, and a binary built from a clone embeds only those.
+The ignore rule denies every `.webp` and re-admits the licensed ones by name, so an
+unlicensed image cannot be committed by forgetting to update a list.
 
 Nothing needs deleting before redistributing a build, because the client no longer
 hard-codes a scene list. `internal/server/scenes.go` discovers whichever images
@@ -65,9 +68,8 @@ your build has them and must not be redistributed; a build from a clean clone ca
 be.
 
 The same mechanism is how you add your own: drop a `.webp` into
-`internal/web/assets/img/` and rebuild. Give it a label and an average colour in
-`scenes.json` if you want it named nicely; otherwise the label is derived from the
-filename and it gets a neutral placeholder colour.
+`internal/web/assets/img/bg/` and rebuild. The filename becomes the chip label, and
+there is nothing else to update.
 
 ---
 

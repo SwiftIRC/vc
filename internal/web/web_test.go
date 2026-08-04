@@ -48,15 +48,12 @@ func TestMediaPipeAssetsEmbedded(t *testing.T) {
 // carina.webp is the ESA/Webb release and IS tracked, so it also stands in for
 // "the scene mechanism is wired up at all".
 func TestImageBackgroundAssetsEmbedded(t *testing.T) {
-	info, err := fs.Stat(Assets, "img/carina.webp")
+	info, err := fs.Stat(Assets, "img/bg/carina.webp")
 	if err != nil {
-		t.Fatalf("img/carina.webp not embedded: %v", err)
+		t.Fatalf("img/bg/carina.webp not embedded: %v", err)
 	}
 	if info.Size() < 20*1024 {
-		t.Errorf("img/carina.webp is only %d bytes — looks truncated", info.Size())
-	}
-	if _, err := fs.Stat(Assets, "img/scenes.json"); err != nil {
-		t.Errorf("img/scenes.json not embedded: %v — scene labels and colours come from it", err)
+		t.Errorf("img/bg/carina.webp is only %d bytes — looks truncated", info.Size())
 	}
 }
 
@@ -64,7 +61,7 @@ func TestImageBackgroundAssetsEmbedded(t *testing.T) {
 // placeholder file would reach the browser as a chip stuck on its fallback colour,
 // which no JS test can see.
 func TestEmbeddedSceneImagesAreUsable(t *testing.T) {
-	files, err := fs.Glob(Assets, "img/*.webp")
+	files, err := fs.Glob(Assets, "img/bg/*.webp")
 	if err != nil {
 		t.Fatalf("glob: %v", err)
 	}

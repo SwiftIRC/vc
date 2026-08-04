@@ -29,7 +29,7 @@ own and can wire natively into SwiftIRC.
   entirely in the browser), with an automatic fall back to no effect on a device
   that cannot sustain a usable frame rate. The picker offers two rows: **Effects**
   (blur and procedurally-painted washes, drawn in code) and **Scenes** (photographic
-  WebP backgrounds, discovered at build time from `internal/web/assets/img/` — drop
+  WebP backgrounds, discovered at build time from `internal/web/assets/img/bg/` — drop
   one in and rebuild to add it; the Scenes row is omitted entirely if there are none).
   **Requires WebGL** — MediaPipe's vision graph is GL-based regardless of whether
   inference runs on the GPU or the CPU, so with hardware acceleration disabled the
@@ -63,9 +63,9 @@ own and can wire natively into SwiftIRC.
   unit tests for its pure logic (`test/`). Two vendored payloads live here and
   account for most of the binary: the MediaPipe segmentation runtime
   (`assets/vendor/mediapipe/`, stored gzipped) and whichever background scenes are
-  in `assets/img/` (~127 KB for the one in the repository, ~339 KB with all five of
-  the author's local set). Both carry a README recording source, licence and
-  checksums; read `assets/img/README.md` before redistributing a build. A binary
+  in `assets/img/bg/` (~250 KB for the two in the repository, ~470 KB with the
+  author's full local set). Both carry a README recording source, licence and
+  checksums; read `assets/img/bg/README.md` before redistributing a build. A binary
   from a clean clone is ~23.0 MiB, against 18,756,525 bytes before MediaPipe was
   vendored.
 - **`cmd/webrtc-chat`** — the entrypoint.
@@ -144,6 +144,7 @@ MediaPipe runtime is Apache-2.0, and the noise-suppression worklet bundles RNNoi
 and core-js.
 
 Background scenes are **discovered from what a build embedded**, not hard-coded, so
-what ships is whatever is in `internal/web/assets/img/` at build time. Only
-`carina.webp` (NASA/ESA/CSA/STScI) is in the repository; anything else is
-git-ignored. Drop your own `.webp` in there and rebuild to add one.
+what ships is whatever is in `internal/web/assets/img/bg/` at build time. Only the two
+JWST images — `carina.webp` and `pillars.webp` (NASA/ESA/CSA/STScI) — are in the
+repository; anything else is git-ignored. Drop your own `.webp` in there and rebuild
+to add one.

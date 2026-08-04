@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EFFECTS, GROUPS, resolveEffectId, effectById, coverRect, drawImageBackground, sceneEffects } from "../assets/lib/backgrounds.js";
+import { EFFECTS, GROUPS, resolveEffectId, effectById, coverRect, drawImageBackground, sceneEffects, SCENE_FALLBACK } from "../assets/lib/backgrounds.js";
 
 // A recording stand-in for CanvasRenderingContext2D. Node has no canvas, but the
 // properties that matter here — does the painter cover the frame, does it leave
@@ -246,9 +246,22 @@ test("an empty group is omitted rather than rendered blank", () => {
 });
 
 test("sceneEffects builds well-formed image entries", () => {
-  const [e] = sceneEffects([{ id: "carina", label: "Carina", src: "/v/abc/img/carina.webp", fallback: "#614E54" }]);
-  assert.deepEqual(e, { id: "carina", label: "Carina", kind: "image", src: "/v/abc/img/carina.webp", fallback: "#614E54" });
+  const [e] = sceneEffects([{ id: "carina", label: "Carina", src: "/v/abc/img/bg/carina.webp" }]);
+  assert.deepEqual(e, { id: "carina", label: "Carina", kind: "image", src: "/v/abc/img/bg/carina.webp", fallback: SCENE_FALLBACK });
   assert.ok(Object.isFrozen(e));
+});
+
+// The fallback is what covers the frame while a scene decodes, and forever if the
+// image 404s. It must be OPAQUE: a transparent or absent fill would leave the
+// compositor drawing nothing and the raw camera showing through, which is the one
+// outcome the whole background pipeline exists to prevent.
+test("every scene falls back to opaque black", () => {
+  assert.equal(SCENE_FALLBACK, "#000000");
+  const built = sceneEffects([
+    { id: "a", src: "/v/1/img/bg/a.webp" },
+    { id: "b", src: "/v/1/img/bg/b.webp", fallback: "#ff0000" }, // a server-sent colour is ignored
+  ]);
+  assert.deepEqual(built.map((e) => e.fallback), [SCENE_FALLBACK, SCENE_FALLBACK]);
 });
 
 test("sceneEffects rejects entries it cannot use", () => {
@@ -258,27 +271,26 @@ test("sceneEffects rejects entries it cannot use", () => {
   const built = sceneEffects([
     null,
     {},
-    { id: "", src: "/v/a/img/x.webp" },
+    { id: "", src: "/v/a/img/bg/x.webp" },
     { id: "no-src" },
-    { id: "ok", src: "/v/a/img/ok.webp" },
+    { id: "ok", src: "/v/a/img/bg/ok.webp" },
   ]);
   assert.deepEqual(built.map((e) => e.id), ["ok"]);
 });
 
 test("sceneEffects never shadows a built-in id, and never duplicates", () => {
   const built = sceneEffects([
-    { id: "blur", src: "/v/a/img/blur.webp" }, // would hijack the blur effect
-    { id: "dup", src: "/v/a/img/dup.webp" },
-    { id: "dup", src: "/v/a/img/dup2.webp" },
+    { id: "blur", src: "/v/a/img/bg/blur.webp" }, // would hijack the blur effect
+    { id: "dup", src: "/v/a/img/bg/dup.webp" },
+    { id: "dup", src: "/v/a/img/bg/dup2.webp" },
   ]);
   assert.deepEqual(built.map((e) => e.id), ["dup"]);
-  assert.equal(built[0].src, "/v/a/img/dup.webp", "the first entry for an id wins");
+  assert.equal(built[0].src, "/v/a/img/bg/dup.webp", "the first entry for an id wins");
 });
 
-test("sceneEffects fills in a missing label and a bad fallback", () => {
-  const [e] = sceneEffects([{ id: "my-photo", src: "/v/a/img/my-photo.webp", fallback: "not-a-colour" }]);
+test("sceneEffects fills in a missing label", () => {
+  const [e] = sceneEffects([{ id: "my-photo", src: "/v/a/img/bg/my-photo.webp" }]);
   assert.equal(e.label, "my-photo", "a missing label falls back to the id rather than rendering blank");
-  assert.match(e.fallback, /^#[0-9a-fA-F]{6}$/, "a bad fallback must still be a paintable colour");
 });
 
 test("sceneEffects tolerates a non-array payload", () => {

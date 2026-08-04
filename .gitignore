@@ -12,5 +12,8 @@
 # every distributed binary. Kept on disk locally; the server discovers whichever
 # images are actually present at build time (internal/server/scenes.go), so a clone
 # simply gets fewer Scenes chips.
-internal/web/assets/img/*.webp
-!internal/web/assets/img/carina.webp
+internal/web/assets/img/bg/*.webp
+# Freely-licensed scenes are tracked; add an exception per file rather than
+# inverting the rule, so an unlicensed image can never be committed by accident.
+!internal/web/assets/img/bg/carina.webp
+!internal/web/assets/img/bg/pillars.webp

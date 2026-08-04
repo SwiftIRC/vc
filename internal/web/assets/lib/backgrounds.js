@@ -7,11 +7,11 @@
 // no licensing, and are resolution-independent — the same painter fills a 1080p
 // frame and a 48x27 picker thumbnail, so a chip is an exact preview of the effect.
 //
-// IMAGE backgrounds (kind "image") are WebP assets under assets/img/, embedded in
-// the binary and described here by `src` plus `fallback`. They give up all three
-// of those properties: ~339K of payload, third-party imagery (see
-// assets/img/README.md), and a fixed 1280x720 that upscales on a 1080p camera and
-// says little at chip size. They buy recognisable scenes, which no painter can.
+// IMAGE backgrounds (kind "image") are the WebP files in assets/img/bg/, embedded
+// in the binary and discovered at build time rather than listed here. They give up
+// all three of those properties: real payload, third-party imagery (see
+// assets/img/bg/README.md), and a fixed 1280x720 that upscales on a 1080p camera
+// and says little at chip size. They buy recognisable scenes, which no painter can.
 // The catalogue holds both; only painters are bound by the rules below.
 //
 // Every painter must:
@@ -166,14 +166,14 @@ const BUILT_IN = Object.freeze([
 
 // Photographic scenes are NOT hard-coded here. The server injects the ones this
 // build actually embedded into the app shell (window.__vcScenes; see
-// internal/server/scenes.go), because that set is decided at build time by what is
-// present in assets/img/ — most of those images are untracked, so a clone has
-// fewer of them than a local checkout, and a fixed list would offer chips whose
+// internal/server/scenes.go), because that set is decided at build time by whatever
+// .webp files are in assets/img/bg/ — most of those images are untracked, so a
+// clone has fewer than a local checkout, and a fixed list would offer chips whose
 // images 404 and never render.
 //
 // Unlike a painter, a scene is an asset: it needs decoding before first use, it is
-// not resolution-independent, and `fallback` — the image's average colour, or a
-// neutral one when unknown — is what covers the frame until the bitmap lands.
+// not resolution-independent, and it has a fallback (see SCENE_FALLBACK) covering
+// the frame until the bitmap lands.
 //
 // `src` arrives absolute and version-stamped from the server, which also settles a
 // hazard a relative path reintroduces: loadBackgroundImage hands src straight to
@@ -183,6 +183,15 @@ const BUILT_IN = Object.freeze([
 // with a 200. res.ok passes, createImageBitmap rejects on the HTML blob, and the
 // failure caches as a permanent null — every scene a flat colour for the life of
 // the page. Do not rewrite these as relative strings.
+// What a scene shows when its image has not decoded — or never will, because the
+// file 404s or is corrupt. Black, uniformly: the alternative was a per-image
+// average colour, which looked tidier but required a hand-maintained manifest
+// beside the files whose only job was to make a failure state prettier, and which
+// went stale the moment an image was added without updating it. Black reads as a
+// deliberate backdrop, and — the property that actually matters — it is opaque, so
+// it covers the frame and the raw camera never shows through.
+export const SCENE_FALLBACK = "#000000";
+
 export function sceneEffects(list) {
   if (!Array.isArray(list)) return [];
   const seen = new Set(BUILT_IN.map((e) => e.id));
@@ -197,7 +206,7 @@ export function sceneEffects(list) {
         label: typeof s.label === "string" && s.label ? s.label : s.id,
         kind: "image",
         src: s.src,
-        fallback: /^#[0-9a-fA-F]{6}$/.test(s.fallback) ? s.fallback : "#2b2f37",
+        fallback: SCENE_FALLBACK,
       }),
     );
   }
