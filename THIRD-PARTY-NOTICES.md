@@ -44,21 +44,30 @@ per-file sources and checksums.
 `carina.webp` is the JWST "Cosmic Cliffs" image from the ESA/Webb archive.
 Credit **NASA/ESA/CSA/STScI**.
 
-**`office-space.webp`, `space-ghost.webp`, `star-trek.webp` and `idiocracy.webp`
-are frames from copyrighted film and television** — Office Space (20th Century
-Fox), Space Ghost Coast to Coast (Cartoon Network / Williams Street), Star Trek:
-The Next Generation (Paramount), and Idiocracy (20th Century Fox). They are used
-here as personal virtual backgrounds, the same way one would set a Zoom background.
+**Four further scenes — `office-space.webp`, `space-ghost.webp`, `star-trek.webp`
+and `idiocracy.webp` — are frames from copyrighted film and television** (Office
+Space, 20th Century Fox; Space Ghost Coast to Coast, Cartoon Network / Williams
+Street; Star Trek: The Next Generation, Paramount; Idiocracy, 20th Century Fox).
+They are **not licensed**, **not covered by this project's MIT licence**, and
+**not offered for reuse or redistribution** — the MIT grant to "use, copy, modify,
+merge, publish, distribute, sublicense, and/or sell" does not extend to them and
+cannot be granted by this project.
 
-They are **not licensed**, are **not covered by this project's MIT licence**, and
-are **not offered for reuse or redistribution**. The MIT grant — to "use, copy,
-modify, merge, publish, distribute, sublicense, and/or sell" — does not extend to
-them and cannot be granted by this project.
+**They are therefore not in this repository.** They are git-ignored, so they exist
+only in a working copy that put them there deliberately. A clone contains
+`carina.webp` and nothing else, and a binary built from a clone embeds only that.
 
-Anyone redistributing a build, publishing a fork, or shipping this commercially
-should delete those four files first. `internal/web/assets/lib/backgrounds.js` is
-the only place they are referenced: removing their catalogue entries and the files
-leaves the picker's Effects row and `carina.webp` working, with no other change.
+Nothing needs deleting before redistributing a build, because the client no longer
+hard-codes a scene list. `internal/server/scenes.go` discovers whichever images
+were embedded and injects that list into the app shell, so the picker offers
+exactly what the build actually contains. If your working copy has the four files,
+your build has them and must not be redistributed; a build from a clean clone can
+be.
+
+The same mechanism is how you add your own: drop a `.webp` into
+`internal/web/assets/img/` and rebuild. Give it a label and an average colour in
+`scenes.json` if you want it named nicely; otherwise the label is derived from the
+filename and it gets a neutral placeholder colour.
 
 ---
 

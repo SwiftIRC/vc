@@ -153,7 +153,7 @@ export function paintPaper(ctx, w, h) {
 // Blur radii are fractions of frame WIDTH, so a given strength looks the same at
 // 480p and 1080p. A pixel constant would be a wall at one resolution and barely
 // visible at another.
-export const EFFECTS = Object.freeze([
+const BUILT_IN = Object.freeze([
   Object.freeze({ id: "none", label: "None", kind: "none" }),
   Object.freeze({ id: "blur", label: "Blur", kind: "blur", radius: 0.012 }),
   Object.freeze({ id: "blur-strong", label: "Blur+", kind: "blur", radius: 0.03 }),
@@ -162,46 +162,78 @@ export const EFFECTS = Object.freeze([
   Object.freeze({ id: "grid", label: "Grid", kind: "paint", paint: paintGrid }),
   Object.freeze({ id: "depth", label: "Depth", kind: "paint", paint: paintDepth }),
   Object.freeze({ id: "paper", label: "Paper", kind: "paint", paint: paintPaper }),
-  // Photographic scenes. Unlike a painter these are assets: they need decoding
-  // before first use, they are not resolution-independent, and `fallback` — the
-  // image's own average colour — is what covers the frame until the bitmap lands.
-  //
-  // `src` is resolved against THIS MODULE's URL, not written as a plain relative
-  // string, on purpose: `loadBackgroundImage` hands it straight to `fetch()`,
-  // which resolves a relative URL against `document.baseURI` — the PAGE's path,
-  // not this file's. The app's router serves the SPA shell for any unknown path,
-  // so a room URL with a trailing slash (e.g. `/lobby/`) would turn `img/foo.webp`
-  // into a request for `/lobby/img/foo.webp`, which 200s with HTML instead of
-  // 404ing — `res.ok` is true, `createImageBitmap` then rejects on the HTML blob,
-  // and the failure is cached as a permanent `null`. Every scene becomes a flat
-  // fallback colour for the rest of the page's life. `new URL(..., import.meta.url)`
-  // resolves against this module's own versioned URL instead, which is stable
-  // regardless of what page embedded it. Do not "simplify" this back to a bare
-  // string.
-  Object.freeze({ id: "office-space", label: "Office Space", kind: "image", src: new URL("../img/office-space.webp", import.meta.url).href, fallback: "#585454" }),
-  Object.freeze({ id: "space-ghost", label: "Space Ghost", kind: "image", src: new URL("../img/space-ghost.webp", import.meta.url).href, fallback: "#675364" }),
-  Object.freeze({ id: "star-trek", label: "Star Trek", kind: "image", src: new URL("../img/star-trek.webp", import.meta.url).href, fallback: "#7D705E" }),
-  Object.freeze({ id: "idiocracy", label: "Idiocracy", kind: "image", src: new URL("../img/idiocracy.webp", import.meta.url).href, fallback: "#3E3524" }),
-  Object.freeze({ id: "carina", label: "Carina", kind: "image", src: new URL("../img/carina.webp", import.meta.url).href, fallback: "#614E54" }),
 ]);
 
-// The picker's two rows. Derived from `kind` rather than a field on each entry —
-// there is exactly one rule ("photos are scenes") and duplicating it per entry
-// would just be a second place to get it wrong. A test asserts this partitions
-// EFFECTS exactly, so an entry cannot go missing from the UI by being appended to
-// EFFECTS alone.
-export const GROUPS = Object.freeze([
-  Object.freeze({
-    id: "effect",
-    label: "Effects",
-    effects: Object.freeze(EFFECTS.filter((e) => e.kind !== "image")),
-  }),
-  Object.freeze({
-    id: "scene",
-    label: "Scenes",
-    effects: Object.freeze(EFFECTS.filter((e) => e.kind === "image")),
-  }),
-]);
+// Photographic scenes are NOT hard-coded here. The server injects the ones this
+// build actually embedded into the app shell (window.__vcScenes; see
+// internal/server/scenes.go), because that set is decided at build time by what is
+// present in assets/img/ — most of those images are untracked, so a clone has
+// fewer of them than a local checkout, and a fixed list would offer chips whose
+// images 404 and never render.
+//
+// Unlike a painter, a scene is an asset: it needs decoding before first use, it is
+// not resolution-independent, and `fallback` — the image's average colour, or a
+// neutral one when unknown — is what covers the frame until the bitmap lands.
+//
+// `src` arrives absolute and version-stamped from the server, which also settles a
+// hazard a relative path reintroduces: loadBackgroundImage hands src straight to
+// fetch(), which resolves a relative URL against document.baseURI — the PAGE's
+// path. The router serves the SPA shell for any unknown path, so on a room URL
+// with a trailing slash "img/foo.webp" fetches "/lobby/img/foo.webp" and gets HTML
+// with a 200. res.ok passes, createImageBitmap rejects on the HTML blob, and the
+// failure caches as a permanent null — every scene a flat colour for the life of
+// the page. Do not rewrite these as relative strings.
+export function sceneEffects(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set(BUILT_IN.map((e) => e.id));
+  const out = [];
+  for (const s of list) {
+    if (!s || typeof s.id !== "string" || !s.id || typeof s.src !== "string" || !s.src) continue;
+    if (seen.has(s.id)) continue; // never shadow a built-in id, never duplicate
+    seen.add(s.id);
+    out.push(
+      Object.freeze({
+        id: s.id,
+        label: typeof s.label === "string" && s.label ? s.label : s.id,
+        kind: "image",
+        src: s.src,
+        fallback: /^#[0-9a-fA-F]{6}$/.test(s.fallback) ? s.fallback : "#2b2f37",
+      }),
+    );
+  }
+  return out;
+}
+
+// The scene list the page was served with. Absent under `node --test` (no window),
+// which is why sceneEffects is exported and tested directly rather than through
+// this.
+function scenesFromPage() {
+  return (typeof globalThis !== "undefined" && globalThis.window && globalThis.window.__vcScenes) || [];
+}
+
+export const EFFECTS = Object.freeze([...BUILT_IN, ...sceneEffects(scenesFromPage())]);
+
+// The picker's rows. Derived from `kind` rather than a field on each entry — there
+// is exactly one rule ("photos are scenes") and duplicating it per entry would be a
+// second place to get it wrong. A test asserts this partitions EFFECTS exactly, so
+// an entry cannot go missing from the UI by being appended to EFFECTS alone.
+//
+// A group with no members is omitted: a build with no images embedded must not
+// render an empty "Scenes" heading.
+export const GROUPS = Object.freeze(
+  [
+    Object.freeze({
+      id: "effect",
+      label: "Effects",
+      effects: Object.freeze(EFFECTS.filter((e) => e.kind !== "image")),
+    }),
+    Object.freeze({
+      id: "scene",
+      label: "Scenes",
+      effects: Object.freeze(EFFECTS.filter((e) => e.kind === "image")),
+    }),
+  ].filter((g) => g.effects.length > 0),
+);
 
 // The saved-preference gate. Effect ids live in localStorage, so a rename, a
 // downgrade, or a hand-edited value can all present an id this build has never

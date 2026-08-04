@@ -1,0 +1,7 @@
+[
+  { "file": "office-space.webp", "label": "Office Space", "fallback": "#585454" },
+  { "file": "space-ghost.webp", "label": "Space Ghost", "fallback": "#675364" },
+  { "file": "star-trek.webp", "label": "Star Trek", "fallback": "#7D705E" },
+  { "file": "idiocracy.webp", "label": "Idiocracy", "fallback": "#3E3524" },
+  { "file": "carina.webp", "label": "Carina", "fallback": "#614E54" }
+]

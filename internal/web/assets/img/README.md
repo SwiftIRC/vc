@@ -44,12 +44,25 @@ Street), Star Trek: The Next Generation (Paramount), and Idiocracy (20th Century
 Fox) — used here as personal virtual backgrounds, the same way one would set a
 Zoom background. They are not licensed assets and are not offered for reuse.
 
-This matters beyond attribution now that the project is MIT-licensed: these four
-files are **not** covered by that licence and cannot be, and `//go:embed all:assets`
-puts them in every binary. Anyone redistributing a build or publishing a fork should
-delete them and their entries in `../lib/backgrounds.js` first — that leaves the
-picker's Effects row and `carina.webp` working, with no other change. See
-[THIRD-PARTY-NOTICES.md](../../../../THIRD-PARTY-NOTICES.md) at the repo root.
+Those four are therefore **not in the repository**: they are git-ignored (see the
+root `.gitignore`), because they are not covered by the project's MIT licence and
+`//go:embed all:assets` would otherwise put them in every distributed binary. Only
+`carina.webp` is tracked. See
+[THIRD-PARTY-NOTICES.md](../../../../THIRD-PARTY-NOTICES.md).
+
+## How scenes are wired up
+
+Nothing hard-codes the list. `internal/server/scenes.go` globs `img/*.webp` from the
+embedded FS at startup and injects what it finds into the app shell, which
+`lib/backgrounds.js` reads synchronously — so the picker always offers exactly what
+the build contains, and the Scenes row disappears entirely if it contains nothing.
+
+To add your own: drop a `.webp` in this directory and rebuild. 1280x720 is the
+target (16:9; anything else is centre-cropped at runtime). Add a row to
+`scenes.json` to give it a proper label and an average colour for the pre-decode
+placeholder; without one it gets a label derived from the filename and a neutral
+grey. `scenes.json` may list files that are not present — an entry with no file is
+skipped, which is exactly how the four untracked ones behave in a clone.
 
 ## Regenerating
 

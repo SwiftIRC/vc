@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EFFECTS, GROUPS, resolveEffectId, effectById, coverRect, drawImageBackground } from "../assets/lib/backgrounds.js";
+import { EFFECTS, GROUPS, resolveEffectId, effectById, coverRect, drawImageBackground, sceneEffects } from "../assets/lib/backgrounds.js";
 
 // A recording stand-in for CanvasRenderingContext2D. Node has no canvas, but the
 // properties that matter here — does the painter cover the frame, does it leave
@@ -40,13 +40,14 @@ function fakeCtx(w, h, callLimit = Infinity) {
 
 // The id set is a PUBLIC contract: it is written into localStorage. Renaming an
 // id silently orphans every saved preference, and nothing else would catch it.
+// These are the ids compiled into the client. The photographic scenes are NOT
+// here: the server injects whichever ones a build embedded (window.__vcScenes),
+// there is no window under node --test, so EFFECTS is exactly the built-ins. Scene
+// construction is covered through sceneEffects below.
 test("the effect id set is frozen", () => {
   assert.deepEqual(
     EFFECTS.map((e) => e.id),
-    [
-      "none", "blur", "blur-strong", "aurora", "dusk", "grid", "depth", "paper",
-      "office-space", "space-ghost", "star-trek", "idiocracy", "carina",
-    ],
+    ["none", "blur", "blur-strong", "aurora", "dusk", "grid", "depth", "paper"],
   );
 });
 
@@ -237,17 +238,58 @@ test("GROUPS partitions EFFECTS exactly", () => {
   }
 });
 
-test("the Scenes group is exactly the image effects", () => {
-  const scenes = GROUPS.find((g) => g.id === "scene");
-  assert.deepEqual(
-    scenes.effects.map((e) => e.id),
-    ["office-space", "space-ghost", "star-trek", "idiocracy", "carina"],
-  );
-  const effects = GROUPS.find((g) => g.id === "effect");
-  assert.ok(effects.effects.every((e) => e.kind !== "image"));
+// A build that embedded no images must not render an empty "Scenes" heading, which
+// is what a fresh clone looks like: most scene files are untracked.
+test("an empty group is omitted rather than rendered blank", () => {
+  assert.deepEqual(GROUPS.map((g) => g.id), ["effect"]);
+  assert.ok(GROUPS.every((g) => g.effects.length > 0));
 });
 
-test("a saved image-background preference resolves", () => {
-  assert.equal(resolveEffectId("carina"), "carina");
-  assert.match(effectById("office-space").src, /img\/office-space\.webp$/);
+test("sceneEffects builds well-formed image entries", () => {
+  const [e] = sceneEffects([{ id: "carina", label: "Carina", src: "/v/abc/img/carina.webp", fallback: "#614E54" }]);
+  assert.deepEqual(e, { id: "carina", label: "Carina", kind: "image", src: "/v/abc/img/carina.webp", fallback: "#614E54" });
+  assert.ok(Object.isFrozen(e));
+});
+
+test("sceneEffects rejects entries it cannot use", () => {
+  // The payload is server-generated, but it lands in the page as plain script and
+  // a malformed entry must degrade to "that scene is missing", never to a chip
+  // whose src is undefined and whose fetch resolves against the page path.
+  const built = sceneEffects([
+    null,
+    {},
+    { id: "", src: "/v/a/img/x.webp" },
+    { id: "no-src" },
+    { id: "ok", src: "/v/a/img/ok.webp" },
+  ]);
+  assert.deepEqual(built.map((e) => e.id), ["ok"]);
+});
+
+test("sceneEffects never shadows a built-in id, and never duplicates", () => {
+  const built = sceneEffects([
+    { id: "blur", src: "/v/a/img/blur.webp" }, // would hijack the blur effect
+    { id: "dup", src: "/v/a/img/dup.webp" },
+    { id: "dup", src: "/v/a/img/dup2.webp" },
+  ]);
+  assert.deepEqual(built.map((e) => e.id), ["dup"]);
+  assert.equal(built[0].src, "/v/a/img/dup.webp", "the first entry for an id wins");
+});
+
+test("sceneEffects fills in a missing label and a bad fallback", () => {
+  const [e] = sceneEffects([{ id: "my-photo", src: "/v/a/img/my-photo.webp", fallback: "not-a-colour" }]);
+  assert.equal(e.label, "my-photo", "a missing label falls back to the id rather than rendering blank");
+  assert.match(e.fallback, /^#[0-9a-fA-F]{6}$/, "a bad fallback must still be a paintable colour");
+});
+
+test("sceneEffects tolerates a non-array payload", () => {
+  for (const bad of [undefined, null, "", 0, {}]) assert.deepEqual(sceneEffects(bad), []);
+});
+
+// A scene id saved by a build that HAD that image, opened on a build that does
+// not, must degrade to "none" rather than selecting a chip that cannot render.
+// This is now a real case, not a hypothetical: the scene files are untracked, so
+// two builds of the same commit can embed different sets.
+test("a scene id this build did not embed resolves to none", () => {
+  assert.equal(resolveEffectId("carina"), "none");
+  assert.equal(effectById("office-space").id, "none");
 });

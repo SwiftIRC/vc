@@ -40,20 +40,38 @@ func TestMediaPipeAssetsEmbedded(t *testing.T) {
 	}
 }
 
-// The image backgrounds are embedded assets. A missing or truncated file here is
-// a picker chip that 404s in the browser and that no JS test would notice, so
-// assert each one explicitly — the same reasoning as TestMediaPipeAssetsEmbedded.
+// Only carina.webp is required. The other scenes are frames from copyrighted film
+// and television which the project's MIT licence cannot cover, so they are
+// untracked (see THIRD-PARTY-NOTICES.md): present in a local checkout, absent from
+// a clone. Requiring them would make a clean clone fail its own test suite.
+//
+// carina.webp is the ESA/Webb release and IS tracked, so it also stands in for
+// "the scene mechanism is wired up at all".
 func TestImageBackgroundAssetsEmbedded(t *testing.T) {
-	for _, name := range []string{
-		"img/office-space.webp",
-		"img/space-ghost.webp",
-		"img/star-trek.webp",
-		"img/idiocracy.webp",
-		"img/carina.webp",
-	} {
+	info, err := fs.Stat(Assets, "img/carina.webp")
+	if err != nil {
+		t.Fatalf("img/carina.webp not embedded: %v", err)
+	}
+	if info.Size() < 20*1024 {
+		t.Errorf("img/carina.webp is only %d bytes — looks truncated", info.Size())
+	}
+	if _, err := fs.Stat(Assets, "img/scenes.json"); err != nil {
+		t.Errorf("img/scenes.json not embedded: %v — scene labels and colours come from it", err)
+	}
+}
+
+// Whatever scene images a build DOES embed must be usable. A truncated or
+// placeholder file would reach the browser as a chip stuck on its fallback colour,
+// which no JS test can see.
+func TestEmbeddedSceneImagesAreUsable(t *testing.T) {
+	files, err := fs.Glob(Assets, "img/*.webp")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, name := range files {
 		info, err := fs.Stat(Assets, name)
 		if err != nil {
-			t.Errorf("asset %q not embedded: %v", name, err)
+			t.Errorf("asset %q: %v", name, err)
 			continue
 		}
 		if info.Size() < 20*1024 {

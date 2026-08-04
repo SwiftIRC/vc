@@ -11,6 +11,12 @@
 </head>
 <body>
   <div id="app"></div>
+  <!-- The photographic background scenes this build embedded, injected by the server
+       from assets/img/ (see internal/server/scenes.go). A classic script runs before
+       the deferred module below, so lib/backgrounds.js can read it synchronously and
+       the effect catalogue is complete by the time anything resolves a saved
+       preference against it. An empty array simply means no Scenes row. -->
+  <script>window.__vcScenes = __BACKGROUND_SCENES__;</script>
   <script type="module" src="/v/__ASSET_VERSION__/app.js"></script>
 </body>
 </html>

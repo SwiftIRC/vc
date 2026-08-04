@@ -28,8 +28,9 @@ own and can wire natively into SwiftIRC.
 - Background blur and virtual backgrounds (MediaPipe selfie segmentation, run
   entirely in the browser), with an automatic fall back to no effect on a device
   that cannot sustain a usable frame rate. The picker offers two rows: **Effects**
-  (blur and procedurally-painted washes, drawn in code) and **Scenes** (five
-  photographic backgrounds shipped as WebP — see `internal/web/assets/img/`).
+  (blur and procedurally-painted washes, drawn in code) and **Scenes** (photographic
+  WebP backgrounds, discovered at build time from `internal/web/assets/img/` — drop
+  one in and rebuild to add it; the Scenes row is omitted entirely if there are none).
   **Requires WebGL** — MediaPipe's vision graph is GL-based regardless of whether
   inference runs on the GPU or the CPU, so with hardware acceleration disabled the
   picker says so and offers only "None".
@@ -61,11 +62,12 @@ own and can wire natively into SwiftIRC.
 - **`internal/web`** — the embedded browser client (`assets/`), with `node --test`
   unit tests for its pure logic (`test/`). Two vendored payloads live here and
   account for most of the binary: the MediaPipe segmentation runtime
-  (`assets/vendor/mediapipe/`, stored gzipped) and the five background scenes
-  (`assets/img/`, ~339 KB of WebP). Both carry a README recording source, licence
-  and checksums — the scenes in particular are third-party imagery, so read
-  `assets/img/README.md` before redistributing a build. The binary is 23,192,233
-  bytes (~22.1 MiB), against 18,756,525 before MediaPipe was vendored.
+  (`assets/vendor/mediapipe/`, stored gzipped) and whichever background scenes are
+  in `assets/img/` (~127 KB for the one in the repository, ~339 KB with all five of
+  the author's local set). Both carry a README recording source, licence and
+  checksums; read `assets/img/README.md` before redistributing a build. A binary
+  from a clean clone is ~23.0 MiB, against 18,756,525 bytes before MediaPipe was
+  vendored.
 - **`cmd/webrtc-chat`** — the entrypoint.
 - **`anope/m_webrtc_chat`** — the Anope 2.1 services module (C++): `!vc`/`!chat`
   fantasy commands, `VC SET`, HMAC token minting, and the `/api/provision` and
@@ -136,10 +138,12 @@ Design and implementation plans live in `docs/superpowers/`.
 [MIT](LICENSE) — for this project's own source.
 
 The repository also carries third-party content that MIT does not cover, and
-`//go:embed all:assets` puts all of it inside every binary. See
+`//go:embed all:assets` puts all of it inside every binary — see
 **[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)**. In short: the vendored
-MediaPipe runtime is Apache-2.0, the noise-suppression worklet bundles RNNoise and
-core-js, and **four of the five background scenes are copyrighted film/TV frames
-that are not licensed for redistribution**. Delete
-`internal/web/assets/img/{office-space,space-ghost,star-trek,idiocracy}.webp` and
-their entries in `lib/backgrounds.js` before publishing a fork or shipping a build.
+MediaPipe runtime is Apache-2.0, and the noise-suppression worklet bundles RNNoise
+and core-js.
+
+Background scenes are **discovered from what a build embedded**, not hard-coded, so
+what ships is whatever is in `internal/web/assets/img/` at build time. Only
+`carina.webp` (NASA/ESA/CSA/STScI) is in the repository; anything else is
+git-ignored. Drop your own `.webp` in there and rebuild to add one.

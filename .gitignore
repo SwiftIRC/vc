@@ -5,3 +5,12 @@
 /webrtc-chat
 *.test
 *.out
+
+# Background scenes that are frames from copyrighted film/TV. They are untracked
+# deliberately: the project's MIT licence cannot cover them (see
+# THIRD-PARTY-NOTICES.md), and //go:embed all:assets would otherwise put them in
+# every distributed binary. Kept on disk locally; the server discovers whichever
+# images are actually present at build time (internal/server/scenes.go), so a clone
+# simply gets fewer Scenes chips.
+internal/web/assets/img/*.webp
+!internal/web/assets/img/carina.webp

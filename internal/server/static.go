@@ -31,6 +31,13 @@ var shell = mustReadShell()
 // versionPlaceholder is the token index.html carries where the asset digest belongs.
 const versionPlaceholder = "__ASSET_VERSION__"
 
+// scenesPlaceholder is where the shell carries the background scenes this build
+// embedded (see scenes.go). Injecting them into the shell — rather than having the
+// client fetch a manifest — keeps the effect catalogue SYNCHRONOUS at module load.
+// An async catalogue would mean resolveEffectId could run before the scenes existed
+// and quietly downgrade a saved background to "none".
+const scenesPlaceholder = "__BACKGROUND_SCENES__"
+
 func mustReadShell() []byte {
 	b, err := fs.ReadFile(web.Assets, "index.html")
 	if err != nil {
@@ -42,7 +49,11 @@ func mustReadShell() []byte {
 	if !bytes.Contains(b, []byte(versionPlaceholder)) {
 		panic("index.html is missing " + versionPlaceholder)
 	}
-	return bytes.ReplaceAll(b, []byte(versionPlaceholder), []byte(assetsVersion))
+	if !bytes.Contains(b, []byte(scenesPlaceholder)) {
+		panic("index.html is missing " + scenesPlaceholder)
+	}
+	b = bytes.ReplaceAll(b, []byte(versionPlaceholder), []byte(assetsVersion))
+	return bytes.ReplaceAll(b, []byte(scenesPlaceholder), embeddedScenesJSON())
 }
 
 // assetsVersion is a digest of the embedded client assets, computed once at startup.
