@@ -133,4 +133,13 @@ Design and implementation plans live in `docs/superpowers/`.
 
 ## License
 
-Not yet specified.
+[MIT](LICENSE) — for this project's own source.
+
+The repository also carries third-party content that MIT does not cover, and
+`//go:embed all:assets` puts all of it inside every binary. See
+**[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)**. In short: the vendored
+MediaPipe runtime is Apache-2.0, the noise-suppression worklet bundles RNNoise and
+core-js, and **four of the five background scenes are copyrighted film/TV frames
+that are not licensed for redistribution**. Delete
+`internal/web/assets/img/{office-space,space-ghost,star-trek,idiocracy}.webp` and
+their entries in `lib/backgrounds.js` before publishing a fork or shipping a build.

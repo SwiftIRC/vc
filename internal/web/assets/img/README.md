@@ -44,6 +44,13 @@ Street), Star Trek: The Next Generation (Paramount), and Idiocracy (20th Century
 Fox) — used here as personal virtual backgrounds, the same way one would set a
 Zoom background. They are not licensed assets and are not offered for reuse.
 
+This matters beyond attribution now that the project is MIT-licensed: these four
+files are **not** covered by that licence and cannot be, and `//go:embed all:assets`
+puts them in every binary. Anyone redistributing a build or publishing a fork should
+delete them and their entries in `../lib/backgrounds.js` first — that leaves the
+picker's Effects row and `carina.webp` working, with no other change. See
+[THIRD-PARTY-NOTICES.md](../../../../THIRD-PARTY-NOTICES.md) at the repo root.
+
 ## Regenerating
 
 See the `convert` commands in
