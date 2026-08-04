@@ -31,6 +31,7 @@ import { Controls } from "./ui/controls.js";
 import { Chat } from "./ui/chat.js";
 import { formatDuration } from "./lib/duration.js";
 import { useCommunicationAudio } from "./lib/audioSession.js";
+import { serverErrorDisposition } from "./lib/serverError.js";
 
 // Mirror of the server's room-slug rule (internal/server: slugRe). A path that
 // doesn't match can never join, so we route it to home with a hint instead.
@@ -204,15 +205,32 @@ function rejoinOnReopen(sig) {
   };
 }
 
-// Server refused the join (bad-password, banned, identified-only, ...). Stop the
-// socket so it does not reconnect into an empty (join-less) handshake, and hand
+// An `error` frame from the server. Where we are decides whether it is terminal —
+// see lib/serverError.js for why that, and not the code, is the discriminator.
+//
+// Pre-join it is a refused join (bad-password, banned, identified-only, ...): stop
+// the socket so it does not reconnect into an empty (join-less) handshake, and hand
 // the code back to the still-mounted lobby.
+//
+// In-call it is a refused moderation command and nothing else. This used to take
+// the same branch, which stopped the socket for good — signaling.stop() suppresses
+// reconnect permanently — and then showed the reason on a lobby screen that no
+// longer exists. One refusal as ordinary as muting someone who had just left
+// therefore ended chat, the roster and all further moderation for the rest of the
+// call, silently, while media carried on over its own PeerConnection so the call
+// still looked fine.
 function onServerError(msg) {
+  const { fatal, text } = serverErrorDisposition({ code: msg.code, message: msg.message, inCall: !prejoin });
+  if (!fatal) {
+    if (chat) chat.notice(text);
+    else console.warn("[app] server refused an action:", msg.code, msg.message);
+    return;
+  }
   if (signaling) {
     signaling.stop();
     signaling = null;
   }
-  if (prejoin) prejoin.showError(msg.code, msg.message);
+  if (prejoin) prejoin.showError(msg.code, text);
 }
 
 // The server accepted our join. First time: build the in-call view. On a reconnect

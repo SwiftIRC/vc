@@ -166,6 +166,17 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       reads to the op as "my mute did nothing" — that is the failure this checks for.
       Repeat for camera. Then have B un-mute themselves: the pill must come back on
       for everyone (the mute is a nudge, not a lock).
+- [ ] **A refused moderation command does not end the call** — as an op, mute a
+      participant who has *just* left (open their tile's menu, have them close their
+      tab, then click mute). The server refuses with `no-such-peer`. You must get a
+      line in the chat feed saying they already left, and **everything must keep
+      working**: send a chat message, watch the roster, and mute someone else — all
+      still fine. The old failure was silent and total: the socket stopped for good,
+      so chat, the roster and every later moderation click died while video kept
+      flowing, which made it look like op had been lost.
+- [ ] **A refused join still lands on the lobby** — the other half of the same
+      change. Join a locked room with the wrong password: the lobby (not the call)
+      shows the error and the socket does not reconnect, exactly as before.
 - [ ] **A forced mute is not remembered** — after being op-muted, B leaves and
       rejoins. B's lobby must NOT come back pre-muted: a forced mute is not B's own
       preference and must not decide how their next call starts.

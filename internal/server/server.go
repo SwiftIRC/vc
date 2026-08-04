@@ -336,32 +336,41 @@ func (h *Hub) dispatch(rm *room.Room, p *room.Participant, v any) {
 		// Countdown refusals (already active, not the starter, idle stop) are
 		// deliberately silent: the client control already reflects the
 		// authoritative state from the broadcast, and a lost start/stop race
-		// self-heals when the winner's CountdownEvent arrives. We also avoid
-		// sending an "error" frame here, which the in-call client would treat as
-		// a terminal join error.
+		// self-heals when the winner's CountdownEvent arrives, so a refusal would
+		// report a condition the user is about to see resolved anyway.
+		//
+		// This silence used to ALSO be load-bearing, because an "error" frame
+		// in-call stopped the client's socket for good. It no longer is: app.js
+		// treats an in-call error as non-fatal and shows it in the moderation feed
+		// (lib/serverError.js). The self-healing argument above is what still
+		// justifies staying quiet here.
 		if err := rm.Countdown(p.ID, m.Action); err != nil {
 			h.log.Debug("countdown refused", "from", p.ID, "action", m.Action, "err", err)
 		}
 		return
 	case *signal.Vote:
-		// Refusals are deliberately silent, for the same reason countdown's are: a
-		// stale card or a lost race self-heals on the next broadcast, and an "error"
-		// frame would be treated by the in-call client as a terminal join error.
+		// Refusals are deliberately silent for the same reason countdown's are: a
+		// stale card or a lost race self-heals on the next broadcast. (The old
+		// second reason — that an in-call "error" frame killed the client's socket
+		// — no longer applies; see the countdown case above.)
 		if err := rm.Vote(p.ID, m.PollID, m.Choice); err != nil {
 			h.log.Debug("vote refused", "from", p.ID, "poll", m.PollID, "err", err)
 		}
 		return
 	case *signal.CreatePoll:
-		// Silent for the same reason Vote's refusals are: the in-call client's only
-		// "error" handler (onServerError in app.js) stops the socket for good and
-		// then tries to show the error on the prejoin screen, which no longer exists
-		// once in-call — so an "error" frame here would silently kill the actor's
-		// session. That includes ErrNotOp: the poll controls only render for ops
-		// (_ensureOpSettingsRows) and the Close button only renders for ops, so a
-		// create/close frame from a non-op is a hand-rolled frame, not something a
-		// legitimate client can produce — whereas a legitimate op CAN hit the
-		// stale/closed races below. Silence costs a non-op nothing and removes an
-		// entire class of session-killing refusal.
+		// Silent for the same reason Vote's refusals are: the stale/closed races a
+		// legitimate op can hit self-heal on the next poll broadcast. A non-op
+		// cannot reach here from a legitimate client at all — the poll controls and
+		// the Close button only render for ops — so a create/close frame carrying
+		// ErrNotOp is hand-rolled, and owes its sender nothing.
+		//
+		// The original reason was different and is now obsolete: onServerError in
+		// app.js used to stop the socket for good on ANY error and then show the
+		// message on a prejoin screen that no longer existed once in-call, so an
+		// "error" frame here silently killed the actor's session. That is fixed —
+		// in-call errors are non-fatal and surface in the moderation feed (see
+		// lib/serverError.js) — so the silence here is now a judgement about noise,
+		// not a workaround. Reporting these races instead would be a safe change.
 		if err := rm.CreatePoll(p.ID, m.Question, m.Options); err != nil {
 			h.log.Debug("create-poll refused", "from", p.ID, "err", err)
 		}

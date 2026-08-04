@@ -247,8 +247,11 @@ func TestPollOverWS(t *testing.T) {
 	}
 }
 
-// A refused vote must stay silent: an "error" frame is treated by the in-call client
-// as a terminal join error, so a stale card would eject the user from the call.
+// A refused vote must stay silent: a stale card or a lost race self-heals on the
+// next poll broadcast, so a refusal would only report a condition the user is about
+// to see resolved. (It was once silent for a harder reason — an in-call "error"
+// frame stopped the client's socket for good — but in-call errors are non-fatal
+// now; see lib/serverError.js. The no-noise argument is what this still pins.)
 func TestRefusedVoteSendsNoErrorFrame(t *testing.T) {
 	_, srv := newTestHub(t, testSecret, true)
 	c := dialRoom(t, srv, "quiet")

@@ -999,6 +999,14 @@ body.ui-idle .controls {
   font-size: 0.8rem;
 }
 
+/* A local notice (a refused action), not a room event: same shape as a moderation
+   line so it reads as part of the same feed, but marked so it is not mistaken for
+   something everyone else can see. */
+.chat-notice {
+  border-left: 2px solid var(--border);
+  padding-left: 6px;
+}
+
 /* Poll card in the chat log. */
 .poll-card {
   display: flex;

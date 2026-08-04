@@ -222,6 +222,16 @@ export class Chat {
     this._append(line);
   }
 
+  // A local notice — something the server refused, or another in-call condition the
+  // user needs told. Shares the moderation feed because that is where the action it
+  // refers to would have appeared, so cause and effect land in one place. Local
+  // only: nothing is sent, and a reconnect's clear() drops it, which is right for
+  // transient feedback.
+  notice(text) {
+    if (!text) return;
+    this._append(el("div", { class: "chat-mod chat-notice", text }));
+  }
+
   // Inbound `poll` {action, id, question, options, tallies, by, open}, and the poll
   // carried in the join snapshot. A card for the poll already on screen re-renders in
   // place; a different id means a new poll, which gets its own card.
