@@ -503,6 +503,8 @@ export class Peer extends EventTarget {
   //   recv climbing but dec/key staying 0 -> no decodable keyframe reached this receiver
   //   high lost + climbing pli/nack       -> keyframe packets lost on the link
   //   dec climbing + nonzero size but tile black -> client render/element stall
+  //   "!! NO INBOUND RTP" -> the forward is announced but nothing is arriving on
+  //     it; read label=/media= on that line to tell which half is missing
   async _dumpStats() {
     if (!TRACK_DEBUG || !this.pc || !this._incoming) return;
     if (this.pc.connectionState === "closed") return;
@@ -519,24 +521,46 @@ export class Peer extends EventTarget {
     for (const tr of this.pc.getTransceivers()) {
       const mid = tr.mid;
       if (mid == null) continue;
-      if (!this._incoming.has(mid) && !this._trackInfo.has(mid)) continue; // skip retired m-lines
-      const receiver = tr.receiver;
-      const track = receiver && receiver.track;
-      if (!track || track.kind !== "video") continue;
-      let scoped;
-      try {
-        scoped = await receiver.getStats();
-      } catch {
-        continue;
-      }
       const info = this._trackInfo.get(mid);
+      const hasMedia = this._incoming.has(mid);
+      if (!info && !hasMedia) continue; // retired m-line: neither labelled nor carrying media
+      const track = tr.receiver && tr.receiver.track;
+      // A mid the SFU LABELS as video counts even if no receiver track exists yet.
+      // Requiring a live video track was a blind spot: the case being diagnosed —
+      // a forward that is announced but silent — has no track and no stats, so it
+      // was skipped and the dump said nothing at all about it.
+      const labelledVideo = !!info && (info.kind === "camera" || info.kind === "screen");
+      if (!labelledVideo && !(track && track.kind === "video")) continue;
       const who = info ? `${info.kind}@${info.participantId}` : `mid=${mid}`;
-      scoped.forEach((r) => {
-        if (r.type !== "inbound-rtp" || r.kind !== "video") return;
+      let scoped = null;
+      if (tr.receiver) {
+        try {
+          scoped = await tr.receiver.getStats();
+        } catch {
+          scoped = null;
+        }
+      }
+      let reported = false;
+      if (scoped) {
+        scoped.forEach((r) => {
+          if (r.type !== "inbound-rtp" || r.kind !== "video") return;
+          reported = true;
+          lines.push(
+            `${who} mid=${mid} recv=${r.framesReceived ?? 0} dec=${r.framesDecoded ?? 0} key=${r.keyFramesDecoded ?? 0} drop=${r.framesDropped ?? 0} pli=${r.pliCount ?? 0} nack=${r.nackCount ?? 0} lost=${r.packetsLost ?? 0} bytes=${r.bytesReceived ?? 0} ${r.frameWidth ?? 0}x${r.frameHeight ?? 0} fps=${r.framesPerSecond ?? 0}`,
+          );
+        });
+      }
+      // The line that matters for a black tile. A dump that only prints streams
+      // which are working describes every healthy peer and stays silent about the
+      // broken one — exactly backwards. Say so explicitly, with the pairing state,
+      // because that is what separates the two causes: label-without-media means
+      // the SFU announced a forward it is not actually sending, media-without-label
+      // means RTP is arriving on a mid nothing told us how to render.
+      if (!reported) {
         lines.push(
-          `${who} mid=${mid} recv=${r.framesReceived ?? 0} dec=${r.framesDecoded ?? 0} key=${r.keyFramesDecoded ?? 0} drop=${r.framesDropped ?? 0} pli=${r.pliCount ?? 0} nack=${r.nackCount ?? 0} lost=${r.packetsLost ?? 0} bytes=${r.bytesReceived ?? 0} ${r.frameWidth ?? 0}x${r.frameHeight ?? 0} fps=${r.framesPerSecond ?? 0}`,
+          `${who} mid=${mid} !! NO INBOUND RTP — label=${info ? "yes" : "no"} media=${hasMedia ? "yes" : "no"} track=${track ? track.readyState : "none"}`,
         );
-      });
+      }
     }
     if (lines.length) console.info("[track-debug stats]\n  " + lines.join("\n  "));
   }
