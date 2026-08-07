@@ -1,14 +1,16 @@
 // Top-level routing, state, and the reliability contract for the browser client.
 // app.js owns the singleton Media / Signaling / Peer instances and hands them to
-// the UI modules (prejoin, grid, controls, chat); it never draws call chrome
-// itself beyond the terminal "you were removed" card.
+// the UI modules (prejoin, grid, controls, chat); the only chrome it draws itself
+// is the between-screens cards — home, "you were removed", and "you've left".
 //
 // Routes off the URL:
 //   /            -> home: pick a room name, navigate to /<name>
 //   /<slug>      -> pre-join lobby (ui/prejoin.js); #t=<token> supplies identity
 // A successful join swaps the lobby for the in-call view: the tile grid
 // (ui/grid.js), the control bar (ui/controls.js), and the chat panel (ui/chat.js),
-// wired to the media plane (Peer) and the live socket (Signaling).
+// wired to the media plane (Peer) and the live socket (Signaling). Leaving swaps it
+// for the post-call card (renderLeft), which holds no camera or microphone — the
+// lobby, and its device prompt, is one deliberate click further on.
 //
 // Reliability contract (see onRemoved / onJoined / rejoinOnReopen):
 //   - kicked / banned  -> stop() the socket (NO reconnect), tear the call down,
@@ -16,7 +18,10 @@
 //     relies on: a removed client MUST NOT rejoin.
 //   - normal drop / server-restarting -> Signaling reconnects with backoff and we
 //     re-send the join frame on reopen, so the participant returns to the room.
-//   - leave / tab close -> stop() the socket and release the camera/mic.
+//   - leave -> stop() the socket, release the camera/mic, and land on the
+//     post-call card rather than straight back in the lobby, so nothing is
+//     re-captured the instant a call ends.
+//   - tab close -> stop() the socket and release the camera/mic.
 import { Signaling } from "./net/signaling.js";
 import { Media } from "./net/media.js";
 import { Peer } from "./net/peer.js";
@@ -40,7 +45,7 @@ const SLUG_RE = /^[a-z0-9-]{1,32}$/;
 const root = document.getElementById("app");
 
 // Live top-level state. slug/token are fixed for the page load; the rest are
-// (re)created as the user moves lobby -> call -> lobby.
+// (re)created as the user moves lobby -> call -> post-call -> lobby.
 let slug = "";
 let token = ""; // long-link identity token (#t=); still accepted for old links
 let invite = ""; // short invite id (#i=), resolved server-side — the current link form
@@ -618,9 +623,16 @@ function renderRemoved(kind, by) {
   );
 }
 
-// Full teardown back to the lobby. Tear down the UI + peer first (detaches Media
-// listeners), stop the socket permanently, release the camera/mic, and re-render
-// pre-join with a fresh Media.
+// Full teardown, then the post-call card. Tear down the UI + peer first (detaches
+// Media listeners), stop the socket permanently, and release the camera/mic.
+//
+// It lands on renderLeft rather than the lobby ON PURPOSE. The lobby mounts a live
+// preview, so going straight there re-requested the camera and microphone the
+// instant you hung up: the indicator light went off and immediately back on, and
+// the browser held a capture open for someone who had just finished their call and
+// may well be walking away from the desk. renderLeft holds no devices at all; the
+// lobby — and with it the permission prompt — comes back only when the user asks
+// for it.
 function leave() {
   teardownInCall();
   if (signaling) {
@@ -631,7 +643,29 @@ function leave() {
     media.stop();
     media = null;
   }
-  renderPrejoin();
+  renderLeft();
+}
+
+// The post-call card: you have left, nothing is being captured, here is the way
+// back. Deliberately holds no Media — that is its entire reason to exist — so the
+// route onward is renderPrejoin, where a preview (and the device prompt) is
+// something the user has just asked for rather than something that happens to them.
+function renderLeft() {
+  document.body.classList.remove("in-call");
+  const rejoin = el("button", { class: "join", type: "button", onClick: () => renderPrejoin() }, "Rejoin");
+  const elsewhere = el("button", { type: "button", onClick: () => renderHome() }, "Another room");
+  root.replaceChildren(
+    el(
+      "div",
+      { class: "home left-call" },
+      el("h1", { text: "You've left the call" }),
+      // slug is from the URL path and already slugified (letters/digits/hyphens),
+      // and "text" sets textContent regardless, so this cannot inject markup.
+      el("p", { class: "lede", text: `Your camera and microphone are off. Rejoin ${slug} whenever you're ready.` }),
+      el("div", { class: "row" }, rejoin, elsewhere),
+    ),
+  );
+  rejoin.focus();
 }
 
 // Tab close / navigation away: release the socket and the camera/mic so no device

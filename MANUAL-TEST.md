@@ -63,9 +63,17 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 
 - [ ] **Join transitions to in-call** — click Join with a valid name/password;
       the lobby is replaced by the in-call view (tile grid, control bar, chat).
-- [ ] **Leave returns to the lobby** — Leave tears down the call, releases the
-      camera/mic (the camera light goes out), and re-renders the pre-join lobby.
-      Other browsers see your tile disappear.
+- [ ] **Leave lands on the post-call card, holding nothing** — Leave tears down the
+      call and shows "You've left the call". The camera light must go out **and stay
+      out**: this screen holds no camera or microphone, so nothing is re-requested.
+      Watch the indicator for a few seconds — the bug this replaced was the light
+      going off and straight back on, because Leave went directly to the lobby and
+      the lobby mounts a live preview. Other browsers see your tile disappear.
+- [ ] **Rejoin from the post-call card** — click **Rejoin**: the lobby appears, the
+      preview starts, and the camera light comes back on *then* — as a result of
+      clicking, not of hanging up. Joining from there works normally.
+- [ ] **Another room from the post-call card** — click **Another room**: the room
+      picker appears, still with no camera or microphone in use.
 - [ ] **Video flows both ways** — with A and B joined, each sees the other's live
       camera in a remote tile, and each hears the other. Muting/stopping on one
       side is reflected on the other.

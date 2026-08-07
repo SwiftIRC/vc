@@ -1130,6 +1130,12 @@ body.ui-idle .controls {
   color: var(--muted);
 }
 
+/* Post-call "you've left" card, also on .home. Its two buttons share a row and
+   split it evenly, unlike the lobby's row where a text input takes the space. */
+.left-call .row button {
+  flex: 1;
+}
+
 @media (max-width: 30rem) {
   .devices {
     grid-template-columns: 1fr;
