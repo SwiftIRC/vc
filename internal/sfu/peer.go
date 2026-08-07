@@ -119,6 +119,19 @@ func (p *Peer) HandleAnswer(sdp string) error {
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp}); err != nil {
 		return err
 	}
+	// Re-send the label map now the negotiation has COMPLETED. Until this point the
+	// map was only ever sent alongside an offer, computed while the client had not
+	// yet answered — so any forward that was un-negotiated at that moment (see
+	// peerTrackInfos) went unlabelled, and nothing corrected it until the NEXT
+	// renegotiation. In a call that has settled there is no next one: the client
+	// holds media for a mid it was never told how to render, and that participant's
+	// tile stays black for the rest of the call.
+	//
+	// Here every mid is final and both sides agree on them, so this is the first
+	// moment the map can be stated with certainty. It is idempotent — the client
+	// rebuilds its mid->{participant,kind} map from each one and emits any pairing
+	// this completes — so re-sending costs a small frame and closes the window.
+	p.sig.Send(signal.Tracks{Tracks: peerTrackInfos(p)})
 	// This peer just returned to stable, so reconcile in case senders were added
 	// while it was in have-local-offer and could not be offered then (they persist
 	// in the room's reneg set). Run it on a goroutine, not inline: signaling

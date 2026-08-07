@@ -395,6 +395,22 @@ func peerTrackInfos(p *Peer) []signal.TrackInfo {
 		if t == nil {
 			continue
 		}
+		// A transceiver added since the last SetLocalDescription has no mid yet, and
+		// a label keyed by "" can never match an ontrack mid — the client would hold
+		// media it is never told how to render, and the tile stays black.
+		//
+		// This is reachable: signalPeerConnections evaluates peerTrackInfos AFTER
+		// releasing p.mu, while syncPeerSendersLocked adds transceivers under s.mu,
+		// so a concurrent pass can append one to this very PeerConnection in the
+		// window between our SetLocalDescription and this call.
+		//
+		// Omitting it is right rather than merely safe: the forward genuinely is not
+		// negotiated yet, so there is no mid to name. The offer that negotiates it
+		// carries its own Tracks, and HandleAnswer re-sends the map once the
+		// negotiation completes, so the label arrives — just not fabricated here.
+		if tr.Mid() == "" {
+			continue
+		}
 		infos = append(infos, signal.TrackInfo{
 			Mid:           tr.Mid(),
 			ParticipantID: t.StreamID(),
