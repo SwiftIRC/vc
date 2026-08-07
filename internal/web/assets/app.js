@@ -300,6 +300,12 @@ function setLowBandwidth(on) {
   lowBandwidth = !!on;
   saveLayoutPrefs({ lowBandwidth });
   if (signaling) signaling.send("set-receive-video", { enabled: !lowBandwidth });
+  // Cover (or uncover) the remote tiles immediately rather than waiting for the
+  // server's renegotiation to arrive as peer-gone/remote-track. Otherwise every
+  // camera-on peer is a black rectangle for the round trip, and with data saver
+  // left on they stay unidentifiable — the avatars are how you tell who is talking
+  // when there is no video at all.
+  if (grid) grid.setLowBandwidth(lowBandwidth);
 }
 
 // --- in-call view: tile grid + control bar + chat ---
@@ -322,6 +328,7 @@ function renderInCall(msg) {
     selfName,
     selfGravatar,
     selfRole: msg.role,
+    lowBandwidth,
     media,
     opActionsFor: (p) => controls.opActionsFor(p),
     screenOpActionsFor: (p) => controls.screenOpActionsFor(p),

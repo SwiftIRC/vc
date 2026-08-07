@@ -19,6 +19,13 @@
 // presence: a self-muted track is still published (silence / black frames), so a
 // toggle fires no track-end and track presence cannot tell muted from live.
 //
+// The avatar placeholder over a remote video is a separate question from the pill,
+// and answers to two things: their camera being off, OR data saver being on here
+// (setLowBandwidth), since the server then forwards us no video at all. The pill
+// still reports their real camera state in that case — they ARE on camera; we just
+// are not downloading it — while the avatar plus the active-speaker outline is what
+// makes an audio-only call legible. See _applyCameraCover.
+//
 // Active-speaker highlight: a single AudioContext feeds one AnalyserNode per
 // REMOTE mic stream; a light polling loop reads each analyser's level and marks
 // the loudest tile ".active". Every source/analyser is torn down when its tile
@@ -69,8 +76,11 @@ export class Grid {
   // or null for non-ops; screenOpActionsFor(participant) returns a screen-tile
   // op-controls node ("stop screenshare") or null. Both are owned by controls.js
   // and only placed here.
-  constructor({ selfId, selfName, selfRole, selfGravatar, media, opActionsFor, screenOpActionsFor } = {}) {
+  constructor({ selfId, selfName, selfRole, selfGravatar, media, opActionsFor, screenOpActionsFor, lowBandwidth } = {}) {
     this.selfId = selfId;
+    // Data saver persists across calls, so a tile built during the very first
+    // render must already be covered — not corrected a frame later.
+    this._lowBandwidth = !!lowBandwidth;
     this.selfName = selfName || "You";
     this.selfGravatar = selfGravatar || "";
     this.media = media || null;
@@ -414,8 +424,41 @@ export class Grid {
     if (typeof mic === "boolean") this._setIndicator(tile.micPill, mic);
     if (typeof camera === "boolean") {
       this._setIndicator(tile.avPill, camera);
-      tile.camOff.hidden = camera; // cover the frozen/black frame when their camera is off
+      // The PILL keeps reporting their real camera state even in data saver: their
+      // camera genuinely is on, we are simply not downloading it. Only the cover
+      // below reflects what this client can actually show.
+      tile.cameraOn = camera;
+      this._applyCameraCover(tile);
     }
+  }
+
+  // Show or hide a remote tile's avatar placeholder. Two independent reasons to
+  // cover the video, and either is sufficient:
+  //
+  //   their camera is off  — the <video> holds a frozen last frame or nothing.
+  //   data saver is on     — the server has stopped forwarding us ANY video, so
+  //                          the element is empty however live their camera is.
+  //
+  // The second is why this is not simply `hidden = cameraOn`. Without it, data
+  // saver left every camera-on peer as an unlabelled black rectangle, and there
+  // was no way to tell who was speaking — which is the whole point of an
+  // audio-only mode. With the avatar plus the active-speaker outline, there is.
+  //
+  // Self is never covered by data saver: it governs what we RECEIVE, and the self
+  // tile is a local preview that never crosses the network. refreshSelf owns it.
+  _applyCameraCover(tile) {
+    if (!tile || tile.self) return;
+    tile.camOff.hidden = tile.cameraOn && !this._lowBandwidth;
+  }
+
+  // Data saver toggled. The server drops (or restores) our inbound video by
+  // renegotiation, which arrives as peer-gone/remote-track per camera; this covers
+  // the tiles in the same beat so there is never a window of black rectangles.
+  setLowBandwidth(on) {
+    const next = !!on;
+    if (next === this._lowBandwidth) return;
+    this._lowBandwidth = next;
+    for (const tile of this.tiles.values()) this._applyCameraCover(tile);
   }
 
   // Set a remote participant's local playback volume (0..1). Purely client-side:
@@ -570,6 +613,11 @@ export class Grid {
       this.pendingMedia.delete(id);
       this._applyPeerMedia(tile, pending);
     }
+    // Cover it now if data saver is on. Unconditional, not folded into the branch
+    // above: a peer whose media state has not arrived yet still gets no video while
+    // data saver is on, and would otherwise be built as a bare black rectangle and
+    // only corrected whenever their first broadcast happened to land.
+    this._applyCameraCover(tile);
     return tile;
   }
 
@@ -634,7 +682,7 @@ export class Grid {
     cameraVideo.title = "Click to focus";
     cameraVideo.addEventListener("click", () => this._toggleFocus(tileEl));
 
-    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, gravatar: gravatar || "", nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, self };
+    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, gravatar: gravatar || "", nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, cameraOn: true, self };
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);

@@ -94,6 +94,20 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Active speaker highlights** — with 2+ remote participants, whoever is
       talking gets an accent-outlined tile; it follows the loudest voice and clears
       when the room goes quiet.
+- [ ] **Data saver shows avatars, not black tiles** — with 2+ remote participants
+      whose cameras are ON, turn on **Data saver**. Every remote tile must switch to
+      that person's Gravatar (or their initial in a coloured circle) — not a black
+      rectangle — and their camera pill must still read *on*, because their camera
+      genuinely is: you have just stopped downloading it. Talking should still light
+      the active-speaker outline, so you can tell who is speaking. Turn data saver
+      back off and the video returns.
+- [ ] **Data saver survives a reload and covers late joiners** — with data saver on,
+      reload. Tiles must come back already showing avatars, with no flash of black.
+      Then have someone else join: their tile must appear as an avatar too, not as a
+      black rectangle that corrects itself a moment later.
+- [ ] **Data saver leaves your own tile alone** — your self-view keeps showing your
+      camera throughout. Data saver governs what you *receive*; your own preview
+      never crosses the network.
 - [ ] **Per-participant volume (local only)** — each **remote** tile has a small
       volume slider (0–1, default full). Drag browser A's slider for B down to zero:
       A stops hearing B while A still hears everyone else, and **C's** perception of
