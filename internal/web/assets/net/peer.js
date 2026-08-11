@@ -575,7 +575,21 @@ export class Peer extends EventTarget {
         );
       }
     }
-    if (lines.length) console.info("[track-debug stats]\n  " + lines.join("\n  "));
+    // Always print, even with nothing to report. Staying silent made "this client
+    // is being forwarded no video at all" — a serious state, and exactly what a
+    // participant nobody can see or hear looks like from here — indistinguishable
+    // from "the debug output is broken" or "the timer stopped". The empty case is
+    // the one worth naming out loud, so it carries the counts that say WHICH kind
+    // of empty it is: no transceivers at all, versus transceivers present but the
+    // server naming none of them.
+    if (lines.length) {
+      console.info("[track-debug stats]\n  " + lines.join("\n  "));
+      return;
+    }
+    console.info(
+      `[track-debug stats] no inbound video — transceivers=${this.pc.getTransceivers().length} ` +
+        `media=${this._incoming.size} labels=${this._trackInfo.size} pc=${this.pc.connectionState}/${this.pc.iceConnectionState}`,
+    );
   }
 
   _onStreamGone(mid) {
