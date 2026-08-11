@@ -133,8 +133,10 @@ test("a forward the SFU no longer lists is retired", (t) => {
   const { peer, signaling, events } = install(t);
   startShare(peer, signaling);
 
-  // p1 stopped sharing: the SFU dropped both forwards and re-labelled.
-  signaling.emit("tracks", { tracks: [] });
+  // p1 stopped sharing: the SFU dropped both forwards and re-labelled. The new
+  // list still names another participant's camera, so it is authoritative — an
+  // empty one deliberately is not (see the empty-list test below).
+  signaling.emit("tracks", { tracks: [{ mid: "9", participantId: "p2", kind: "camera" }] });
 
   assert.deepEqual(
     events.gone.map((d) => d.kind).sort(),
@@ -153,13 +155,38 @@ test("a media event for one half still retires the other half", (t) => {
   const { shared, audio } = startShare(peer, signaling);
 
   shared.fireRemoveTrack(audio); // only the audio track's removetrack fires
-  signaling.emit("tracks", { tracks: [] });
+  signaling.emit("tracks", { tracks: [{ mid: "9", participantId: "p2", kind: "camera" }] });
 
   assert.deepEqual(
     events.gone.map((d) => d.kind).sort(),
     ["screen", "screen-audio"],
     "the video half must be retired even though only the audio fired removetrack",
   );
+});
+
+// The one input that could blank a whole call. An empty list is not evidence that
+// every forward went away — it is equally what a momentarily-empty server view
+// looks like, and the server now sends this map on every answer as well as every
+// offer, so there are more chances to catch one. Real departures arrive by
+// peer-left (which removes the tile outright) and by removetrack per track, so
+// declining to act here costs nothing and removes the worst failure mode.
+test("an empty tracks list retires nothing", (t) => {
+  const { peer, signaling, events } = install(t);
+  startShare(peer, signaling);
+
+  signaling.emit("tracks", { tracks: [] });
+
+  assert.deepEqual(events.gone, [], "an empty list tore down live forwards");
+});
+
+test("a list that still names some forwards retires only the missing ones", (t) => {
+  const { peer, signaling, events } = install(t);
+  startShare(peer, signaling);
+
+  // Not empty, so it IS authoritative: mid 2 is gone, mid 1 survives.
+  signaling.emit("tracks", { tracks: [{ mid: "1", participantId: "p1", kind: "screen" }] });
+
+  assert.deepEqual(events.gone.map((d) => d.kind), ["screen-audio"]);
 });
 
 // Retirement must be idempotent: a media event and the server's list both reporting
@@ -171,7 +198,7 @@ test("media event and tracks message do not double-retire", (t) => {
 
   shared.fireRemoveTrack(screen);
   shared.fireRemoveTrack(audio);
-  signaling.emit("tracks", { tracks: [] });
+  signaling.emit("tracks", { tracks: [{ mid: "9", participantId: "p2", kind: "camera" }] });
 
   assert.equal(events.gone.length, 2, "each forward retires exactly once");
 });
