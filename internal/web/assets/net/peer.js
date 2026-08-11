@@ -39,11 +39,16 @@ const ICE_RESTART_GRACE_MS = 6000;
 // downlink and starving the signaling WebSocket (see _capBitrate).
 const SCREEN_MAX_BITRATE = 2_500_000;
 
-// TEMP DEBUG: diagnose "remote camera stays black on join". A remote video only
-// attaches when its media (ontrack, keyed by transceiver mid) pairs with the SFU's
-// label (the "tracks" message, keyed by mid) — see _emitRemoteTrack. A lingering
-// UNPAIRED entry in the dumps below (media-without-label or label-without-media) is
-// the black-tile bug. Grep the console for "[track-debug]". Set false / remove once fixed.
+// TEMP DEBUG: diagnose "I can't see/hear someone". A remote track only attaches
+// when its media (ontrack, keyed by transceiver mid) pairs with the SFU's label
+// (the "tracks" message, keyed by mid) — see _emitRemoteTrack. A lingering UNPAIRED
+// entry in the dumps below (media-without-label or label-without-media) is that bug.
+//
+// The scope is every forward, audio included. It began as a black-camera hunt and
+// reported only video, which meant a participant who joined with no camera produced
+// no output at all: a call where nobody could hear them was indistinguishable from
+// a call with nothing wrong. Grep the console for "[track-debug]". Set false /
+// remove once these are settled.
 const TRACK_DEBUG = true;
 
 export class Peer extends EventTarget {
@@ -126,8 +131,8 @@ export class Peer extends EventTarget {
     ];
     for (const [type, fn] of this._sigHandlers) signaling.on(type, fn);
 
-    // TEMP DEBUG (see TRACK_DEBUG): sample inbound video decode stats every 4s so a
-    // black-camera occurrence is captured in the console. Cleared in close().
+    // TEMP DEBUG (see TRACK_DEBUG): sample every inbound forward, audio and video,
+    // every 4s so a can't-see/can't-hear occurrence is captured. Cleared in close().
     this._statsTimer = TRACK_DEBUG ? setInterval(() => this._dumpStats(), 4000) : null;
   }
 
@@ -511,13 +516,20 @@ export class Peer extends EventTarget {
     console.info(line);
   }
 
-  // TEMP DEBUG (see TRACK_DEBUG): periodically dump inbound VIDEO decode stats so a
-  // black-camera-on-join occurrence is captured. Read-only (getStats). Reading the fields:
-  //   recv climbing but dec/key staying 0 -> no decodable keyframe reached this receiver
-  //   high lost + climbing pli/nack       -> keyframe packets lost on the link
-  //   dec climbing + nonzero size but tile black -> client render/element stall
+  // TEMP DEBUG (see TRACK_DEBUG): periodically dump the state of EVERY inbound
+  // forward, audio and video. Read-only (getStats). Reading the fields:
+  //   video: recv climbing but dec/key staying 0 -> no decodable keyframe reached
+  //     this receiver; high lost + climbing pli/nack -> keyframe packets lost on
+  //     the link; dec climbing and nonzero size but the tile black -> a client
+  //     render/element stall, not a media problem.
+  //   audio: pkts climbing with level 0 -> a live stream carrying silence (muted or
+  //     a dead mic); pkts frozen -> the forward has stopped; concealed climbing ->
+  //     loss being papered over, which is what choppy audio sounds like.
   //   "!! NO INBOUND RTP" -> the forward is announced but nothing is arriving on
-  //     it; read label=/media= on that line to tell which half is missing
+  //     it; read label=/media= on that line to tell which half is missing.
+  //   "no inbound media" -> this client is being forwarded nothing at all; the
+  //     counts on that line say whether that is an absence of forwards, a pairing
+  //     failure, or a dead transport.
   async _dumpStats() {
     if (!TRACK_DEBUG || !this.pc || !this._incoming) return;
     if (this.pc.connectionState === "closed") return;
@@ -537,13 +549,17 @@ export class Peer extends EventTarget {
       const info = this._trackInfo.get(mid);
       const hasMedia = this._incoming.has(mid);
       if (!info && !hasMedia) continue; // retired m-line: neither labelled nor carrying media
+      // Every forward is reported, audio included. This used to cover video only,
+      // which left the dump unable to say anything at all about a participant who
+      // joins with no camera: their mic forward produced no line, so a call where
+      // nobody could hear them looked exactly like a call with nothing wrong. The
+      // instrument was built for "the camera is black" and quietly inherited that
+      // as its scope.
       const track = tr.receiver && tr.receiver.track;
-      // A mid the SFU LABELS as video counts even if no receiver track exists yet.
-      // Requiring a live video track was a blind spot: the case being diagnosed —
-      // a forward that is announced but silent — has no track and no stats, so it
-      // was skipped and the dump said nothing at all about it.
-      const labelledVideo = !!info && (info.kind === "camera" || info.kind === "screen");
-      if (!labelledVideo && !(track && track.kind === "video")) continue;
+      // A mid the SFU LABELS counts even if no receiver track exists yet. Requiring
+      // a live track was a blind spot: an announced-but-silent forward has no track
+      // and no stats, so it was skipped and the dump said nothing about it.
+      if (!info && !track) continue;
       const who = info ? `${info.kind}@${info.participantId}` : `mid=${mid}`;
       let scoped = null;
       if (tr.receiver) {
@@ -556,8 +572,19 @@ export class Peer extends EventTarget {
       let reported = false;
       if (scoped) {
         scoped.forEach((r) => {
-          if (r.type !== "inbound-rtp" || r.kind !== "video") return;
+          if (r.type !== "inbound-rtp") return;
           reported = true;
+          if (r.kind === "audio") {
+            // For audio the question is never "is it decoding" but "is anything
+            // arriving, and is it silence". pkts climbing with level at 0 is a live
+            // stream carrying a muted or dead microphone; pkts frozen is a forward
+            // that has stopped. concealed rising is packet loss being papered over,
+            // which is what choppy audio sounds like.
+            lines.push(
+              `${who} mid=${mid} pkts=${r.packetsReceived ?? 0} lost=${r.packetsLost ?? 0} jitter=${r.jitter ?? 0} bytes=${r.bytesReceived ?? 0} level=${r.audioLevel ?? "n/a"} concealed=${r.concealedSamples ?? 0}`,
+            );
+            return;
+          }
           lines.push(
             `${who} mid=${mid} recv=${r.framesReceived ?? 0} dec=${r.framesDecoded ?? 0} key=${r.keyFramesDecoded ?? 0} drop=${r.framesDropped ?? 0} pli=${r.pliCount ?? 0} nack=${r.nackCount ?? 0} lost=${r.packetsLost ?? 0} bytes=${r.bytesReceived ?? 0} ${r.frameWidth ?? 0}x${r.frameHeight ?? 0} fps=${r.framesPerSecond ?? 0}`,
           );
@@ -576,18 +603,18 @@ export class Peer extends EventTarget {
       }
     }
     // Always print, even with nothing to report. Staying silent made "this client
-    // is being forwarded no video at all" — a serious state, and exactly what a
-    // participant nobody can see or hear looks like from here — indistinguishable
-    // from "the debug output is broken" or "the timer stopped". The empty case is
-    // the one worth naming out loud, so it carries the counts that say WHICH kind
-    // of empty it is: no transceivers at all, versus transceivers present but the
-    // server naming none of them.
+    // is being forwarded nothing" — a serious state, and exactly what a participant
+    // nobody can see or hear looks like from here — indistinguishable from "the
+    // debug output is broken" or "the timer stopped". The empty case is the one
+    // worth naming out loud, so it carries the counts that say WHICH kind of empty
+    // it is: no transceivers at all, versus transceivers present but the server
+    // naming none of them.
     if (lines.length) {
       console.info("[track-debug stats]\n  " + lines.join("\n  "));
       return;
     }
     console.info(
-      `[track-debug stats] no inbound video — transceivers=${this.pc.getTransceivers().length} ` +
+      `[track-debug stats] no inbound media — transceivers=${this.pc.getTransceivers().length} ` +
         `media=${this._incoming.size} labels=${this._trackInfo.size} pc=${this.pc.connectionState}/${this.pc.iceConnectionState}`,
     );
   }
