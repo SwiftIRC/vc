@@ -40,6 +40,9 @@ export class Media extends EventTarget {
     super();
     this.stream = null; // owned camera+mic MediaStream (mutated in place)
     this.screenStream = null; // getDisplayMedia stream while sharing
+    // Why each device last failed to open, by DOMException name, or null when it
+    // opened. Read by the lobby to say WHICH device failed and what to do about it.
+    this.deviceErrors = { audio: null, video: null };
     // True once a camera has been acquired at least once. Turning the camera OFF
     // releases the device (no track), so the UI needs a separate signal to keep the
     // camera toggle usable while off — this is it.
@@ -139,6 +142,19 @@ export class Media extends EventTarget {
     );
   }
 
+  // Symmetric with _logMicProcessing. Without it the console reported the
+  // microphone on every join and said nothing whatever about the camera —
+  // success or failure — so a log could not distinguish "the camera is fine" from
+  // "the camera never started".
+  _logVideoCapture(where) {
+    const t = this.cameraTrack;
+    if (!t || typeof t.getSettings !== "function") return;
+    const s = t.getSettings() || {};
+    console.info(
+      `[video ${where}] camera="${t.label || ""}" ${s.width ?? 0}x${s.height ?? 0} fps=${s.frameRate ?? "n/a"} deviceId=${s.deviceId ? "set" : "default"}`,
+    );
+  }
+
   get cameraTrack() {
     return (this.stream && this.stream.getVideoTracks()[0]) || null;
   }
@@ -165,20 +181,38 @@ export class Media extends EventTarget {
     // separately lets the user grant one and deny the other, and keeps whichever they
     // grant. Only if BOTH fail does start() reject (and emit "error") so the lobby can
     // fall back to its join-anyway state.
-    const grab = async (constraints) => {
+    // Why a device failed is RECORDED, not discarded. Returning a bare null was
+    // what made "my camera won't turn on" undiagnosable: getUserMedia already
+    // separates permission-blocked from in-use-by-another-app from no-such-device
+    // by DOMException name, and all of it was being thrown away here. Nothing
+    // logged it, nothing surfaced it, and start() only REJECTS when both devices
+    // fail — so a working mic beside a dead camera produced total silence.
+    this.deviceErrors = { audio: null, video: null };
+    const grab = async (constraints, slot, label) => {
       try {
         return await navigator.mediaDevices.getUserMedia(constraints);
-      } catch {
-        return null; // a denied/absent device must not block the other
+      } catch (err) {
+        // A denied/absent device must still not block the other — that part was
+        // right; only the silence was wrong.
+        this.deviceErrors[slot] = (err && err.name) || "Error";
+        console.warn(`[${label} capture] failed: ${(err && err.name) || "Error"} — ${(err && err.message) || err}`);
+        return null;
       }
     };
-    const micStream = await grab({ audio: micConstraints(micId) });
+    const micStream = await grab({ audio: micConstraints(micId) }, "audio", "audio");
     if (micStream) {
       this._adopt(micStream);
       this._logMicProcessing("capture");
     }
-    const camStream = await grab({ video: cameraId ? { deviceId: { ideal: cameraId } } : true });
-    if (camStream) this._adopt(camStream);
+    const camStream = await grab(
+      { video: cameraId ? { deviceId: { ideal: cameraId } } : true },
+      "video",
+      "video",
+    );
+    if (camStream) {
+      this._adopt(camStream);
+      this._logVideoCapture("capture");
+    }
     if (!this.stream) {
       const err = new Error("microphone and camera are both unavailable");
       this._emitError(err, "getUserMedia");

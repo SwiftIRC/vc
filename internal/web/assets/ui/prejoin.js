@@ -13,6 +13,7 @@ import { loadMediaPrefs, saveMediaPrefs, loadName, saveName } from "../lib/prefs
 import { applyAvatar, gravatarHash } from "../lib/avatar.js";
 import { BackgroundPicker } from "./background.js";
 import { resolveEffectId } from "../lib/backgrounds.js";
+import { deviceErrorText } from "../lib/mediaErrors.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -292,11 +293,32 @@ export class Prejoin {
       await this.media.start({ cameraId: prefs.cameraId, micId: prefs.micId });
       if (this.destroyed) return;
       this.video.srcObject = this.media.stream;
+      // start() only REJECTS when BOTH devices fail, so a partial failure lands
+      // here rather than in the catch. That gap is why a working mic beside a dead
+      // camera used to say nothing at all: the catch never ran, the error label
+      // stayed empty, and an empty label reads as "nothing is wrong".
+      this._reportDeviceFailures();
     } catch {
-      // Permission denied / no device: keep the lobby usable. The user can still
-      // join (audio-only or view-only); a note explains the missing preview.
-      if (!this.destroyed) this.errorLabel.textContent = "Camera/microphone unavailable — you can still join.";
+      // Both devices failed. Name whichever reason we have — they are usually the
+      // same (permission covers both) but need not be.
+      if (this.destroyed) return;
+      const errs = this.media.deviceErrors || {};
+      this.errorLabel.textContent = errs.video
+        ? `${deviceErrorText("camera", errs.video)} You can still join.`
+        : "Camera and microphone unavailable — you can still join.";
     }
+  }
+
+  // Say which device failed and what to do about it. Silence here was the whole
+  // problem: the person could see no preview and had no way to tell permission
+  // from a device another app was holding.
+  _reportDeviceFailures() {
+    const errs = (this.media && this.media.deviceErrors) || {};
+    const parts = [];
+    if (errs.video) parts.push(deviceErrorText("camera", errs.video));
+    if (errs.audio) parts.push(deviceErrorText("microphone", errs.audio));
+    if (!parts.length) return;
+    this.errorLabel.textContent = `${parts.join(" ")} You can still join.`;
   }
 
   async _populateDevices() {

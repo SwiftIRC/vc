@@ -21,6 +21,17 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Preview + live count** — visit `/<room>` (e.g. `/testroom`). The lobby
       shows a live self-view and "N in call". Join the same room in a second
       browser and confirm the first browser's count rises within ~3s.
+- [ ] **A camera that won't open says why** — open the room in a second browser
+      while the first still holds the camera (or block camera permission for the
+      site, or unplug the webcam). The lobby must show a specific reason — *in use
+      by another app*, *permission is blocked*, *no camera was found* — not a blank
+      space and not a generic "unavailable". The mic must still work and Join must
+      still be possible. The console must carry a matching `[video capture] failed:`
+      line naming the DOMException.
+- [ ] **A working camera is logged too** — on a normal join the console shows a
+      `[video capture]` line with the camera name and resolution beside the
+      `[audio capture]` line. Both devices report, every time; a log that mentions
+      only the microphone means the camera never started.
 - [ ] **Device pickers** — the Camera / Microphone dropdowns list your inputs;
       switching one updates the preview without dropping the other.
 - [ ] **Audio processing is reported** — on joining, the console logs one
