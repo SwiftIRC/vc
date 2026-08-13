@@ -275,3 +275,30 @@ func TestGzipEmbeddedAssetRevalidatesWithETag(t *testing.T) {
 		t.Errorf("status = %d, want 304", rec2.Code)
 	}
 }
+
+// /robots.txt must be the file, not the SPA shell. Without it the catch-all served
+// index.html with a 200, the client read "robots.txt" as a room slug, and a crawler
+// got an HTML page saying it is not a valid room name — which is both a wrong answer
+// and an invitation to keep crawling room paths.
+func TestServesRobotsTxt(t *testing.T) {
+	h, _ := newTestHub(t, "", true)
+	req := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	rec := httptest.NewRecorder()
+	h.handleStatic(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain — an HTML answer means the shell was served", got)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<!doctype") || strings.Contains(body, "<html") {
+		t.Fatalf("served the SPA shell instead of robots.txt: %.80q", body)
+	}
+	// The directive itself, since a robots.txt that parses but permits everything
+	// would be worse than none: it looks handled while inviting the crawl.
+	if !strings.Contains(body, "User-agent: *") || !strings.Contains(body, "Disallow: /") {
+		t.Errorf("robots.txt does not disallow crawling:\n%s", body)
+	}
+}

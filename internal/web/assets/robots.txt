@@ -1,0 +1,8 @@
+# SwiftIRC VC is a video-conferencing app, not a site with content to index.
+#
+# Every path below the root is a room slug, and rooms are private and ephemeral:
+# they are created on demand from IRC, they carry an invite in the URL fragment,
+# and a crawler following one would be a participant joining a call. There is
+# nothing here that should appear in a search result.
+User-agent: *
+Disallow: /
