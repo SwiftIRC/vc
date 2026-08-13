@@ -301,6 +301,27 @@ been verified yet; every item below is an open check, not a confirmed result.**
       backgrounds in turn, then each of the 5 image scenes in turn. Each should
       fill the frame completely — no camera visible at the edges, no flicker
       between frames.
+- [ ] **Custom background: upload, composite, and others see it** — in the Scenes
+      row, click **Custom**. A file dialog opens; pick an image. Your self-view must
+      switch to it, and — the point of the feature — **every other browser must see
+      it behind you**, because the background is composited into your outgoing video
+      rather than sent as a file. Confirm no upload happens: nothing appears in the
+      Network tab and the server is never sent the image.
+- [ ] **Custom background: replace it** — with Custom already selected, click the
+      Custom chip again. The dialog reopens; pick a different image. The new one
+      must take effect for you and for everyone else. Picking the *same* file again
+      must also work (the input is cleared first so the change event still fires).
+- [ ] **Custom background survives a reload** — pick a custom background, reload the
+      page, and join again. The Custom chip shows your image and selecting it works
+      with no re-upload. (It is stored downscaled in localStorage; a very large
+      image may exceed the quota, in which case it works for this session and is
+      simply not restored next time.)
+- [ ] **Custom background rejects what it can't use** — click Custom and pick a
+      non-image (a PDF, a video). A message appears under the picker explaining why,
+      and the current background is unchanged. Nothing goes black.
+- [ ] **Custom chip before any image** — in a fresh profile (or after clearing site
+      data), the Custom chip shows a plain dark thumbnail and clicking it opens the
+      file dialog rather than selecting an empty background.
 - [ ] **Scene chips show their image** — every chip in the **Scenes** row shows a
       photo, not a flat colour rectangle. A flat chip means that asset failed to
       load: check the console for "background image … could not be loaded".

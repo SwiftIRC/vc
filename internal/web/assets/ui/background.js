@@ -20,6 +20,7 @@
 
 import { GROUPS, drawImageBackground, effectById } from "../lib/backgrounds.js";
 import { loadBackgroundImage } from "../lib/backgroundImages.js";
+import { CUSTOM_ID, ACCEPT_ATTR, hasCustomBackground, setCustomBackground } from "../lib/customBackground.js";
 import { webglAvailable } from "../lib/segmenter.js";
 
 const THUMB_W = 48;
@@ -103,6 +104,19 @@ export class BackgroundPicker {
     this.busy = false;
     this._effectsDisabled = false; // latched by _disableEffects when WebGL is absent
     this.chips = new Map();
+    this._thumbs = new Map(); // effectId -> chip canvas, so the custom chip can be repainted
+    this._webglOk = false; // set below; kept for repaints after construction
+
+    // The file input for a user-supplied background. Kept out of the layout and
+    // driven by the Custom chip: a bare <input type="file"> cannot be styled to
+    // match the chips, and the picker is a radiogroup where a file field would be
+    // a foreign control.
+    this._fileInput = el("input", {
+      type: "file",
+      accept: ACCEPT_ATTR,
+      hidden: true,
+      onChange: () => this._onCustomFile(),
+    });
 
     this.notice = el("p", { class: "bg-notice", role: "status", hidden: true });
     this.strip = el("div", { class: "bg-strip", role: "radiogroup", "aria-label": "Background" });
@@ -110,12 +124,14 @@ export class BackgroundPicker {
     // Computed once and reused for every chip: it probes and releases a real
     // WebGL context, so calling it per chip would be five probes for one answer.
     const webglOk = webglAvailable();
+    this._webglOk = webglOk;
 
     for (const group of GROUPS) {
       const chips = el("div", { class: "bg-row-chips" });
       for (const effect of group.effects) {
         const canvas = el("canvas", { class: "bg-thumb", width: THUMB_W, height: THUMB_H, "aria-hidden": "true" });
         drawThumb(canvas, effect, webglOk);
+        const isCustom = effect.id === CUSTOM_ID;
         const chip = el(
           "button",
           {
@@ -123,13 +139,14 @@ export class BackgroundPicker {
             class: "bg-chip",
             role: "radio",
             "aria-checked": "false",
-            title: effect.label,
-            onClick: () => this._choose(effect.id),
+            title: isCustom ? "Your own image — click to choose one, click again to replace it" : effect.label,
+            onClick: () => (isCustom ? this._chooseCustom() : this._choose(effect.id)),
           },
           canvas,
           el("span", { class: "bg-label", text: effect.label }),
         );
         this.chips.set(effect.id, chip);
+        this._thumbs.set(effect.id, canvas);
         chips.append(chip);
       }
       this.strip.append(
@@ -137,7 +154,7 @@ export class BackgroundPicker {
       );
     }
 
-    this.el = el("div", { class: compact ? "bg-picker compact" : "bg-picker" }, this.strip, this.notice);
+    this.el = el("div", { class: compact ? "bg-picker compact" : "bg-picker" }, this.strip, this.notice, this._fileInput);
 
     // Media is the authority on what is actually in force — a build failure or a
     // watchdog bail changes it without anyone clicking a chip. It dispatches this
@@ -180,6 +197,56 @@ export class BackgroundPicker {
   destroy() {
     if (this.media) this.media.removeEventListener("background-changed", this._onChanged);
     this.chips.clear();
+  }
+
+  // The Custom chip. With no image yet there is nothing to select, so it opens the
+  // file dialog; once one is set it behaves like any other chip, and clicking it
+  // while it is ALREADY the active effect opens the dialog again to replace the
+  // image. That last rule is what makes the image changeable without spending a
+  // second control on it — a chip is a <button>, so a nested "replace" button would
+  // be invalid markup, and the picker is a radiogroup where a stray control is a
+  // foreign element in the tab order.
+  _chooseCustom() {
+    if (this._effectsDisabled) return;
+    const alreadyActive = this.media && this.media.backgroundEffect === CUSTOM_ID;
+    if (!hasCustomBackground() || alreadyActive) {
+      this._fileInput.value = ""; // so re-picking the SAME file still fires change
+      this._fileInput.click();
+      return;
+    }
+    this._choose(CUSTOM_ID);
+  }
+
+  // A file came back from the dialog. Decode and adopt it, then select it — or say
+  // why not. The notice is the picker's existing status line, which is where every
+  // other background failure is already reported.
+  async _onCustomFile() {
+    const file = this._fileInput.files && this._fileInput.files[0];
+    if (!file) return; // dialog cancelled
+    try {
+      await setCustomBackground(file);
+    } catch (err) {
+      this.notice.textContent = (err && err.message) || "That image couldn't be used.";
+      this.notice.hidden = false;
+      return;
+    }
+    this.notice.hidden = true;
+    this._repaintCustomThumb();
+    // Re-select even when custom is already active: setBackground short-circuits an
+    // unchanged id, so a replacement image would otherwise be adopted by the chip
+    // and never reach the compositor.
+    if (this.media && this.media.backgroundEffect === CUSTOM_ID) {
+      await this.media.setBackground("none");
+    }
+    await this._choose(CUSTOM_ID);
+  }
+
+  // Repaint the custom chip from the CURRENT image. The entry captured when the
+  // chips were built carries the src as it was then (empty, before any file was
+  // chosen), so the fresh one has to be looked up.
+  _repaintCustomThumb() {
+    const canvas = this._thumbs.get(CUSTOM_ID);
+    if (canvas) drawThumb(canvas, effectById(CUSTOM_ID), this._webglOk);
   }
 
   async _choose(effectId) {

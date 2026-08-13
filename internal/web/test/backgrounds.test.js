@@ -42,12 +42,12 @@ function fakeCtx(w, h, callLimit = Infinity) {
 // id silently orphans every saved preference, and nothing else would catch it.
 // These are the ids compiled into the client. The photographic scenes are NOT
 // here: the server injects whichever ones a build embedded (window.__vcScenes),
-// there is no window under node --test, so EFFECTS is exactly the built-ins. Scene
-// construction is covered through sceneEffects below.
+// there is no window under node --test, so EFFECTS is the built-ins plus "custom".
+// Scene construction is covered through sceneEffects below.
 test("the effect id set is frozen", () => {
   assert.deepEqual(
     EFFECTS.map((e) => e.id),
-    ["none", "blur", "blur-strong", "aurora", "dusk", "grid", "depth", "paper"],
+    ["none", "blur", "blur-strong", "aurora", "dusk", "grid", "depth", "paper", "custom"],
   );
 });
 
@@ -61,11 +61,16 @@ test("every effect is well formed for its kind", () => {
     }
     if (e.kind === "paint") assert.equal(typeof e.paint, "function", `${e.id} needs a painter`);
     if (e.kind === "image") {
-      // `src` is resolved via `new URL(..., import.meta.url)` (see backgrounds.js),
-      // so under node --test it's an absolute file:// URL rather than a bare
-      // relative string. What must hold regardless of the runtime is that it
-      // still points at this effect's own file under img/.
-      assert.match(e.src, new RegExp(`img/${e.id}\\.webp$`), `${e.id} src ${e.src} does not end in its own img/ webp`);
+      // "custom" is the user's own upload. Its src is deliberately EMPTY in the
+      // catalogue and resolved at lookup time (effectById), because the image can
+      // be replaced mid-call and a src baked in at module load could only name the
+      // first one. Empty means "selected but no image yet", which draws the
+      // fallback — the correct appearance for that state.
+      if (e.id !== "custom") {
+        assert.match(e.src, new RegExp(`img/${e.id}\\.webp$`), `${e.id} src ${e.src} does not end in its own img/ webp`);
+      } else {
+        assert.equal(e.src, "", "the custom entry must not bake in a src");
+      }
       assert.match(e.fallback, /^#[0-9a-fA-F]{6}$/, `${e.id} fallback ${e.fallback} is not a hex colour`);
       assert.equal(e.paint, undefined, `${e.id} is an image and must not carry a painter`);
     }
@@ -240,9 +245,24 @@ test("GROUPS partitions EFFECTS exactly", () => {
 
 // A build that embedded no images must not render an empty "Scenes" heading, which
 // is what a fresh clone looks like: most scene files are untracked.
-test("an empty group is omitted rather than rendered blank", () => {
-  assert.deepEqual(GROUPS.map((g) => g.id), ["effect"]);
+// The Scenes row is never empty now: "custom" lives in it whether or not a build
+// embedded any images, so there is always something to offer there.
+test("no group is rendered blank", () => {
+  assert.deepEqual(GROUPS.map((g) => g.id), ["effect", "scene"]);
   assert.ok(GROUPS.every((g) => g.effects.length > 0));
+  assert.deepEqual(GROUPS.find((g) => g.id === "scene").effects.map((e) => e.id), ["custom"]);
+});
+
+// A saved preference of "custom" has to survive a reload that happens before — or
+// without — any image being restored. resolveEffectId is a membership test over
+// EFFECTS, so the entry must exist unconditionally, and effectById must hand back
+// something drawable rather than undefined.
+test("custom resolves even with no image set", () => {
+  assert.equal(resolveEffectId("custom"), "custom");
+  const e = effectById("custom");
+  assert.equal(e.kind, "image");
+  assert.equal(e.src, "", "no image set yet, so nothing to point at");
+  assert.match(e.fallback, /^#[0-9a-fA-F]{6}$/, "must still have something opaque to paint");
 });
 
 test("sceneEffects builds well-formed image entries", () => {

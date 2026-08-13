@@ -25,6 +25,8 @@
 // Sizes are expressed as fractions of w/h for the same reason: a pixel constant
 // tuned at 720p looks wrong at 480p and invisible in a thumbnail.
 
+import { CUSTOM_ID, customBackgroundSrc } from "./customBackground.js";
+
 // --- painter helpers ---
 
 function fill(ctx, w, h, color) {
@@ -220,7 +222,21 @@ function scenesFromPage() {
   return (typeof globalThis !== "undefined" && globalThis.window && globalThis.window.__vcScenes) || [];
 }
 
-export const EFFECTS = Object.freeze([...BUILT_IN, ...sceneEffects(scenesFromPage())]);
+// The user's own uploaded background. Always present in the catalogue even when no
+// image has been chosen, because resolveEffectId is a membership test over EFFECTS
+// and a saved preference of "custom" must survive a reload that happens before the
+// stored image is restored. Its src is empty here and resolved at LOOKUP time (see
+// effectById) — the image can be replaced mid-call, and a frozen src baked in at
+// module load could only ever name the first one.
+const CUSTOM = Object.freeze({
+  id: CUSTOM_ID,
+  label: "Custom",
+  kind: "image",
+  src: "",
+  fallback: SCENE_FALLBACK,
+});
+
+export const EFFECTS = Object.freeze([...BUILT_IN, ...sceneEffects(scenesFromPage()), CUSTOM]);
 
 // The picker's rows. Derived from `kind` rather than a field on each entry — there
 // is exactly one rule ("photos are scenes") and duplicating it per entry would be a
@@ -255,5 +271,11 @@ export function resolveEffectId(id) {
 // Always returns a catalogue entry, so callers never guard for undefined.
 export function effectById(id) {
   const wanted = resolveEffectId(id);
+  // The custom entry's src is whatever image is loaded right now, not what was
+  // known at module load. Callers hold the entry they are handed (segmenter keeps
+  // it as this._effect), so replacing the image re-runs setEffect and picks the new
+  // src up here. An empty src draws the fallback, which is the correct appearance
+  // for "custom is selected but no image is set".
+  if (wanted === CUSTOM_ID) return Object.freeze({ ...CUSTOM, src: customBackgroundSrc() });
   return EFFECTS.find((e) => e.id === wanted) || EFFECTS[0];
 }

@@ -67,3 +67,31 @@ export function saveName(name) {
     /* storage unavailable — ignore */
   }
 }
+
+// The user's own uploaded background, stored as a downscaled JPEG data URL under
+// its own key rather than merged into the media/layout prefs: it is orders of
+// magnitude larger than every other preference, and a quota failure writing it must
+// not take the small ones down with it. "" clears it.
+//
+// Storage is best-effort in the same way the others are — exceeding the quota (a
+// large image, or a nearly-full origin) costs the next session's restore, not the
+// current session's background, so the failure is swallowed here and the caller
+// carries on with the image it already has in memory.
+const CUSTOM_BG_KEY = "swiftirc-vc-custom-bg";
+
+export function loadCustomBackground() {
+  try {
+    return localStorage.getItem(CUSTOM_BG_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveCustomBackground(dataUrl) {
+  try {
+    if (dataUrl) localStorage.setItem(CUSTOM_BG_KEY, dataUrl);
+    else localStorage.removeItem(CUSTOM_BG_KEY);
+  } catch {
+    /* quota exceeded or storage unavailable — the in-memory copy still works */
+  }
+}

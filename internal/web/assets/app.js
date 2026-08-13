@@ -37,6 +37,7 @@ import { Chat } from "./ui/chat.js";
 import { formatDuration } from "./lib/duration.js";
 import { useCommunicationAudio } from "./lib/audioSession.js";
 import { serverErrorDisposition } from "./lib/serverError.js";
+import { restoreCustomBackground } from "./lib/customBackground.js";
 
 // Mirror of the server's room-slug rule (internal/server: slugRe). A path that
 // doesn't match can never join, so we route it to home with a hint instead.
@@ -97,6 +98,11 @@ function slugify(text) {
 }
 
 function boot() {
+  // Bring back the user's own uploaded background before anything resolves a saved
+  // effect id against the catalogue. "custom" is always a valid id, so a saved
+  // preference of it survives regardless — but restoring late would mean the first
+  // frames composited a black backdrop instead of their image.
+  restoreCustomBackground();
   slug = location.pathname.replace(/^\/+|\/+$/g, "").toLowerCase();
   token = parseToken(location.hash);
   invite = parseInvite(location.hash);
