@@ -51,6 +51,14 @@ const SCREEN_MAX_BITRATE = 2_500_000;
 // remove once these are settled.
 const TRACK_DEBUG = true;
 
+// Round a stats float for the debug dump. audioLevel in particular arrives at full
+// double precision — a muted mic reports 0.00003051850947599719, one LSB of 16-bit
+// audio — which is unreadable at a glance next to a talking peer's 0.196. Three
+// decimals is the resolution the question actually needs: silence or speech.
+function fixed(value, places) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(places) : "n/a";
+}
+
 export class Peer extends EventTarget {
   constructor(signaling) {
     super();
@@ -581,7 +589,9 @@ export class Peer extends EventTarget {
             // that has stopped. concealed rising is packet loss being papered over,
             // which is what choppy audio sounds like.
             lines.push(
-              `${who} mid=${mid} pkts=${r.packetsReceived ?? 0} lost=${r.packetsLost ?? 0} jitter=${r.jitter ?? 0} bytes=${r.bytesReceived ?? 0} level=${r.audioLevel ?? "n/a"} concealed=${r.concealedSamples ?? 0}`,
+              `${who} mid=${mid} pkts=${r.packetsReceived ?? 0} lost=${r.packetsLost ?? 0} ` +
+                `jitter=${fixed(r.jitter, 3)} bytes=${r.bytesReceived ?? 0} ` +
+                `level=${fixed(r.audioLevel, 3)} concealed=${r.concealedSamples ?? 0}`,
             );
             return;
           }
