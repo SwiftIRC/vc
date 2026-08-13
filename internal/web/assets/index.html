@@ -7,6 +7,9 @@
   <!-- __ASSET_VERSION__ is substituted with the build's asset digest when the shell is
        served, so every redeploy changes these URLs and no cache can serve stale code.
        app.js's imports are all RELATIVE, so the whole module graph inherits the prefix. -->
+  <!-- Version-stamped so a redeploy replaces it; browsers also request a bare
+       /favicon.ico with no link tag at all, and the embedded file answers that too. -->
+  <link rel="icon" href="/v/__ASSET_VERSION__/favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="stylesheet" href="/v/__ASSET_VERSION__/style.css">
 </head>
 <body>

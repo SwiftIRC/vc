@@ -36,6 +36,17 @@ bundle rather than from a recorded vendoring step:
 Re-vendoring this file from a recorded source, with checksums and the licence texts,
 would put it on the same footing as the MediaPipe directory.
 
+### SwiftIRC logo — `internal/web/assets/favicon.ico`
+
+The browser-tab icon, derived from the SwiftIRC logo at
+`https://swiftirc.net/images/avatar.png` and rebuilt as a 16/32/48 ICO.
+
+It is SwiftIRC's own mark, used here by SwiftIRC's own application, so no permission
+question arises for this project. It is called out anyway because **a trade mark is
+not licensed by MIT** — the MIT grant covers the software, not the marks that
+identify who publishes it. A fork should replace it with its own icon rather than
+ship someone else's logo under a licence that never covered it.
+
 ### Background scenes — `internal/web/assets/img/bg/`
 
 See [`internal/web/assets/img/bg/README.md`](internal/web/assets/img/bg/README.md)

@@ -302,3 +302,35 @@ func TestServesRobotsTxt(t *testing.T) {
 		t.Errorf("robots.txt does not disallow crawling:\n%s", body)
 	}
 }
+
+// /favicon.ico must be the icon, not the SPA shell. Browsers request it on every
+// page load with no link tag involved, and the catch-all used to answer with a
+// kilobyte of HTML that the browser then discarded.
+//
+// The Content-Type is worth asserting rather than assuming, because it is not fixed
+// by this codebase. Go's BUILTIN table has no ".ico"; a host with /etc/mime.types
+// supplies image/vnd.microsoft.icon, and a minimal container without one falls
+// through to ServeContent's sniffing, which reads the ICO magic number as
+// image/x-icon. Both are correct, so the assertion accepts either rather than
+// pinning whichever this machine happens to produce.
+func TestServesFavicon(t *testing.T) {
+	h, _ := newTestHub(t, "", true)
+	req := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	rec := httptest.NewRecorder()
+	h.handleStatic(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.Bytes()
+	if strings.Contains(string(body), "<html") {
+		t.Fatalf("served the SPA shell instead of the icon: %.80q", body)
+	}
+	// ICO magic: reserved 0, type 1 (icon).
+	if len(body) < 4 || body[0] != 0x00 || body[1] != 0x00 || body[2] != 0x01 || body[3] != 0x00 {
+		t.Fatalf("body is not an ICO: % x", body[:min(8, len(body))])
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "icon") && !strings.Contains(got, "image/") {
+		t.Errorf("Content-Type = %q, want an image type", got)
+	}
+}
