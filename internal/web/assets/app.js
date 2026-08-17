@@ -317,6 +317,7 @@ function setLowBandwidth(on) {
   // left on they stay unidentifiable — the avatars are how you tell who is talking
   // when there is no video at all.
   if (grid) grid.setLowBandwidth(lowBandwidth);
+  if (peer) peer.setLowBandwidth(lowBandwidth); // so the stats dump can explain absent video
 }
 
 // --- in-call view: tile grid + control bar + chat ---
@@ -489,6 +490,7 @@ function wirePeerAndStart() {
   // may still be fine (chat/roster keep working), and a reload rebuilds the call.
   peer.addEventListener("media-failed", showMediaFailed);
 
+  peer.setLowBandwidth(lowBandwidth); // carried across a reconnect's fresh Peer
   peer.setQuality(sessionQuality.camera, sessionQuality.screen); // cap the initial publishes
 
   // Re-assert this client's low-bandwidth choice on every (re)connect: the server

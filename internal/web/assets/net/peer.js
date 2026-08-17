@@ -101,6 +101,11 @@ export class Peer extends EventTarget {
     // recovery. We make exactly ONE ICE-restart attempt, then, if it doesn't heal,
     // emit "media-failed" so the app can prompt a reload. These guard against
     // looping and against emitting twice.
+    // Whether THIS client asked the SFU to stop forwarding video (data saver). The
+    // media plane does not act on it — the server does — but the stats dump has to
+    // report it, because with it on the SFU adds no camera or screen forwards at
+    // all and a log of nothing but mics is the CORRECT result rather than a fault.
+    this._lowBandwidth = false;
     this._restartedIce = false;
     this._mediaFailedEmitted = false;
     this._iceGraceTimer = null;
@@ -216,6 +221,11 @@ export class Peer extends EventTarget {
       this._statsTimer = null;
     }
     this.pc.close();
+  }
+
+  // Told by app.js when the user toggles data saver. Diagnostic only.
+  setLowBandwidth(on) {
+    this._lowBandwidth = !!on;
   }
 
   // --- outbound negotiation ---
@@ -654,12 +664,13 @@ export class Peer extends EventTarget {
     // worth naming out loud, so it carries the counts that say WHICH kind of empty
     // it is: no transceivers at all, versus transceivers present but the server
     // naming none of them.
+    const saver = this._lowBandwidth ? " (data saver ON — no video is forwarded to this client)" : "";
     if (lines.length) {
-      console.info("[track-debug stats]\n  " + lines.join("\n  "));
+      console.info(`[track-debug stats]${saver}\n  ` + lines.join("\n  "));
       return;
     }
     console.info(
-      `[track-debug stats] no inbound media — transceivers=${this.pc.getTransceivers().length} ` +
+      `[track-debug stats]${saver} no inbound media — transceivers=${this.pc.getTransceivers().length} ` +
         `media=${this._incoming.size} labels=${this._trackInfo.size} pc=${this.pc.connectionState}/${this.pc.iceConnectionState}`,
     );
   }
