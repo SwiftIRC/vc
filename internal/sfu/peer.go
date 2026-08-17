@@ -6,7 +6,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 type Peer struct {

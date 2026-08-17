@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/web"
+	"github.com/SwiftIRC/coyote/internal/web"
 )
 
 // startTime stamps every served asset's Last-Modified. embed.FS reports a zero

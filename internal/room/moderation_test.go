@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 // setup: adhoc room, alice joins first (auto-op), bob second (user).

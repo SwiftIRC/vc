@@ -20,11 +20,11 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/ryanwohara/webrtc-chat/internal/config"
-	"github.com/ryanwohara/webrtc-chat/internal/room"
-	"github.com/ryanwohara/webrtc-chat/internal/sfu"
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
-	"github.com/ryanwohara/webrtc-chat/internal/token"
+	"github.com/SwiftIRC/coyote/internal/config"
+	"github.com/SwiftIRC/coyote/internal/room"
+	"github.com/SwiftIRC/coyote/internal/sfu"
+	"github.com/SwiftIRC/coyote/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/token"
 )
 
 var joinTimeout = 10 * time.Second

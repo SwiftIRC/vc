@@ -11,10 +11,10 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/ryanwohara/webrtc-chat/internal/config"
-	"github.com/ryanwohara/webrtc-chat/internal/room"
-	"github.com/ryanwohara/webrtc-chat/internal/sfu"
-	"github.com/ryanwohara/webrtc-chat/internal/token"
+	"github.com/SwiftIRC/coyote/internal/config"
+	"github.com/SwiftIRC/coyote/internal/room"
+	"github.com/SwiftIRC/coyote/internal/sfu"
+	"github.com/SwiftIRC/coyote/internal/token"
 )
 
 const testSecret = "test-secret-0123456789abcdef"

@@ -2,6 +2,10 @@
 .superpowers/
 
 # Go
+/coyote
+# The pre-rename binary name. Kept ignored so a stale build artifact left over from
+# before the project was renamed cannot be committed by accident — dropping this
+# line un-ignores a 22MB file sitting in the repo root.
 /webrtc-chat
 *.test
 *.out

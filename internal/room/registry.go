@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/token"
+	"github.com/SwiftIRC/coyote/internal/token"
 )
 
 const GCGrace = 60 * time.Second

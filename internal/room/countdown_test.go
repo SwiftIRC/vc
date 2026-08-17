@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 // lastCountdown returns the most recent CountdownEvent a fakeConn received.

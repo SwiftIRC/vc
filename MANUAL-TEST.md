@@ -8,7 +8,7 @@ before shipping a client change.
 Serve the app first:
 
 ```
-go run ./cmd/webrtc-chat -public-ip 127.0.0.1      # ad-hoc mode, listens on :8080
+go run ./cmd/coyote -public-ip 127.0.0.1      # ad-hoc mode, listens on :8080
 ```
 
 Open the printed URL in each browser and grant camera/microphone permission when

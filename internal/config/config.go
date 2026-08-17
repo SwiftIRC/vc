@@ -1,4 +1,4 @@
-// Package config holds process configuration for webrtc-chat.
+// Package config holds process configuration for coyote.
 package config
 
 import (
@@ -48,7 +48,7 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 		return fallback
 	}
 
-	fs := flag.NewFlagSet("webrtc-chat", flag.ContinueOnError)
+	fs := flag.NewFlagSet("coyote", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cfg Config
 	fs.StringVar(&cfg.Addr, "addr", str("WVC_ADDR", ":8080"), "HTTP listen address")

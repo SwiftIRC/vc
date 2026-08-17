@@ -6,7 +6,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 // A label keyed by an empty mid can never match an ontrack mid on the client, so a

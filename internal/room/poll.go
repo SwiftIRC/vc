@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 // Limits on a poll's text, mirroring maxChatRunes on the chat path. The client's

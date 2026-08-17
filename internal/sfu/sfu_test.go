@@ -13,8 +13,8 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/ryanwohara/webrtc-chat/internal/config"
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/config"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 func testSFU(t *testing.T) *SFU {

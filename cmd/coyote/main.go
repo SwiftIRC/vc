@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/config"
-	"github.com/ryanwohara/webrtc-chat/internal/room"
-	"github.com/ryanwohara/webrtc-chat/internal/server"
-	"github.com/ryanwohara/webrtc-chat/internal/sfu"
+	"github.com/SwiftIRC/coyote/internal/config"
+	"github.com/SwiftIRC/coyote/internal/room"
+	"github.com/SwiftIRC/coyote/internal/server"
+	"github.com/SwiftIRC/coyote/internal/sfu"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/token"
+	"github.com/SwiftIRC/coyote/internal/token"
 )
 
 func TestInviteRegisterAndPeek(t *testing.T) {

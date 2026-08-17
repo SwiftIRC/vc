@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 // TestUnpublishScreenDropsForward pins the "stopping a screenshare leaves the pane

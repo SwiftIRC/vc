@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 func lastRenamed(c *fakeConn) (signal.PeerRenamed, bool) {

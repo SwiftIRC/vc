@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ryanwohara/webrtc-chat/internal/room"
+	"github.com/SwiftIRC/coyote/internal/room"
 )
 
 func get(t *testing.T, url string) (int, map[string]any) {

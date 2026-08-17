@@ -1,5 +1,5 @@
 // Package token implements the HMAC-signed identity tokens issued by the
-// Anope module and verified by webrtc-chat. Format:
+// Anope module and verified by coyote. Format:
 // base64url(JSON payload) + "." + base64url(HMAC-SHA256(payload-b64-bytes)).
 // The signature covers the encoded payload string, so verifiers never
 // re-marshal JSON and any issuer implementation interoperates.

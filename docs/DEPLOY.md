@@ -1,6 +1,6 @@
-# Deploying webrtc-chat
+# Deploying coyote
 
-webrtc-chat is a single static Go binary. It serves the web client, the signaling
+coyote is a single static Go binary. It serves the web client, the signaling
 WebSocket, and the SFU media plane from one process. There is **no database and no
 TURN server** — the SFU has a public IP, so peers reach it directly over UDP.
 
@@ -49,10 +49,10 @@ Routes served: `GET /` (app shell + assets), `GET /ws/{room}` (signaling),
 ## Build & run
 
 ```
-go build -o webrtc-chat ./cmd/webrtc-chat
+go build -o coyote ./cmd/coyote
 
 # Channel-rooms-only SwiftIRC deployment behind a proxy:
-./webrtc-chat \
+./coyote \
   -addr 127.0.0.1:8080 \
   -public-ip 203.0.113.10 \
   -udp-min 50000 -udp-max 50199 \
@@ -118,19 +118,38 @@ range directly.
 For a simple single-host setup you can skip the proxy:
 
 ```
-./webrtc-chat -public-ip 203.0.113.10 -addr :443 \
-  -tls-cert /etc/webrtc-chat/fullchain.pem \
-  -tls-key  /etc/webrtc-chat/privkey.pem
+./coyote -public-ip 203.0.113.10 -addr :443 \
+  -tls-cert /etc/coyote/fullchain.pem \
+  -tls-key  /etc/coyote/privkey.pem
 ```
 
 You are then responsible for certificate renewal yourself.
 
+## Renaming an existing deployment
+
+The project was called `webrtc-chat` until it became `coyote`. Nothing in the
+protocol or on-disk state changed, so an existing host needs only its names
+brought across:
+
+```
+systemctl stop webrtc-chat
+mv /etc/webrtc-chat /etc/coyote
+mv /usr/local/bin/webrtc-chat /usr/local/bin/coyote
+mv /etc/systemd/system/webrtc-chat.service /etc/systemd/system/coyote.service
+# edit the unit: EnvironmentFile and ExecStart both still say webrtc-chat
+systemctl daemon-reload && systemctl enable --now coyote
+```
+
+`WVC_SECRET` and every other env var keep their names — the `WVC_` prefix is
+unchanged — so the Anope module needs no edit and rooms keep working. The Anope
+module itself is still `m_webrtc_chat` and is deliberately untouched.
+
 ## systemd unit
 
 ```ini
-# /etc/systemd/system/webrtc-chat.service
+# /etc/systemd/system/coyote.service
 [Unit]
-Description=webrtc-chat SFU
+Description=coyote SFU
 After=network-online.target
 Wants=network-online.target
 
@@ -138,8 +157,8 @@ Wants=network-online.target
 User=webrtc
 Group=webrtc
 # Secret lives in a root-only env file, not on the command line (argv is world-readable).
-EnvironmentFile=/etc/webrtc-chat/env
-ExecStart=/usr/local/bin/webrtc-chat \
+EnvironmentFile=/etc/coyote/env
+ExecStart=/usr/local/bin/coyote \
   -addr 127.0.0.1:8080 \
   -public-ip 203.0.113.10 \
   -udp-min 50000 -udp-max 50199 \
@@ -159,14 +178,14 @@ WantedBy=multi-user.target
 ```
 
 ```
-# /etc/webrtc-chat/env   (chmod 600, root-owned)
+# /etc/coyote/env   (chmod 600, root-owned)
 WVC_SECRET=the-shared-hmac-secret-also-in-anope.conf
 ```
 
 ```
 systemctl daemon-reload
-systemctl enable --now webrtc-chat
-journalctl -u webrtc-chat -f
+systemctl enable --now coyote
+journalctl -u coyote -f
 ```
 
 On restart the process broadcasts `server-restarting` and closes connections;
@@ -212,7 +231,7 @@ The Anope module (Plan 4) and this server share one `-secret`. The flow:
    lost to a restart. The read-only display name in the lobby is the token's nick;
    a locked room additionally prompts for its password.
 
-Keep `WVC_SECRET` identical in `/etc/webrtc-chat/env` and the Anope module config,
+Keep `WVC_SECRET` identical in `/etc/coyote/env` and the Anope module config,
 and rotate both together — a mismatch rejects every token and every provision.
 
 ## Post-deploy smoke check

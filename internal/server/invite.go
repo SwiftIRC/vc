@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/token"
+	"github.com/SwiftIRC/coyote/internal/token"
 )
 
 // boundInviteTTL is how long a CLAIMED invite stays collectable after its last use —

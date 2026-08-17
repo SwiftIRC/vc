@@ -10,7 +10,7 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/ryanwohara/webrtc-chat/internal/config"
+	"github.com/SwiftIRC/coyote/internal/config"
 )
 
 // Engine holds the shared, immutable WebRTC API used to build every peer's

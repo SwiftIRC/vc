@@ -1,4 +1,4 @@
-# SwiftIRC VC (webrtc-chat)
+# SwiftIRC VC (coyote)
 
 A self-hosted group video-conferencing app — a lightweight Jitsi replacement,
 tied to the SwiftIRC network. One Go binary runs the whole thing: a Pion-based
@@ -68,7 +68,7 @@ own and can wire natively into SwiftIRC.
   checksums; read `assets/img/bg/README.md` before redistributing a build. A binary
   from a clean clone is ~23.0 MiB, against 18,756,525 bytes before MediaPipe was
   vendored.
-- **`cmd/webrtc-chat`** — the entrypoint.
+- **`cmd/coyote`** — the entrypoint.
 - **`anope/m_webrtc_chat`** — the Anope 2.1 services module (C++): `!vc`/`!chat`
   fantasy commands, `VC SET`, HMAC token minting, and the `/api/provision` and
   `/api/invite` calls. Its `core/` is header-only and host-testable with no Anope
@@ -79,8 +79,8 @@ own and can wire natively into SwiftIRC.
 Requires Go 1.26+.
 
 ```bash
-go build -o webrtc-chat ./cmd/webrtc-chat
-./webrtc-chat -addr :8080            # local dev (http; getUserMedia works on localhost)
+go build -o coyote ./cmd/coyote
+./coyote -addr :8080            # local dev (http; getUserMedia works on localhost)
 ```
 
 Open `http://localhost:8080/<room>` in two browser tabs to try a call.

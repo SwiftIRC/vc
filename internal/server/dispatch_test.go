@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SwiftIRC/coyote/internal/token"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/ryanwohara/webrtc-chat/internal/token"
 )
 
 func TestChatFanOutAndReplay(t *testing.T) {

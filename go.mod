@@ -1,4 +1,4 @@
-module github.com/ryanwohara/webrtc-chat
+module github.com/SwiftIRC/coyote
 
 go 1.26.1
 

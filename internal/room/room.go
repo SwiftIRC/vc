@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/signal"
+	"github.com/SwiftIRC/coyote/internal/signal"
 )
 
 type Role string

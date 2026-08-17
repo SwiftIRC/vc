@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ryanwohara/webrtc-chat/internal/web"
+	"github.com/SwiftIRC/coyote/internal/web"
 )
 
 // The photographic background scenes are whatever .webp files are in

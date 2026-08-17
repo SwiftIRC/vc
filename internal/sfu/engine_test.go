@@ -5,7 +5,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/ryanwohara/webrtc-chat/internal/config"
+	"github.com/SwiftIRC/coyote/internal/config"
 )
 
 func TestNewEngineBuildsPeerConnections(t *testing.T) {

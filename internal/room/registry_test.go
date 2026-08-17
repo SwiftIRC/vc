@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ryanwohara/webrtc-chat/internal/token"
+	"github.com/SwiftIRC/coyote/internal/token"
 )
 
 func TestResolveAdhoc(t *testing.T) {
