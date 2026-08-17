@@ -27,7 +27,7 @@
 //   "media-failed" (no detail)                     the media transport failed and one
 //                                                  ICE restart did not recover it
 import { handleRemoteOffer } from "../lib/negotiation.js";
-import { qualityTier } from "../lib/quality.js";
+import { qualityTier, encodingCaps } from "../lib/quality.js";
 
 // How long to let a single ICE restart try to reconnect before we give up and tell
 // the user. The transport goes failed -> (restart) -> checking -> connected on a
@@ -251,24 +251,55 @@ export class Peer extends EventTarget {
   // downlink, starving the signaling WebSocket that shares the link (a spurious
   // reconnect). All in ONE setParameters so the caps don't race each other's transaction.
   _applyQuality(kind) {
-    if (kind !== "camera" && kind !== "screen") return;
+    if (kind !== "camera" && kind !== "screen") return false;
     const sender = this._senders.get(kind);
-    if (!sender || !sender.track) return;
+    if (!sender || !sender.track) return false;
     const tier = qualityTier(this._quality && this._quality[kind]);
     let params;
     try {
       params = sender.getParameters();
-    } catch {
-      return; // getParameters unsupported — best effort
+    } catch (err) {
+      console.warn(`[quality] ${kind}: getParameters failed`, err);
+      return false;
     }
-    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+    // Do NOT invent an encoding when there is none. setParameters rejects with
+    // InvalidModificationError if the encoding COUNT differs from what
+    // getParameters returned, so assigning [{}] to an empty list guaranteed a
+    // rejection — which the old catch-all then swallowed, leaving the cap silently
+    // unapplied. An empty list means the sender is not negotiated yet; say so and
+    // let the post-negotiation pass pick it up.
+    if (!params.encodings || params.encodings.length === 0) {
+      console.warn(`[quality] ${kind}: sender has no encodings yet — deferring the cap`);
+      return false;
+    }
     const enc = params.encodings[0];
     const h = (sender.track.getSettings && sender.track.getSettings().height) || 0;
-    enc.scaleResolutionDownBy = tier.height && h ? Math.max(1, h / tier.height) : 1;
-    if (tier.fps) enc.maxFramerate = tier.fps;
+    const caps = encodingCaps(tier, h);
+    enc.scaleResolutionDownBy = caps.scaleResolutionDownBy;
+    // Absent means "no limit"; 0 would mean no frames, so auto DELETES the key.
+    if (caps.maxFramerate) enc.maxFramerate = caps.maxFramerate;
     else delete enc.maxFramerate;
     if (kind === "screen") enc.maxBitrate = SCREEN_MAX_BITRATE;
-    sender.setParameters(params).catch(() => {});
+    sender.setParameters(params).catch((err) => {
+      // Never silent. A rejection here is the whole cap failing to apply, and it
+      // was the reason "the quality control does nothing" had no console trace.
+      console.warn(`[quality] ${kind}: setParameters rejected (tier=${tier.id}, source height=${h || "unknown"})`, err);
+    });
+    return true;
+  }
+
+  // Re-apply both caps once a negotiation settles.
+  //
+  // _addLocal applies a cap the instant it adds the transceiver — before any
+  // offer — and a sender that has not been negotiated can report zero encodings,
+  // in which case the cap cannot be set at all. Nothing retried it, so a tier
+  // chosen before or during join was simply lost: the op set a quality, every
+  // client no-opped, and the picture never changed. Both settle points call this,
+  // and it is idempotent, so re-applying an already-correct cap costs one
+  // getParameters and changes nothing.
+  _reapplyQuality() {
+    this._applyQuality("camera");
+    this._applyQuality("screen");
   }
 
   // Create and send one offer, guarded so overlapping triggers (start + the queued
@@ -360,6 +391,7 @@ export class Peer extends EventTarget {
       throw err;
     }
     this.signaling.send("answer", { sdp: this.pc.localDescription.sdp });
+    this._reapplyQuality(); // same reason as in _onRemoteAnswer
     // A rollback discarded our own in-flight offer; the transceivers it carried
     // (a screenshare) are still on the PC but unnegotiated, so we owe a fresh offer.
     // Flush that (and any offer deferred while we weren't stable) now — AFTER the
@@ -390,6 +422,9 @@ export class Peer extends EventTarget {
       throw err;
     }
     await this._drainCandidates();
+    // Negotiated: the senders now have real encodings, so a cap that could not be
+    // set before this point can be set now (see _reapplyQuality).
+    this._reapplyQuality();
     // Back to stable — send any offer that was deferred while this one was in flight.
     this._flushPendingOffer();
   }

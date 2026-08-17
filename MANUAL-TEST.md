@@ -127,6 +127,22 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Data saver leaves your own tile alone** — your self-view keeps showing your
       camera throughout. Data saver governs what you *receive*; your own preview
       never crosses the network.
+- [ ] **Op quality tiers actually change the picture** — as an op, open the ☰ menu
+      and set Camera quality to **Low — 360p·15**. Every participant's outgoing camera
+      must visibly drop: check a *receiving* browser's `[track-debug stats]` line for
+      that publisher and confirm the reported size falls (e.g. 640x480 -> 480x360)
+      and fps settles near 15. Set it back to **Auto** and confirm it returns.
+      Nothing should appear in the console beginning `[quality]`.
+- [ ] **A tier set before someone joins applies to them** — set a non-Auto camera
+      tier, then have a new browser join. Their outgoing video must be capped from
+      the start. This is the case that silently did nothing before: the cap was
+      applied to a sender that had no encodings yet, the failure was swallowed, and
+      nothing retried it after negotiation.
+- [ ] **Quality caps survive a background effect** — with a virtual background on
+      (the published track is then a canvas capture, which may not report its
+      dimensions), set a low tier. The framerate cap must still take effect even if
+      the resolution does not; a `[quality]` console warning naming an unknown source
+      height explains the latter.
 - [ ] **Per-participant volume (local only)** — each **remote** tile has a small
       volume slider (0–1, default full). Drag browser A's slider for B down to zero:
       A stops hearing B while A still hears everyone else, and **C's** perception of
