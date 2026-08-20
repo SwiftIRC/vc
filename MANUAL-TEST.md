@@ -34,6 +34,16 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       only the microphone means the camera never started.
 - [ ] **Device pickers** — the Camera / Microphone dropdowns list your inputs;
       switching one updates the preview without dropping the other.
+- [ ] **Speaker picker lists your outputs** — the lobby shows a Speaker dropdown
+      below the Camera / Microphone row, listing your audio outputs. Selecting one
+      logs an `[audio output] sink=…` line naming it.
+- [ ] **The lobby speaker carries into the call** — pick a non-default output (a
+      headset), then Join. Remote audio arrives on that device with no further
+      selection in-call, and the in-call mic caret menu's Speaker list shows the
+      same device already selected. Reload the lobby: the choice is still selected.
+- [ ] **No Speaker field where output switching is unsupported** — on iOS Safari
+      (no `setSinkId`) the lobby shows no Speaker field, while Camera and
+      Microphone still work and Join is unaffected.
 - [ ] **Audio processing is reported** — on joining, the console logs one
       `[audio capture]` line naming the mic and the processing the browser actually
       applied. `echoCancellation=true` is what you want; `false` or `undefined` on a

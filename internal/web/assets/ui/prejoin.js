@@ -211,6 +211,18 @@ export class Prejoin {
     this.cameraSelect = el("select", { class: "device", onChange: () => this._switchCamera() });
     this.micSelect = el("select", { class: "device", onChange: () => this._switchMic() });
 
+    // Output-device selection, only where the browser can actually switch sinks
+    // (Chrome/Edge/Firefox; NOT iOS) — the same gate the in-call control uses. Where
+    // it's unsupported these stay null and el() skips them, so the lobby looks exactly
+    // as it did before.
+    this._outputSupported = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+    this.speakerSelect = this._outputSupported
+      ? el("select", { class: "device", onChange: () => this._switchSpeaker() })
+      : null;
+    this.speakerField = this._outputSupported
+      ? el("div", { class: "speaker-field" }, el("label", { class: "field" }, el("span", { text: "Speaker" }), this.speakerSelect))
+      : null;
+
     this.nameInput = el("input", {
       class: "name",
       type: "text",
@@ -272,6 +284,7 @@ export class Prejoin {
       el("div", { class: "devices" },
         el("label", { class: "field" }, el("span", { text: "Camera" }), this.cameraSelect),
         el("label", { class: "field" }, el("span", { text: "Microphone" }), this.micSelect),
+        this.speakerField, // null where output switching is unsupported — el() skips it
       ),
       el("div", { class: "field" }, el("span", { text: "Background" }), this.backgroundPicker.el),
       el("label", { class: "field" }, el("span", { text: "Display name" }), this.nameInput),
@@ -332,6 +345,8 @@ export class Prejoin {
     if (this.destroyed) return;
     fillDeviceSelect(this.cameraSelect, devices.cameras, trackDeviceId(this.media.cameraTrack), "Camera");
     fillDeviceSelect(this.micSelect, devices.mics, trackDeviceId(this.media.micTrack), "Microphone");
+    // No active track to read a sink from, so the PERSISTED choice is what gets marked.
+    if (this.speakerSelect) fillDeviceSelect(this.speakerSelect, devices.speakers || [], loadMediaPrefs().speakerId || "", "Speaker");
   }
 
   async _switchCamera() {
@@ -358,6 +373,18 @@ export class Prejoin {
     } catch {
       /* keep the previous device */
     }
+  }
+
+  // There is no remote audio in the lobby, so a chosen output has nothing to reroute
+  // here — persisting it IS the effect. Controls reads speakerId in its constructor and
+  // applies it via attachGrid, and it is built on join accept (app.js), i.e. after this.
+  // The log line matches grid.js's, so the [audio capture] / [audio switch] /
+  // [audio output] trio MANUAL-TEST.md leans on for echo chasing is complete from the
+  // lobby onward.
+  _switchSpeaker() {
+    const id = this.speakerSelect.value;
+    saveMediaPrefs({ speakerId: id }); // picked up by Controls on join
+    console.info(`[audio output] sink=${id || "(browser default)"}`);
   }
 
   // --- pre-join mic/camera toggles ---
