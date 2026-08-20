@@ -14,6 +14,7 @@ import { applyAvatar, gravatarHash } from "../lib/avatar.js";
 import { BackgroundPicker } from "./background.js";
 import { resolveEffectId } from "../lib/backgrounds.js";
 import { deviceErrorText } from "../lib/mediaErrors.js";
+import { fillDeviceSelect, trackDeviceId } from "../lib/deviceSelect.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -329,24 +330,8 @@ export class Prejoin {
       return;
     }
     if (this.destroyed) return;
-    this._fillSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
-    this._fillSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
-  }
-
-  _fillSelect(select, list, activeTrack, label) {
-    const activeId = activeTrack ? activeTrack.getSettings().deviceId : "";
-    select.replaceChildren();
-    if (list.length === 0) {
-      select.append(el("option", { value: "", text: `No ${label.toLowerCase()} found` }));
-      select.disabled = true;
-      return;
-    }
-    select.disabled = false;
-    list.forEach((d, i) => {
-      const opt = el("option", { value: d.deviceId, text: d.label || `${label} ${i + 1}` });
-      if (d.deviceId && d.deviceId === activeId) opt.selected = true;
-      select.append(opt);
-    });
+    fillDeviceSelect(this.cameraSelect, devices.cameras, trackDeviceId(this.media.cameraTrack), "Camera");
+    fillDeviceSelect(this.micSelect, devices.mics, trackDeviceId(this.media.micTrack), "Microphone");
   }
 
   async _switchCamera() {
