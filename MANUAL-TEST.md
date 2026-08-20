@@ -41,6 +41,9 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
       headset), then Join. Remote audio arrives on that device with no further
       selection in-call, and the in-call mic caret menu's Speaker list shows the
       same device already selected. Reload the lobby: the choice is still selected.
+      Then, with no prior speaker preference (clear site data first), open the
+      lobby, press Test without touching the dropdown, then Join — remote audio
+      must arrive on the same device the Test blip played through.
 - [ ] **No Speaker field where output switching is unsupported** — on iOS Safari
       (no `setSinkId`) the lobby shows no Speaker field, while Camera and
       Microphone still work and Join is unaffected.

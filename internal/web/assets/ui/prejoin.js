@@ -227,7 +227,7 @@ export class Prejoin {
     // activates its associated control, so a button nested in one would also pop the
     // select open.
     this.testSpeakerBtn = this._outputSupported
-      ? el("button", { type: "button", class: "test-speaker", onClick: () => this._testSpeaker() }, "Test")
+      ? el("button", { type: "button", class: "test-speaker", disabled: true, onClick: () => this._testSpeaker() }, "Test")
       : null;
     this.speakerField = this._outputSupported
       ? el(
@@ -361,9 +361,24 @@ export class Prejoin {
     fillDeviceSelect(this.cameraSelect, devices.cameras, trackDeviceId(this.media.cameraTrack), "Camera");
     fillDeviceSelect(this.micSelect, devices.mics, trackDeviceId(this.media.micTrack), "Microphone");
     // No active track to read a sink from, so the PERSISTED choice is what gets marked.
-    if (this.speakerSelect) {
+    if (this.speakerSelect && this.testSpeakerBtn) {
       fillDeviceSelect(this.speakerSelect, devices.speakers || [], loadMediaPrefs().speakerId || "", "Speaker");
       this.testSpeakerBtn.disabled = this.speakerSelect.disabled; // nothing to play through
+      // With no saved preference nothing is marked, so the browser shows the first option
+      // while Controls — which only applies a NON-empty speakerId — would send the call to
+      // the browser default instead. On Chrome those coincide (option 0 is the "default"
+      // pseudo-device); on Firefox, which has no such alias, they do not, and Test would
+      // then confirm a device the call never uses. Adopting what is displayed keeps the
+      // dropdown, the Test blip and the call on one device by construction.
+      //
+      // The tradeoff, accepted deliberately: this pins the first-listed output as an
+      // explicit preference the user never actively chose, so a device plugged in later
+      // that becomes the system default will no longer win until the user picks it here.
+      if (!this.speakerSelect.disabled && !loadMediaPrefs().speakerId) {
+        const id = this.speakerSelect.value;
+        saveMediaPrefs({ speakerId: id });
+        console.info(`[audio output] sink=${id || "(browser default)"} (adopted the listed default)`);
+      }
     }
   }
 
@@ -436,6 +451,7 @@ export class Prejoin {
       // rather than network-triggered, so it needs none of sounds.js's iOS priming.
       await audio.setSinkId(this.speakerSelect.value || ""); // "" = browser default
       await audio.play();
+      this.errorLabel.textContent = ""; // clear a previous Test failure now that this one succeeded
     } catch (err) {
       this.errorLabel.textContent = `Could not play a test sound through that speaker (${err.name || "error"}).`;
       this._endSpeakerTest();
@@ -588,7 +604,8 @@ export class Prejoin {
     clearTimeout(this._testTimer);
     if (this._testAudio) {
       this._testAudio.pause();
-      this._testAudio.removeAttribute("src"); // drop the decoded buffer
+      this._testAudio.removeAttribute("src");
+      this._testAudio.load(); // removeAttribute alone doesn't re-run resource selection; load() aborts the fetch and drops the decoded buffer
       this._testAudio = null;
     }
     if (this.video) this.video.srcObject = null;

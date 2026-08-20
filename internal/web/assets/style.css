@@ -152,6 +152,10 @@ input[readonly] {
   flex: 1;
 }
 
+.speaker-field .test-speaker {
+  cursor: pointer;
+}
+
 .row {
   display: flex;
   gap: 0.5rem;
