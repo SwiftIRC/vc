@@ -21,3 +21,6 @@ internal/web/assets/img/bg/*.webp
 # inverting the rule, so an unlicensed image can never be committed by accident.
 !internal/web/assets/img/bg/carina.webp
 !internal/web/assets/img/bg/pillars.webp
+
+# Superpowers isolated worktrees (feature branches checked out under the repo root)
+.worktrees/
