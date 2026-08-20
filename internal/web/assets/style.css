@@ -136,6 +136,26 @@ input[readonly] {
   max-width: 100%;
 }
 
+/* The Speaker row spans the Camera/Microphone columns and carries its Test button
+   beside the select. flex-end aligns the button to the bottom of the select, clear
+   of the field's label span above it. The existing `.devices .field { min-width: 0 }`
+   and `.devices select { width: 100% }` still match the nested field, so a long
+   device name can't force the row wider. */
+.speaker-field {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.speaker-field .field {
+  flex: 1;
+}
+
+.speaker-field .test-speaker {
+  cursor: pointer;
+}
+
 .row {
   display: flex;
   gap: 0.5rem;

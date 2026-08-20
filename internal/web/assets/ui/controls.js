@@ -28,6 +28,7 @@ import { QUALITY_TIERS } from "../lib/quality.js";
 import { svgIcon, MIC_PATHS, MIC_OFF_PATHS, CAM_PATHS, CAM_OFF_PATHS, EYE_PATHS, EYE_OFF_PATHS, SPEAKER_PATHS, SPEAKER_OFF_PATHS } from "../lib/icons.js";
 import { confirmDialog } from "../lib/confirm.js";
 import { primeAudio, unlockSounds } from "../lib/sounds.js";
+import { fillDeviceSelect, trackDeviceId } from "../lib/deviceSelect.js";
 import { BackgroundPicker } from "./background.js";
 
 // Tiny DOM helper: el("button", {class:"x", onClick:fn}, "text"). The "text" key
@@ -690,45 +691,12 @@ export class Controls {
       return;
     }
     if (kind === "camera") {
-      this._fillDeviceSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
+      fillDeviceSelect(this.cameraSelect, devices.cameras, trackDeviceId(this.media.cameraTrack), "Camera");
     } else {
-      this._fillDeviceSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
-      if (this.speakerSelect) this._fillOutputSelect(devices.speakers || []);
+      fillDeviceSelect(this.micSelect, devices.mics, trackDeviceId(this.media.micTrack), "Microphone");
+      // No active track to read a sink from, so the persisted choice is what gets marked.
+      if (this.speakerSelect) fillDeviceSelect(this.speakerSelect, devices.speakers || [], this._speakerId, "Speaker");
     }
-  }
-
-  _fillDeviceSelect(select, list, activeTrack, label) {
-    const activeId = activeTrack ? activeTrack.getSettings().deviceId : "";
-    select.replaceChildren();
-    if (list.length === 0) {
-      select.append(el("option", { value: "", text: `No ${label.toLowerCase()} found` }));
-      select.disabled = true;
-      return;
-    }
-    select.disabled = false;
-    list.forEach((d, i) => {
-      const opt = el("option", { value: d.deviceId, text: d.label || `${label} ${i + 1}` });
-      if (d.deviceId && d.deviceId === activeId) opt.selected = true;
-      select.append(opt);
-    });
-  }
-
-  // Like _fillDeviceSelect, but for audio OUTPUTS: there is no "active track" to read the
-  // current sink from, so mark the persisted choice (this._speakerId) as selected.
-  _fillOutputSelect(list) {
-    const select = this.speakerSelect;
-    select.replaceChildren();
-    if (list.length === 0) {
-      select.append(el("option", { value: "", text: "No speaker found" }));
-      select.disabled = true;
-      return;
-    }
-    select.disabled = false;
-    list.forEach((d, i) => {
-      const opt = el("option", { value: d.deviceId, text: d.label || `Speaker ${i + 1}` });
-      if (d.deviceId && d.deviceId === this._speakerId) opt.selected = true;
-      select.append(opt);
-    });
   }
 
   // Route all remote audio to the chosen output device (persisted for next time).

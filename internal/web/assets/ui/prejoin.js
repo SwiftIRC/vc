@@ -14,8 +14,11 @@ import { applyAvatar, gravatarHash } from "../lib/avatar.js";
 import { BackgroundPicker } from "./background.js";
 import { resolveEffectId } from "../lib/backgrounds.js";
 import { deviceErrorText } from "../lib/mediaErrors.js";
+import { fillDeviceSelect, trackDeviceId } from "../lib/deviceSelect.js";
 
 const POLL_INTERVAL_MS = 3000;
+const TEST_SOUND = "/sounds_bloop.mp3"; // short, neutral blip for the speaker test
+const TEST_TIMEOUT_MS = 3000; // re-arm the Test button even if "ended" never fires
 
 // Human-readable copy for each server reject code (signal.Error.Code). Anything
 // unmapped falls back to the server's own message.
@@ -99,6 +102,8 @@ export class Prejoin {
     this.locked = false;
     this.destroyed = false;
     this.pollTimer = null;
+    this._testAudio = null; // lazily created <audio> for the speaker test
+    this._testTimer = null; // re-arms the Test button if "ended" never fires
     this.gravatar = ""; // live Gravatar hash of the typed email; kept in sync by _onEmailInput
   }
 
@@ -210,6 +215,29 @@ export class Prejoin {
     this.cameraSelect = el("select", { class: "device", onChange: () => this._switchCamera() });
     this.micSelect = el("select", { class: "device", onChange: () => this._switchMic() });
 
+    // Output-device selection, only where the browser can actually switch sinks
+    // (Chrome/Edge/Firefox; NOT iOS) — the same gate the in-call control uses. Where
+    // it's unsupported these stay null and el() skips them, so the lobby looks exactly
+    // as it did before.
+    this._outputSupported = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+    this.speakerSelect = this._outputSupported
+      ? el("select", { class: "device", onChange: () => this._switchSpeaker() })
+      : null;
+    // The button is a SIBLING of the <label>, never inside it: a click on a label
+    // activates its associated control, so a button nested in one would also pop the
+    // select open.
+    this.testSpeakerBtn = this._outputSupported
+      ? el("button", { type: "button", class: "test-speaker", disabled: true, onClick: () => this._testSpeaker() }, "Test")
+      : null;
+    this.speakerField = this._outputSupported
+      ? el(
+          "div",
+          { class: "speaker-field" },
+          el("label", { class: "field" }, el("span", { text: "Speaker" }), this.speakerSelect),
+          this.testSpeakerBtn,
+        )
+      : null;
+
     this.nameInput = el("input", {
       class: "name",
       type: "text",
@@ -271,6 +299,7 @@ export class Prejoin {
       el("div", { class: "devices" },
         el("label", { class: "field" }, el("span", { text: "Camera" }), this.cameraSelect),
         el("label", { class: "field" }, el("span", { text: "Microphone" }), this.micSelect),
+        this.speakerField, // null where output switching is unsupported — el() skips it
       ),
       el("div", { class: "field" }, el("span", { text: "Background" }), this.backgroundPicker.el),
       el("label", { class: "field" }, el("span", { text: "Display name" }), this.nameInput),
@@ -329,24 +358,28 @@ export class Prejoin {
       return;
     }
     if (this.destroyed) return;
-    this._fillSelect(this.cameraSelect, devices.cameras, this.media.cameraTrack, "Camera");
-    this._fillSelect(this.micSelect, devices.mics, this.media.micTrack, "Microphone");
-  }
-
-  _fillSelect(select, list, activeTrack, label) {
-    const activeId = activeTrack ? activeTrack.getSettings().deviceId : "";
-    select.replaceChildren();
-    if (list.length === 0) {
-      select.append(el("option", { value: "", text: `No ${label.toLowerCase()} found` }));
-      select.disabled = true;
-      return;
+    fillDeviceSelect(this.cameraSelect, devices.cameras, trackDeviceId(this.media.cameraTrack), "Camera");
+    fillDeviceSelect(this.micSelect, devices.mics, trackDeviceId(this.media.micTrack), "Microphone");
+    // No active track to read a sink from, so the PERSISTED choice is what gets marked.
+    if (this.speakerSelect && this.testSpeakerBtn) {
+      fillDeviceSelect(this.speakerSelect, devices.speakers || [], loadMediaPrefs().speakerId || "", "Speaker");
+      this.testSpeakerBtn.disabled = this.speakerSelect.disabled; // nothing to play through
+      // With no saved preference nothing is marked, so the browser shows the first option
+      // while Controls — which only applies a NON-empty speakerId — would send the call to
+      // the browser default instead. On Chrome those coincide (option 0 is the "default"
+      // pseudo-device); on Firefox, which has no such alias, they do not, and Test would
+      // then confirm a device the call never uses. Adopting what is displayed keeps the
+      // dropdown, the Test blip and the call on one device by construction.
+      //
+      // The tradeoff, accepted deliberately: this pins the first-listed output as an
+      // explicit preference the user never actively chose, so a device plugged in later
+      // that becomes the system default will no longer win until the user picks it here.
+      if (!this.speakerSelect.disabled && !loadMediaPrefs().speakerId) {
+        const id = this.speakerSelect.value;
+        saveMediaPrefs({ speakerId: id });
+        console.info(`[audio output] sink=${id || "(browser default)"} (adopted the listed default)`);
+      }
     }
-    select.disabled = false;
-    list.forEach((d, i) => {
-      const opt = el("option", { value: d.deviceId, text: d.label || `${label} ${i + 1}` });
-      if (d.deviceId && d.deviceId === activeId) opt.selected = true;
-      select.append(opt);
-    });
   }
 
   async _switchCamera() {
@@ -373,6 +406,66 @@ export class Prejoin {
     } catch {
       /* keep the previous device */
     }
+  }
+
+  // There is no remote audio in the lobby, so a chosen output has nothing to reroute
+  // here — persisting it IS the effect. Controls reads speakerId in its constructor and
+  // applies it via attachGrid, and it is built on join accept (app.js), i.e. after this.
+  // The log line matches grid.js's, so the [audio capture] / [audio switch] /
+  // [audio output] trio MANUAL-TEST.md leans on for echo chasing is complete from the
+  // lobby onward.
+  _switchSpeaker() {
+    const id = this.speakerSelect.value;
+    saveMediaPrefs({ speakerId: id }); // picked up by Controls on join
+    console.info(`[audio output] sink=${id || "(browser default)"}`);
+  }
+
+  // Play a blip through the DISPLAYED output so the choice is verifiable before
+  // joining. Reads the select rather than a stored id: with no saved preference
+  // nothing is marked selected and the browser shows the first option, so reading the
+  // select always tests exactly what's on screen.
+  //
+  // A private <audio>, NOT lib/sounds.js: that module caches one shared element per
+  // sound for the in-call chimes, and calling setSinkId on a cached element would
+  // re-route the in-call join/drop chimes as a side effect of a lobby click.
+  async _testSpeaker() {
+    if (!this.testSpeakerBtn || this.testSpeakerBtn.disabled) return;
+    if (!this._testAudio) {
+      this._testAudio = new Audio(TEST_SOUND);
+      this._testAudio.addEventListener("ended", () => this._endSpeakerTest());
+    }
+    const audio = this._testAudio;
+    this.testSpeakerBtn.disabled = true;
+    try {
+      audio.currentTime = 0; // restart if a previous test is still running
+    } catch {
+      /* not seekable yet — play() below still starts it. Deliberately outside the
+         reporting try: this throw is harmless and must not be reported as a
+         playback failure that never happened. */
+    }
+    try {
+      // Awaiting before play() is safe: autoplay policy keys off STICKY user
+      // activation, not transient, and by the time this button exists the user has
+      // granted mic/camera permission — which unblocks autoplay on its own in both
+      // Chrome and Firefox. This is the one chime in the app that is gesture-driven
+      // rather than network-triggered, so it needs none of sounds.js's iOS priming.
+      await audio.setSinkId(this.speakerSelect.value || ""); // "" = browser default
+      await audio.play();
+      this.errorLabel.textContent = ""; // clear a previous Test failure now that this one succeeded
+    } catch (err) {
+      this.errorLabel.textContent = `Could not play a test sound through that speaker (${err.name || "error"}).`;
+      this._endSpeakerTest();
+      return;
+    }
+    if (this.destroyed) return;
+    this._testTimer = setTimeout(() => this._endSpeakerTest(), TEST_TIMEOUT_MS);
+  }
+
+  // Re-arm the button. Guarded on destroyed so a late timer never touches a dead one.
+  _endSpeakerTest() {
+    clearTimeout(this._testTimer);
+    this._testTimer = null;
+    if (!this.destroyed && this.testSpeakerBtn) this.testSpeakerBtn.disabled = false;
   }
 
   // --- pre-join mic/camera toggles ---
@@ -508,6 +601,13 @@ export class Prejoin {
       this.pollTimer = null;
     }
     clearTimeout(this._emailTimer);
+    clearTimeout(this._testTimer);
+    if (this._testAudio) {
+      this._testAudio.pause();
+      this._testAudio.removeAttribute("src");
+      this._testAudio.load(); // removeAttribute alone doesn't re-run resource selection; load() aborts the fetch and drops the decoded buffer
+      this._testAudio = null;
+    }
     if (this.video) this.video.srcObject = null;
     if (this.backgroundPicker) this.backgroundPicker.destroy();
     this.root.replaceChildren();
