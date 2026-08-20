@@ -44,6 +44,12 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **No Speaker field where output switching is unsupported** — on iOS Safari
       (no `setSinkId`) the lobby shows no Speaker field, while Camera and
       Microphone still work and Join is unaffected.
+- [ ] **Test plays through the selected speaker** — press Test beside the lobby's
+      Speaker dropdown: a short blip plays on the selected device and the button is
+      briefly disabled. Switch to a headset and press Test again — the blip comes
+      from the headset, not the previous device. With no outputs at all the dropdown
+      reads "No speaker found" and Test is disabled. Leaving the lobby mid-blip
+      (Join, or back to the home screen) must not throw.
 - [ ] **Audio processing is reported** — on joining, the console logs one
       `[audio capture]` line naming the mic and the processing the browser actually
       applied. `echoCancellation=true` is what you want; `false` or `undefined` on a
