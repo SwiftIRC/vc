@@ -34,8 +34,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: coyote
-          # Never :latest — that forces imagePullPolicy Always regardless of the
-          # value below, and this image is ctr-imported, not pullable.
+          # Never :latest — an omitted tag (or :latest) would default
+          # imagePullPolicy to Always, and this image is ctr-imported, not
+          # pullable.
           image: coyote:0.1.0
           imagePullPolicy: IfNotPresent
           env:
