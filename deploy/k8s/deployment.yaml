@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coyote
+  labels: { app: coyote }
+spec:
+  # Room state is in memory with no database, so a second replica silently splits
+  # rooms — two people opening the same URL land in different calls. Under
+  # hostNetwork a second pod also collides on :8080 and the UDP range.
+  replicas: 1
+  strategy:
+    # RollingUpdate would deadlock: it starts the replacement before the old pod
+    # releases the host ports. The restart gap is already handled — the server
+    # broadcasts server-restarting and clients re-join on their own.
+    type: Recreate
+  selector:
+    matchLabels: { app: coyote }
+  template:
+    metadata:
+      labels: { app: coyote }
+    spec:
+      # The SFU allocates ephemeral media ports across WVC_UDP_MIN..WVC_UDP_MAX with
+      # no UDP mux, and nothing in Kubernetes routes an arbitrary UDP range to a pod
+      # on the cluster network.
+      hostNetwork: true
+      # Mandatory alongside hostNetwork: without it the pod inherits the node's
+      # resolver and loses cluster DNS.
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 30   # the server drains in <=5s
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: coyote
+          # Never :latest — that forces imagePullPolicy Always regardless of the
+          # value below, and this image is ctr-imported, not pullable.
+          image: coyote:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WVC_ADDR
+              value: ":8080"
+            # The node's INTERNAL IP. Correct only when clients reach the node on
+            # that address. On a NAT'd node (a cloud VM with a separate public IP)
+            # this is wrong, and the failure is this app's nastiest: the lobby
+            # preview works, everything looks healthy, and remote video is black.
+            # Replace this fieldRef with the reachable address if that is you.
+            - name: WVC_PUBLIC_IP
+              valueFrom:
+                fieldRef: { fieldPath: status.hostIP }
+            - name: WVC_UDP_MIN
+              value: "50000"
+            - name: WVC_UDP_MAX
+              value: "50199"
+            - name: WVC_ADHOC
+              value: "false"
+            # Safe ONLY with the :8080 firewall rule documented in DEPLOY.md.
+            # Without it, anyone reaching :8080 directly can forge X-Forwarded-For
+            # past every ban and rate limit.
+            - name: WVC_TRUST_PROXY
+              value: "true"
+            # Deliberately not optional: a missing secret should fail the pod, not
+            # start a server that 403s every /api/provision call from Anope.
+            - name: WVC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: coyote
+                  key: secret
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true   # the process writes nothing to disk
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "128Mi"
+            limits:
+              # No CPU limit deliberately: CFS throttling on an SFU surfaces as
+              # audio and video jitter, and this pod owns its node's ports anyway.
+              memory: "1Gi"
