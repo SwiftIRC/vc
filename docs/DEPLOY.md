@@ -192,6 +192,112 @@ On restart the process broadcasts `server-restarting` and closes connections;
 clients show "Reconnecting…" and re-join automatically once it's back up, so a
 short `RestartSec` keeps interruptions brief.
 
+## Kubernetes (k3s + Traefik)
+
+This path and the systemd one differ in one structural way: under Kubernetes the pod
+runs on the **host's** network namespace. That is not a preference. The SFU
+allocates ephemeral media ports across `-udp-min`–`-udp-max` with no UDP mux, and
+nothing in Kubernetes routes an arbitrary UDP range to a pod on the cluster network.
+Traefik carries the app shell and signaling; media bypasses it and reaches the node
+directly, exactly as it bypasses nginx above.
+
+### Build and load the image
+
+There is no registry in this flow — the image goes straight into k3s's containerd:
+
+```
+docker build -t coyote:0.1.0 .
+docker save coyote:0.1.0 | sudo k3s ctr images import -
+```
+
+Two manifest details are what make that work:
+
+- `imagePullPolicy: IfNotPresent` — the default sends k3s looking for a registry
+  that does not exist.
+- a real tag rather than `:latest`. The explicit policy above is what does the work;
+  the tag is belt and braces, because an *omitted* pull policy defaults to `Always`
+  on a `:latest` or untagged image.
+
+**The image embeds whatever background scenes are in the build context.** Four of the
+six are frames from copyrighted film and television (see `THIRD-PARTY-NOTICES.md`).
+They are untracked, so a clone builds without them and a local checkout builds with
+them. That is fine while the image only ever moves from your machine to your own
+node. Pushing it to a public registry would distribute them — rebuild from a clean
+clone first.
+
+### Deploy
+
+```
+kubectl create secret generic coyote --from-literal=secret='<shared HMAC secret>'
+kubectl apply -f deploy/k8s/
+```
+
+Edit the host and `certResolver` in `deploy/k8s/ingressroute.yaml` to match your
+Traefik setup first. `deploy/secret.example.yaml` is a template showing the Secret's
+shape; it lives outside `deploy/k8s/` so a re-apply cannot overwrite your real
+secret with its placeholder.
+
+### Three constraints, and why
+
+**`replicas: 1`, `strategy: Recreate`.** Room state is in memory and there is no
+database, so a second replica silently splits rooms — two people opening the same URL
+land in different calls. Under `hostNetwork` a second pod also collides on `:8080`
+and the UDP range, and `RollingUpdate` would deadlock trying to start the replacement
+before the old pod releases them. The restart gap is already handled: the server
+broadcasts `server-restarting` and clients re-join by themselves.
+
+**`WVC_PUBLIC_IP` comes from `status.hostIP`, the node's _internal_ address.** That
+is correct only when clients reach the node on that address. On a NAT'd node — a
+cloud VM with a separate public IP — it is wrong, and the failure is the nastiest
+this app has: the lobby preview works, everything looks healthy, and remote video is
+simply black. Replace the `fieldRef` with the reachable address if that is your
+situation.
+
+**`:8080` is now exposed on every node interface, and must be firewalled.** The
+systemd deployment binds `-addr 127.0.0.1:8080` so the plain HTTP port is
+unreachable from outside. That is impossible here, because Traefik dials the pod from
+the cluster network. Restrict `:8080` to the Traefik pod CIDR at the node firewall.
+
+This is not only about exposure. The manifest sets `WVC_TRUST_PROXY=true`, so the
+server believes `X-Forwarded-For`. Anyone who can reach `:8080` directly can
+therefore forge their source address past every ban and rate limit. Loopback binding
+is what made trusting that header safe under systemd; the firewall rule is what makes
+it safe here.
+
+### Firewall
+
+- **443/tcp** to the node, for Traefik.
+- **8080/tcp** from the Traefik pod CIDR only — see above.
+- **50000–50199/udp** open to the node. Unchanged from the systemd deployment: this
+  carries media and does not pass through Traefik.
+
+### Traefik notes
+
+Traefik forwards WebSocket upgrades natively — the explicit `Upgrade` headers the
+nginx config above needs have no Traefik equivalent. Nor does `proxy_read_timeout
+3600s`: the server pings every 20s, comfortably inside Traefik's 180s default
+`idleTimeout`, so an idle call's signaling socket is never dropped.
+
+The manifests use the `traefik.io/v1alpha1` CRD group (Traefik v3, which current k3s
+ships). On Traefik v2 the group is `traefik.containo.us/v1alpha1`.
+
+### TLS inside the pod
+
+`readOnlyRootFilesystem: true`, plus TLS terminating at Traefik, means the built-in
+`-tls-cert` / `-tls-key` path is unused here. Using it would need the certificate
+mounted as a volume.
+
+### Post-deploy smoke check
+
+1. `kubectl get pod -l app=coyote` → `1/1 Running`, no restarts.
+2. `kubectl logs -l app=coyote` → one `listening` line and **no** `no -public-ip set`
+   warning. Check that its `publicIP` value is the address clients actually reach —
+   the fastest way to catch the `status.hostIP` trap above.
+3. `curl -fsS https://<host>/healthz` → `ok`, proving Traefik and TLS.
+4. Join from two browsers on different networks and confirm two-way video. This is
+   the only real proof the UDP range and `WVC_PUBLIC_IP` are right — the first three
+   checks all pass without it.
+
 ## SwiftIRC / Anope integration: `!vc` → token link → join
 
 The Anope module (Plan 4) and this server share one `-secret`. The flow:
