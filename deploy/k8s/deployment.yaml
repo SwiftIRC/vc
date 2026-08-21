@@ -26,6 +26,10 @@ spec:
       # Mandatory alongside hostNetwork: without it the pod inherits the node's
       # resolver and loses cluster DNS.
       dnsPolicy: ClusterFirstWithHostNet
+      # The app never talks to the API server (no client-go in go.mod). Under
+      # hostNetwork, where NetworkPolicy does not apply, a mountable token is
+      # needless exposure.
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30   # the server drains in <=5s
       securityContext:
         runAsNonRoot: true
@@ -39,16 +43,23 @@ spec:
           image: coyote:0.1.0
           imagePullPolicy: IfNotPresent
           env:
-            - name: WVC_ADDR
-              value: ":8080"
-            # The node's INTERNAL IP. Correct only when clients reach the node on
-            # that address. On a NAT'd node (a cloud VM with a separate public IP)
-            # this is wrong, and the failure is this app's nastiest: the lobby
-            # preview works, everything looks healthy, and remote video is black.
-            # Replace this fieldRef with the reachable address if that is you.
+            # Declared first so WVC_ADDR below can interpolate it. This is the node's
+            # INTERNAL IP — correct only when clients reach the node on that address.
+            # On a NAT'd node (a cloud VM with a separate public IP) it is wrong, and
+            # the failure is this app's nastiest: the lobby preview works, everything
+            # looks healthy, and remote video is black. Replace this fieldRef with the
+            # reachable address if that is you.
             - name: WVC_PUBLIC_IP
               valueFrom:
                 fieldRef: { fieldPath: status.hostIP }
+            # Bind ONE interface rather than all of them. Under hostNetwork a plain
+            # ":8080" listens on every node interface including any public NIC, and
+            # WVC_TRUST_PROXY below means whatever reaches it is believed. Binding the
+            # node IP removes that exposure outright on a multi-homed node. On a
+            # single-homed public node it changes nothing and the firewall rule in
+            # docs/DEPLOY.md is what protects this port.
+            - name: WVC_ADDR
+              value: "$(WVC_PUBLIC_IP):8080"
             - name: WVC_UDP_MIN
               value: "50000"
             - name: WVC_UDP_MAX
@@ -57,7 +68,7 @@ spec:
               value: "false"
             # Safe ONLY with the :8080 firewall rule documented in DEPLOY.md.
             # Without it, anyone reaching :8080 directly can forge X-Forwarded-For
-            # past every ban and rate limit.
+            # past per-room IP bans.
             - name: WVC_TRUST_PROXY
               value: "true"
             # Deliberately not optional: a missing secret should fail the pod, not
@@ -67,6 +78,11 @@ spec:
                 secretKeyRef:
                   name: coyote
                   key: secret
+            # Go's GC doesn't know the cgroup memory limit below, so without this a
+            # busy SFU meets an OOMKill rather than back-pressure. Kept below the
+            # 1Gi hard limit so GC has room to react before the kernel steps in.
+            - name: GOMEMLIMIT
+              value: "900MiB"
           ports:
             - name: http
               containerPort: 8080
