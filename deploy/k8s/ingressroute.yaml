@@ -1,0 +1,22 @@
+# Traefik v3 CRD group, which current k3s ships. On Traefik v2 this is
+# traefik.containo.us/v1alpha1.
+#
+# No WebSocket configuration is needed: Traefik forwards Upgrade natively, unlike
+# the explicit header dance nginx requires. No timeout tuning either — the server
+# pings every 20s (internal/server/ws.go), well inside Traefik's 180s default
+# idleTimeout, so an idle call's signaling socket is never dropped.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: coyote
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`vc.swiftirc.net`)   # change to your host
+      services:
+        - name: coyote
+          port: 8080
+  tls:
+    certResolver: letsencrypt          # change to your Traefik cert resolver

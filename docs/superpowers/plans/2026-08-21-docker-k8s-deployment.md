@@ -278,8 +278,9 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: coyote
-          # Never :latest — that forces imagePullPolicy Always regardless of the
-          # value below, and this image is ctr-imported, not pullable.
+          # This image is ctr-imported, not pullable, so it must never be fetched.
+          # The explicit policy below is what guarantees that; the real tag is belt
+          # and braces, since :latest would default an OMITTED policy to Always.
           image: coyote:0.1.0
           imagePullPolicy: IfNotPresent
           env:
@@ -521,8 +522,9 @@ Two manifest details are what make that work:
 
 - `imagePullPolicy: IfNotPresent` — the default sends k3s looking for a registry
   that does not exist.
-- a real tag, never `:latest` — `:latest` forces `imagePullPolicy: Always` whatever
-  the manifest says.
+- a real tag rather than `:latest`. The explicit policy above is what does the work;
+  the tag is belt and braces, because an *omitted* pull policy defaults to `Always`
+  on a `:latest` or untagged image.
 
 **The image embeds whatever background scenes are in the build context.** Four of the
 six are frames from copyrighted film and television (see `THIRD-PARTY-NOTICES.md`).

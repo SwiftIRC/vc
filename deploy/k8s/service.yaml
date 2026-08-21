@@ -1,0 +1,17 @@
+# Exists purely so Traefik has a stable name to route the HTTP/WebSocket plane to.
+# With a hostNetwork pod the endpoint address is the node IP, which is what Traefik
+# should dial. Nothing about the media plane passes through here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: coyote
+  labels: { app: coyote }
+spec:
+  type: ClusterIP
+  selector:
+    app: coyote
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
