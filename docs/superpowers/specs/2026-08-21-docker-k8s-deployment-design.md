@@ -176,7 +176,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: coyote
-          image: coyote:0.1.0        # never :latest — that forces imagePullPolicy Always
+          image: coyote:0.1.0        # a real tag: :latest defaults an OMITTED pull policy to Always
           imagePullPolicy: IfNotPresent   # the image is ctr-imported, not pullable
           env:
             - name: WVC_ADDR
