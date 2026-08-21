@@ -34,9 +34,8 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: coyote
-          # Never :latest — an omitted tag (or :latest) would default
-          # imagePullPolicy to Always, and this image is ctr-imported, not
-          # pullable.
+          # This image is ctr-imported into k3s, not pulled from a registry, so the
+          # explicit policy below is what keeps the kubelet from trying to fetch it.
           image: coyote:0.1.0
           imagePullPolicy: IfNotPresent
           env:
