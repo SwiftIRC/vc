@@ -1,0 +1,28 @@
+# Git and tooling scratch
+.git
+.gitignore
+.worktrees/
+.superpowers/
+
+# Stale build artifacts in the repo root. The pre-rename binary alone is 22MB of
+# build context that would be uploaded on every build.
+/coyote
+/webrtc-chat
+**/*.test
+**/*.out
+
+# Not part of the server image. The Anope module is a separate C++ artifact, and the
+# JS tests are not embedded — //go:embed covers internal/web/assets only.
+anope/
+docs/
+deploy/
+internal/web/test/
+MANUAL-TEST.md
+README.md
+THIRD-PARTY-NOTICES.md
+LICENSE
+.nvmrc
+
+# Docker's own inputs
+Dockerfile
+.dockerignore
