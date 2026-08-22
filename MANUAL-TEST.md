@@ -186,6 +186,32 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Device switch mid-preview** — in the lobby, switch camera or mic; the new
       device is the one that goes live when you join (the preview updates, the other
       track keeps streaming).
+- [ ] **A stale camera-off state heals itself once video plays** — the safety net for
+      any media-state broadcast that goes missing. There is no natural way to drop one
+      on demand, so forge it in the RECEIVING browser with DevTools → Sources →
+      Overrides on `app.js`, changing the broadcast handler to discard camera updates:
+
+      ```js
+      // was: grid.setPeerMedia(m.id, { mic: m.mic, camera: m.camera })
+      signaling.on("peer-media-state", (m) => grid.setPeerMedia(m.id, { mic: m.mic }));
+      ```
+
+      Reload, then have the other peer join with their camera OFF (tile covered,
+      camera pill crossed) and turn it ON in-call. The override swallows the update,
+      so the room still believes they are off — and within a second, as soon as their
+      video plays a frame, the cover lifts by itself, the pill un-crosses, and the
+      console says `[grid] <id> is publishing video while the room still says their
+      camera is off — uncovering`. Remove the override afterwards.
+- [ ] **The heal never uncovers a peer who is genuinely off** — have a peer turn their
+      camera OFF properly (the camera button). Their tile must stay covered and stay
+      covered: this app stops the track on camera-off, so no frames play and nothing
+      can trigger the heal. A tile that uncovers itself here is a real bug — it would
+      be showing a black rectangle instead of their avatar.
+- [ ] **The heal is one-way** — with a peer on camera, pull their network (or have
+      them sleep the machine) so frames stop. Their tile keeps showing the last frame
+      and must NOT flip to the avatar on its own; only a real camera-off broadcast
+      covers it. This is deliberate — a stalled link and a switched-off camera look
+      identical from here, so healing that direction would flap the avatar.
 - [ ] **Picking a camera while it is OFF tells the room it came on** — in-call, turn
       your camera OFF, then choose a camera from the caret menu beside the camera
       button. Selecting a device deliberately turns the camera back on, so on every
