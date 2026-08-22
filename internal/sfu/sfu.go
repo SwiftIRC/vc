@@ -270,7 +270,11 @@ func (s *SFU) signalPeerConnections(slug string) {
 			p.makingOffer = false
 			p.mu.Unlock()
 			if !p.sig.Send(signal.Offer{SDP: stripDemuxExtensions(offer.SDP)}) {
-				s.log.Debug("media offer dropped (send overflow/closing)", "peer", p.id)
+				// The peer never learns about the forwards this offer would have
+				// negotiated, so they stay unbound and silent until some later
+				// renegotiation happens to re-offer them — which a settled call may
+				// never do. Same end state as a rejected answer, so same level.
+				s.log.Warn("media offer dropped (send overflow/closing)", "slug", slug, "peer", p.id)
 			}
 			// After SetLocalDescription the transceiver mids are assigned, so p can
 			// be told which mid carries which {participantID, kind} it now receives.
