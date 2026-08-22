@@ -486,23 +486,31 @@ export class Peer extends EventTarget {
     for (const info of msg.tracks || []) {
       next.set(info.mid, { participantId: info.participantId, kind: info.kind });
     }
+    // An EMPTY list is ignored ENTIRELY. It carries no information, so acting on it
+    // in any way can only destroy some. It is the one input that could tear down
+    // every remote tile in the call at once, and it arrives through what is a safety
+    // net rather than the primary signal. Genuine emptiness is already covered twice
+    // over: a peer who leaves takes their tiles with them via peer-left/removePeer,
+    // and a forward that really stops fires removetrack on its own track. Neither
+    // needs this. What an empty frame CAN be is transient — the server sends the map
+    // on every answer as well as every offer, and peerTrackInfos omits a transceiver
+    // whose mid is not assigned yet — so there are several ways to observe a moment
+    // when it has nothing to report.
+    //
+    // Ignoring it has to cover the LABEL MAP, not just the retirement loop below.
+    // Guarding only the loop still ran the assignment and wiped _trackInfo, which
+    // stranded any media arriving afterwards: a mid is re-emitted only by its own
+    // ontrack or by a later list that names it, and a settled call may never produce
+    // another list. The tile then stayed black for the rest of the call — visible in
+    // the track debug as a persistent "UNPAIRED media-without-label".
+    if (next.size === 0) {
+      this._dumpPairing("onTracks(empty, ignored)");
+      return;
+    }
     // Retire departed forwards BEFORE swapping the map in, so _onStreamGone can
     // still fall back to the old label for a track that never paired with media.
-    //
-    // An EMPTY list retires nothing, deliberately. It is the one input that can
-    // tear down every remote tile in the call at once, and this loop is a safety
-    // net rather than the primary signal — so it must not be the most destructive
-    // thing in the file. Genuine emptiness is already covered twice over: a peer
-    // who leaves takes their tiles with them via peer-left/removePeer, and a
-    // forward that really stops fires removetrack on its own track. Neither needs
-    // this. What an empty frame CAN be is transient — the server now sends the map
-    // on every answer as well as every offer, so there are more chances to observe
-    // a moment when it has nothing to report — and acting on one of those would
-    // blank a working call.
-    if (next.size > 0) {
-      for (const mid of [...this._incoming.keys()]) {
-        if (!next.has(mid)) this._onStreamGone(mid);
-      }
+    for (const mid of [...this._incoming.keys()]) {
+      if (!next.has(mid)) this._onStreamGone(mid);
     }
     this._trackInfo = next;
     for (const mid of next.keys()) this._emitRemoteTrack(mid);
