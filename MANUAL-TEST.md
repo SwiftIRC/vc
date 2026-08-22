@@ -186,6 +186,15 @@ becomes op, or open `/<room>#t=<token>` from a `!vc` invite whose token carries
 - [ ] **Device switch mid-preview** — in the lobby, switch camera or mic; the new
       device is the one that goes live when you join (the preview updates, the other
       track keeps streaming).
+- [ ] **Picking a camera while it is OFF tells the room it came on** — in-call, turn
+      your camera OFF, then choose a camera from the caret menu beside the camera
+      button. Selecting a device deliberately turns the camera back on, so on every
+      OTHER browser your tile must show live video with **no** avatar placeholder over
+      it and the camera pill un-crossed. A tile still showing the avatar while your
+      video is plainly arriving is this bug: the room was never told the camera came
+      back. The receiving browser's console names it —
+      `[grid] camera media arrived for <id> while the camera-off placeholder is still
+      showing`.
 
 ## Synced countdown sound
 

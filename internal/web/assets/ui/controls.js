@@ -721,6 +721,19 @@ export class Controls {
     }
     this._setCameraButton(!!this.media.cameraTrack);
     if (this.grid) this.grid.refreshSelf();
+    // A device switch can turn the camera ON, so the room has to be told. Selecting a
+    // device is a deliberate "use this camera" action and useDevices acquires it even
+    // when the camera is currently off — and _swapTrack only carries the previous
+    // track's enabled state across when there IS a previous track, which a released
+    // camera does not leave behind. The fresh track therefore arrives enabled.
+    //
+    // Without this the local button and self tile flipped to "on" while the room kept
+    // the stored camera:false, and since a remote tile's cameraOn is written nowhere
+    // but setPeerMedia, every other participant covered a decoding video with the
+    // avatar placeholder for the rest of the call (see the warning in grid.js's
+    // onRemoteTrack). Idempotent, so sending it after a switch that changed nothing
+    // costs one small frame.
+    this.sendMediaState();
     this._closeMenus(); // selection made — dismiss the popover
   }
 
