@@ -1161,3 +1161,58 @@ func transceiverLayout(pc *webrtc.PeerConnection) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// closeRecorder is a Signaler that records whether the SFU asked for its socket to
+// be closed. SignalerFunc cannot express this — it only carries Send.
+type closeRecorder struct {
+	mu     sync.Mutex
+	closed bool
+}
+
+func (c *closeRecorder) Send(any) bool { return true }
+func (c *closeRecorder) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+}
+func (c *closeRecorder) wasClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
+// A peer whose media transport dies must have its SIGNALING socket closed too.
+//
+// Removing the media peer without telling the client stranded it: the WebSocket
+// stayed open, so it kept its place in the roster and its chat worked, while it had
+// no SFU peer at all and therefore no media in either direction — and nothing on the
+// client could notice, because an ICE restart aimed at a peer the server has already
+// dropped cannot succeed either. One production log showed a peer sitting in exactly
+// that state for four minutes, until the user gave up and closed the tab.
+//
+// Closing the socket hands the recovery to machinery that already works: the client
+// treats a dropped socket as a normal disconnect, shows "Reconnecting…", and re-joins
+// with backoff — rebuilding the peer and its negotiation from scratch.
+func TestTransportDownClosesSignaling(t *testing.T) {
+	s := testSFU(t)
+	sig := &closeRecorder{}
+	p, err := s.AddPeer("room", "p1", sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Closing the PeerConnection drives OnConnectionStateChange to "closed", the same
+	// handler a failed ICE transport reaches.
+	if err := p.pc.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, sig.wasClosed)
+
+	s.mu.Lock()
+	_, stillPresent := s.rooms["room"]
+	s.mu.Unlock()
+	if stillPresent {
+		t.Error("the peer's room should be gone once its only peer was removed")
+	}
+}
