@@ -179,6 +179,32 @@ test("an empty tracks list retires nothing", (t) => {
   assert.deepEqual(events.gone, [], "an empty list tore down live forwards");
 });
 
+// Retiring nothing is only half of it. The label map is the OTHER half of every
+// pairing, and an empty frame used to wipe it too — so media that arrived afterwards
+// had a mid the client could no longer name, and nothing ever paired them: a mid is
+// only re-emitted by its own ontrack or by a later list that names it, and a settled
+// call may never produce another list. That is the "no camera" signature — a tile
+// that never renders, and `!! UNPAIRED media-without-label` in the track debug.
+test("an empty tracks list does not strand media that arrives after it", (t) => {
+  const { peer, signaling, events } = install(t);
+
+  // The SFU labels the forward...
+  signaling.emit("tracks", { tracks: [{ mid: "1", participantId: "p1", kind: "camera" }] });
+  // ...then sends a frame with nothing to report (peerTrackInfos skips a transceiver
+  // whose mid is not assigned yet, so a map computed mid-negotiation can come out
+  // empty)...
+  signaling.emit("tracks", { tracks: [] });
+  // ...and only then does the media turn up.
+  const cam = new MockTrack("video", "camera");
+  peer.pc.ontrack({ transceiver: { mid: "1" }, track: cam, streams: [new MockStream([cam])] });
+
+  assert.deepEqual(
+    events.track.map((d) => `${d.kind}@${d.participantId}`),
+    ["camera@p1"],
+    "media arriving after an empty frame never paired with the label it already had",
+  );
+});
+
 test("a list that still names some forwards retires only the missing ones", (t) => {
   const { peer, signaling, events } = install(t);
   startShare(peer, signaling);
