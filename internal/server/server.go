@@ -277,17 +277,30 @@ func (h *Hub) serve(c *wsClient, slug, ip string) {
 			return
 		case *signal.Chat, *signal.SetLock, *signal.Kick, *signal.MutePeer, *signal.Ban, *signal.GrantOp, *signal.SetQuality, *signal.Countdown, *signal.MediaState, *signal.Rename, *signal.CreatePoll, *signal.Vote, *signal.ClosePoll:
 			h.dispatch(rm, p, m)
+		// An offer or answer that will not apply is never routine, and it does not
+		// correct itself. The SFU has already added and announced this peer's senders,
+		// so its forwards are labelled and its receivers exist — but Pion binds a local
+		// track to a sender only once the negotiation completes, so a single failed
+		// answer leaves EVERY forward to this peer silent for the rest of the call while
+		// the peer still looks connected. That is a participant nobody can see or hear,
+		// whose own console reports announced forwards with live tracks and no inbound
+		// RTP at all. Warn, and name the peer, so the server says so once rather than it
+		// costing a debugging session.
 		case *signal.Offer:
 			if err := mp.HandleOffer(m.SDP, m.Kinds); err != nil {
-				h.log.Debug("offer", "err", err)
+				h.log.Warn("offer rejected", "room", slug, "id", p.ID, "err", err)
 			}
 		case *signal.Answer:
 			if err := mp.HandleAnswer(m.SDP); err != nil {
-				h.log.Debug("answer", "err", err)
+				h.log.Warn("answer rejected", "room", slug, "id", p.ID, "err", err)
 			}
+		// Candidates stay at debug: one arriving after its peer connection is gone is
+		// ordinary end-of-call churn, and promoting it would bury the two above in
+		// noise. The peer id is added so the debug stream reads per-peer when the level
+		// is turned up.
 		case *signal.Candidate:
 			if err := mp.HandleCandidate(m.Candidate); err != nil {
-				h.log.Debug("candidate", "err", err)
+				h.log.Debug("candidate", "room", slug, "id", p.ID, "err", err)
 			}
 		case *signal.SetReceiveVideo:
 			// Per-user downlink gate: purely a media-plane action on this peer's own

@@ -34,6 +34,29 @@ over defaults.
 | `-adhoc` | `WVC_ADHOC` | `true` | Allow ad-hoc rooms (anyone visiting `/<name>` and joining creates one). Set `false` for a channel-rooms-only SwiftIRC deployment. |
 | `-trust-proxy` | `WVC_TRUST_PROXY` | `false` | Trust `X-Forwarded-For`. **Enable only behind a trusted proxy** (it reads the last XFF entry). Off = the direct socket IP is used. |
 | `-tls-cert` / `-tls-key` | `WVC_TLS_CERT` / `WVC_TLS_KEY` | _(empty)_ | Optional built-in TLS instead of a proxy. Set both or neither. |
+| `-log-level` | `WVC_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. An unparseable value refuses to start rather than falling back. |
+
+### When to raise the log level
+
+`debug` adds per-peer media-plane detail: joins and rejoins with their role and
+session ref, and every ICE candidate the SFU declined. It is chatty on a busy room,
+so raise it to chase something specific and put it back.
+
+The case it exists for is **a participant nobody can see or hear while everything
+else looks healthy**. Their own console shows the forwards announced and the tracks
+live but no RTP arriving at all — `!! NO INBOUND RTP — label=yes media=yes
+track=live` on every mic and camera. That is what an unbound sender looks like from
+the receiving end: the SFU added and announced the forwards, but Pion binds a
+forwarded track to a sender only once that peer's negotiation completes, so one
+offer or answer that failed to apply silences every forward to them for the rest of
+the call.
+
+The two lines that name it are already at `warn`, so they appear without raising
+anything: `offer rejected` / `answer rejected` (carrying the room, the peer id and
+the underlying error), and `media offer dropped (send overflow/closing)` for the
+case where the peer never received the offer in the first place. Grep the server log
+for the affected peer id before turning the level up — if one of those is present,
+it is the answer.
 
 Routes served: `GET /` (app shell + assets), `GET /ws/{room}` (signaling),
 `GET /api/rooms/{room}` (occupancy JSON), `POST /api/provision` (Anope), and

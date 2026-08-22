@@ -23,7 +23,7 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(2)
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 
 	reg := room.NewRegistry(cfg.AdhocRooms, time.Now)
 	engine, err := sfu.NewEngine(cfg)

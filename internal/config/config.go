@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"strconv"
 )
 
@@ -18,6 +19,14 @@ type Config struct {
 	TLSCert    string // optional built-in TLS
 	TLSKey     string
 	TrustProxy bool // trust X-Forwarded-For (only enable behind a trusted reverse proxy)
+	// Minimum level the process logs at. The media plane reports per-peer signaling
+	// failures — an offer or answer that would not apply, a candidate rejected — at
+	// debug, because they are per-frame chatter on a healthy server and a flood on a
+	// flapping one. They are also the only evidence of a peer whose forwards are
+	// announced but never bound, which presents as a participant nobody can see or
+	// hear while everything else looks connected. Without a way to raise the level in
+	// place, diagnosing that costs a redeploy.
+	LogLevel slog.Level
 }
 
 // Load parses configuration: flags (highest precedence), then env via
@@ -60,8 +69,19 @@ func Load(args []string, getenv func(string) string) (Config, error) {
 	fs.StringVar(&cfg.TLSCert, "tls-cert", str("WVC_TLS_CERT", ""), "TLS certificate file (optional)")
 	fs.StringVar(&cfg.TLSKey, "tls-key", str("WVC_TLS_KEY", ""), "TLS key file (optional)")
 	fs.BoolVar(&cfg.TrustProxy, "trust-proxy", boolean("WVC_TRUST_PROXY", false), "trust X-Forwarded-For (enable only behind a trusted reverse proxy)")
+	logLevel := fs.String("log-level", str("WVC_LOG_LEVEL", "info"), "log verbosity: debug, info, warn, error")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	// slog.Level.UnmarshalText accepts the names case-insensitively (and offsets like
+	// "debug+2"), so it is both the idiomatic parse and a slightly richer one.
+	//
+	// An unparseable value is an ERROR, not a fall back to the default. This setting
+	// exists to be turned up mid-incident, and a typo that silently left the level at
+	// info would read as "those code paths never fire" — sending the reader off to
+	// look for a bug in the wrong place, which is the exact failure it is meant to end.
+	if err := cfg.LogLevel.UnmarshalText([]byte(*logLevel)); err != nil {
+		return Config{}, fmt.Errorf("log-level %q: %w", *logLevel, err)
 	}
 	if cfg.UDPPortMin > cfg.UDPPortMax {
 		return Config{}, fmt.Errorf("udp-min %d > udp-max %d", cfg.UDPPortMin, cfg.UDPPortMax)
