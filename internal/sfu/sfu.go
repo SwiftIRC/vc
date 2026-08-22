@@ -105,14 +105,44 @@ func (s *SFU) AddPeer(slug, peerID string, sig Signaler) (*Peer, error) {
 		}
 		sig.Send(candidateMsg(raw))
 	})
+	// Fires for BOTH failed and closed, and RemovePeer below closes the peer
+	// connection itself — so without this guard one dead transport ran the whole body
+	// twice and logged the same failure twice.
+	var down sync.Once
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
-		if st == webrtc.PeerConnectionStateFailed || st == webrtc.PeerConnectionStateClosed {
-			// The media transport (ICE/DTLS) died — SEPARATE from the signaling
-			// WebSocket. Logged so a reconnect can be correlated with a media-plane
-			// failure during a screenshare renegotiation.
-			s.log.Warn("sfu peer media transport down; removing peer", "slug", slug, "peer", peerID, "state", st.String())
-			s.RemovePeer(slug, peerID)
+		if st != webrtc.PeerConnectionStateFailed && st != webrtc.PeerConnectionStateClosed {
+			return
 		}
+		down.Do(func() {
+			// The media transport (ICE/DTLS) is gone — SEPARATE from the signaling
+			// WebSocket — so this peer's media plane is over either way.
+			//
+			// Only "failed" is a fault, and the two levels differ because conflating
+			// them made the log useless: "closed" is also reached on every ordinary
+			// teardown, including when RemovePeer below closes this very peer
+			// connection, so warning on it meant a clean disconnect logged the same
+			// alarming line as a broken one. A real failed transport was then just
+			// another line among the routine ones.
+			if st == webrtc.PeerConnectionStateFailed {
+				s.log.Warn("sfu peer media transport failed; removing peer", "slug", slug, "peer", peerID)
+			} else {
+				s.log.Debug("sfu peer media transport closed; removing peer", "slug", slug, "peer", peerID)
+			}
+			s.RemovePeer(slug, peerID)
+			// Then drop the signaling socket. The two planes fail independently, so
+			// removing the media peer on its own left the client in the room with a
+			// healthy WebSocket and no media in either direction — roster and chat
+			// working, nobody able to see or hear them, and no path back: its one ICE
+			// restart would be aimed at a peer that no longer exists. A production log
+			// caught a peer sitting in that state for four minutes, until the user
+			// gave up and closed the tab.
+			//
+			// Closing hands recovery to the client's ordinary reconnect: it treats a
+			// dropped socket as a normal disconnect, shows "Reconnecting…", and
+			// re-joins with backoff — a fresh peer and a fresh negotiation. Cheap
+			// (about a second) next to a call that is silently dead.
+			sig.Close()
+		})
 	})
 	p.wireOnTrack() // Task 3 fills this in; a no-op stub in Task 2
 

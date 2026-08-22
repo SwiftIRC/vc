@@ -51,12 +51,30 @@ forwarded track to a sender only once that peer's negotiation completes, so one
 offer or answer that failed to apply silences every forward to them for the rest of
 the call.
 
-The two lines that name it are already at `warn`, so they appear without raising
-anything: `offer rejected` / `answer rejected` (carrying the room, the peer id and
-the underlying error), and `media offer dropped (send overflow/closing)` for the
-case where the peer never received the offer in the first place. Grep the server log
-for the affected peer id before turning the level up — if one of those is present,
-it is the answer.
+The lines that name it are already at `warn`, so they appear without raising
+anything. Grep the server log for the affected peer id before turning the level up —
+if one of these is present, it is the answer:
+
+- `sfu peer media transport failed` — this peer's ICE/DTLS never established, or
+  died. **This is a network fault, not a code one.** If it lands ~30s after that
+  peer joined, their client could not reach the media UDP range at all: check that
+  `-udp-min`–`-udp-max` is open to the box *and* that `-public-ip` is the address
+  that peer actually reaches it on. On a cloud VM remember there are usually two
+  firewalls — the provider's security list and the instance's own `iptables` — and
+  the second one is the one people forget.
+- `offer rejected` / `answer rejected` — the negotiation itself would not apply,
+  carrying the room, the peer id and the underlying error.
+- `media offer dropped (send overflow/closing)` — the peer never received the offer
+  in the first place.
+
+The matching **`sfu peer media transport closed`** is at `debug` on purpose: it is
+reached on every ordinary teardown, including when the server closes the peer
+connection itself, so it says nothing about health. Only `failed` is a fault.
+
+A peer whose transport fails has its signaling socket closed too, so it reconnects
+and rebuilds the call by itself within about a second. Before that it kept its place
+in the roster with no media in either direction and no way back — present, and
+neither seeing nor heard.
 
 Routes served: `GET /` (app shell + assets), `GET /ws/{room}` (signaling),
 `GET /api/rooms/{room}` (occupancy JSON), `POST /api/provision` (Anope), and
