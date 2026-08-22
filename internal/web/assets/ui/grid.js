@@ -340,21 +340,25 @@ export class Grid {
       tile.cameraVideo.srcObject = stream;
       tile.cameraVideo.play().catch(() => {}); // nudge playback in case autoplay stalled (black tile)
       tile.hasCamera = true;
+      tile.lastCameraTime = 0; // a new stream restarts currentTime — see _onCameraProgress
       // Deliberately NOT clearing camOff here. Track arrival cannot prove the camera
       // is live: this app mutes a camera by disabling the track, not by unpublishing
       // it, so a peer who joins with their camera off still publishes a (disabled)
       // track and still lands here — uncovering would replace their avatar with a
       // black frame. setPeerMedia stays the authority.
       //
-      // But that authority is a single point of failure: camOff is written NOWHERE
-      // else for a remote tile, so one lost, stale, or out-of-order media-state
-      // leaves a decoding video covered for the rest of the call, which presents as
-      // "their camera is on but I can't see them". Log the inconsistency so the next
-      // occurrence names itself instead of needing a track-debug session.
+      // That authority used to be a single point of failure: one lost, stale, or
+      // out-of-order media-state left a decoding video covered for the rest of the
+      // call, which presents as "their camera is on but I can't see them".
+      // _onCameraProgress is the second writer that now recovers from it — but only
+      // once FRAMES actually play, which is the part track arrival cannot prove. So
+      // the cover deliberately stays up here; note the inconsistency and let the heal
+      // resolve it if real video follows.
       if (!tile.camOff.hidden) {
         console.warn(
           `[grid] camera media arrived for ${participantId} while the camera-off placeholder is still showing —` +
-            " the last media-state for them said camera off. If they are visibly on, a media-state broadcast was missed.",
+            " the last media-state for them said camera off. Leaving it covered until frames actually play;" +
+            " if they are on, _onCameraProgress will uncover and say so.",
         );
       }
     } else if (kind === "mic") {
@@ -377,6 +381,7 @@ export class Grid {
       if (tile) {
         tile.cameraVideo.srcObject = null;
         tile.hasCamera = false;
+        tile.lastCameraTime = 0; // see _onCameraProgress
       }
     } else if (kind === "mic") {
       this._detachAudio(participantId);
@@ -449,6 +454,47 @@ export class Grid {
   _applyCameraCover(tile) {
     if (!tile || tile.self) return;
     tile.camOff.hidden = tile.cameraOn && !this._lowBandwidth;
+  }
+
+  // Self-heal for a stale camera-off state, driven by the remote <video>'s own
+  // "timeupdate": an element only advances its playback position while frames are
+  // actually arriving, so a position that MOVED is proof the camera is live.
+  //
+  // That is what makes this safe where track arrival is not. This app turns a camera
+  // off by stopping the track and replacing the sender's track with null (see
+  // media.disableCamera and the camera-track listener in app.js), so a camera-off
+  // peer publishes nothing at all: the forward may still be announced and the
+  // receiver's track may still read "live", but no frame ever plays and this never
+  // fires. Uncovering on track arrival would instead replace a legitimately-off
+  // peer's avatar with a black rectangle.
+  //
+  // Why it is needed: a remote tile's cameraOn is written NOWHERE but setPeerMedia,
+  // so a single lost, stale, or out-of-order media-state left a decoding video
+  // covered by the avatar for the rest of the call — "their camera is on but I can't
+  // see them". This is the second writer, and it only ever tells the truth.
+  //
+  // Uncover only, never re-cover. Frames STOPPING is ambiguous — a stalled link looks
+  // exactly like a camera being switched off — so healing that direction would flap
+  // the avatar on a bad connection. This direction is unambiguous, and its worst case
+  // is the state we were already in.
+  //
+  // It does not fight the authority: a later media-state saying camera off covers the
+  // tile again, and only then can this fire a second time. The cameraOn guard below
+  // is what keeps it to one heal (and one log line) per stale episode.
+  _onCameraProgress(id) {
+    const tile = this.tiles.get(id);
+    if (!tile || tile.self || tile.cameraOn) return; // nothing stale to correct
+    const at = tile.cameraVideo.currentTime;
+    // The position must have moved, and moved off zero: an element that is wired up
+    // but receiving nothing can still emit a timeupdate while sitting at 0.
+    if (!(at > 0) || at === tile.lastCameraTime) return;
+    tile.lastCameraTime = at;
+    console.warn(
+      `[grid] ${id} is publishing video while the room still says their camera is off — uncovering.` +
+        " A media-state broadcast was missed.",
+    );
+    // Corrects the pill as well as the cover: both were reporting the same stale fact.
+    this._applyPeerMedia(tile, { camera: true });
   }
 
   // Data saver toggled. The server drops (or restores) our inbound video by
@@ -682,7 +728,10 @@ export class Grid {
     cameraVideo.title = "Click to focus";
     cameraVideo.addEventListener("click", () => this._toggleFocus(tileEl));
 
-    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, gravatar: gravatar || "", nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, cameraOn: true, self };
+    const tile = { el: tileEl, cameraVideo, camOff, camOffAvatar, gravatar: gravatar || "", nameEl, badgeEl, micPill, avPill, volumeEl, volLabel, volume: 1, name, hasCamera: false, cameraOn: true, lastCameraTime: 0, self };
+    // Self-heal for a stale camera-off state — see _onCameraProgress. Registered once,
+    // at build time, so it cannot stack listeners across re-attachments.
+    if (!self) cameraVideo.addEventListener("timeupdate", () => this._onCameraProgress(id));
     this._setRole(tile, role);
     this._setIndicator(micPill, false);
     this._setIndicator(avPill, false);
